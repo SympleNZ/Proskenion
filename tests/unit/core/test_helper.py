@@ -15,6 +15,7 @@ import json
 import os
 import stat
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -380,9 +381,17 @@ async def test_run_submits_and_waits(data_dir: Path) -> None:
     helper = client(data_dir)
 
     async def answer() -> None:
-        for _ in range(200):
-            await asyncio.sleep(0)
-            pending = list(helper_dir(data_dir).glob("*.json"))
+        # A wall-clock bound, not a count of yields: the request is written
+        # from a worker thread (asyncio.to_thread), and how many turns of the
+        # loop that takes is up to the OS's thread scheduling.
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            await asyncio.sleep(0.001)
+            pending = [
+                p
+                for p in helper_dir(data_dir).glob("*.json")
+                if not p.name.endswith(".status.json")
+            ]
             if pending:
                 request_id = pending[0].stem
                 write_status(data_dir, request_id, state="done", step=2, of=2, message="restarted")

@@ -373,6 +373,26 @@ class HelperOutcome:
         return self.state == "failed"
 
 
+@contextmanager
+def the_test_user_is_the_application(helper: ModuleType) -> Iterator[None]:
+    """Tell the helper that the user running the tests is the application.
+
+    The helper accepts a request, or a file a request names, only when root
+    or the ``auditorium`` user (uid 900) owns it. Everything the rig writes
+    stands in for what the application writes, and on a POSIX machine it is
+    owned by whoever runs the tests — so that uid is the one substituted, and
+    the rule itself (root or the application, nobody else) is unchanged. On
+    Windows the helper does not check ownership at all.
+    """
+    original = helper.APP_UID
+    if hasattr(os, "getuid"):
+        helper.APP_UID = os.getuid()
+    try:
+        yield
+    finally:
+        helper.APP_UID = original
+
+
 def run_helper(
     helper: ModuleType,
     appliance: Appliance,
@@ -391,8 +411,33 @@ def run_helper(
     which builds a context pointing at ``/data`` and ``/boot/firmware``: the
     handlers take their paths from the context precisely so they can be aimed
     somewhere else, and pointing them at the real ones would be a test that
-    rewrote the machine it ran on.
+    rewrote the machine it ran on. The request and the files it names are the
+    application's, as :func:`the_test_user_is_the_application` declares.
     """
+    with the_test_user_is_the_application(helper):
+        return _run_helper(
+            helper,
+            appliance,
+            verb,
+            args,
+            request_id=request_id,
+            requested_at=requested_at,
+            systemctl=systemctl,
+            context=context,
+        )
+
+
+def _run_helper(
+    helper: ModuleType,
+    appliance: Appliance,
+    verb: str,
+    args: dict[str, Any] | None,
+    *,
+    request_id: str,
+    requested_at: str | None,
+    systemctl: FakeSystemctl | None,
+    context: dict[str, Any] | None,
+) -> HelperOutcome:
     directory = appliance.data / "run" / "helper"
     body = {
         "verb": verb,
@@ -442,6 +487,12 @@ def run_helper(
         verb_spec.handler(ctx)
     except (helper.Refused, helper.Failed) as exc:
         status.write("failed", message=f"{verb} failed", error=str(exc))
+    except Exception as exc:
+        # As handle() does: anything else a handler raises — a package the
+        # verifier rejects, say — is a failed request, never an escape.
+        status.write(
+            "failed", message=f"{verb} failed", error=f"{type(exc).__name__}: {exc}"
+        )
     else:
         status.write("done", step=verb_spec.steps, message=f"{verb} complete")
 

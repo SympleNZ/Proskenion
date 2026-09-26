@@ -255,7 +255,9 @@ def test_missing_arguments_are_refused(helper: ModuleType) -> None:
 
 
 @posix_only
-def test_open_confined_follows_no_symlink(helper: ModuleType, tmp_path: Path) -> None:
+def test_open_confined_follows_no_symlink(
+    helper: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The check and the use must be the same inode.
 
     A validated path is not a safe path: between the two, the application can
@@ -267,7 +269,7 @@ def test_open_confined_follows_no_symlink(helper: ModuleType, tmp_path: Path) ->
     (root / "sub").mkdir(parents=True)
     secret = tmp_path / "secret"
     secret.write_text("root only", encoding="utf-8")
-    helper.CONFINED_ROOTS = (str(root),)
+    monkeypatch.setattr(helper, "CONFINED_ROOTS", (str(root),))
 
     real = root / "sub" / "package.tar"
     real.write_bytes(b"payload")
@@ -293,11 +295,11 @@ def test_open_confined_follows_no_symlink(helper: ModuleType, tmp_path: Path) ->
 
 @posix_only
 def test_open_confined_refuses_what_is_not_a_plain_private_file(
-    helper: ModuleType, tmp_path: Path
+    helper: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = tmp_path / "data" / "tmp"
     root.mkdir(parents=True)
-    helper.CONFINED_ROOTS = (str(root),)
+    monkeypatch.setattr(helper, "CONFINED_ROOTS", (str(root),))
 
     directory = root / "adir"
     directory.mkdir()
@@ -310,6 +312,37 @@ def test_open_confined_refuses_what_is_not_a_plain_private_file(
     os.chmod(loose, 0o666)
     with pytest.raises(helper.Refused, match="writable by group or other"):
         with helper.open_confined(str(loose)):
+            pass
+
+
+def _not_the_application(helper: ModuleType, monkeypatch: pytest.MonkeyPatch) -> int:
+    """Make the user running the tests neither root nor the application.
+
+    The ``helper`` fixture declares the test's own uid to be the
+    application's; this takes that back, so a file the test writes is owned
+    by some third user as far as the helper can tell. Root is always accepted,
+    so there is nothing to show when the tests run as root.
+    """
+    uid = os.getuid()
+    if uid == 0:
+        pytest.skip("root owns what it writes, and root is always accepted")
+    monkeypatch.setattr(helper, "APP_UID", uid + 1)
+    return uid
+
+
+@posix_only
+def test_open_confined_refuses_a_file_owned_by_another_user(
+    helper: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "data" / "tmp"
+    root.mkdir(parents=True)
+    monkeypatch.setattr(helper, "CONFINED_ROOTS", (str(root),))
+    package = root / "package.tar"
+    package.write_bytes(b"payload")
+    os.chmod(package, 0o600)
+    uid = _not_the_application(helper, monkeypatch)
+    with pytest.raises(helper.Refused, match=f"owned by uid {uid}"):
+        with helper.open_confined(str(package)):
             pass
 
 
@@ -419,6 +452,16 @@ def test_an_oversized_request_is_refused(helper: ModuleType, helper_dir: Path) -
 def test_a_request_readable_by_anyone_is_refused(helper: ModuleType, helper_dir: Path) -> None:
     path = write_request(helper_dir, mode=0o644)
     assert "beyond its owner" in refusal(helper, path)
+
+
+@posix_only
+def test_a_request_owned_by_another_user_is_refused(
+    helper: ModuleType, helper_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only root and the application may put a request in the queue."""
+    path = write_request(helper_dir)
+    uid = _not_the_application(helper, monkeypatch)
+    assert f"owned by uid {uid}, not the application" in refusal(helper, path)
 
 
 @posix_only

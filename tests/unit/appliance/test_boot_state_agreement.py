@@ -112,6 +112,62 @@ def test_the_script_reads_what_the_application_wrote(
     assert bootstate.read(path) == FULL_DOCUMENT
 
 
+# -- a document that does not exist yet ---------------------------------------
+#
+# The image seeds boot-state.json, but a re-created /srv/appliance, a restore
+# or a deleted file leaves none. The first root-side write must then create it:
+# on Linux ``locked()`` creates the file empty in order to lock it, and the
+# read-merge under that lock has to take "empty" as "no document yet" rather
+# than refuse the write and leave the empty file behind for every later reader.
+
+
+def test_the_first_write_creates_a_missing_document(
+    tmp_path: Path, bootstate: ModuleType
+) -> None:
+    path = tmp_path / "srv" / "appliance" / "boot-state.json"
+    written = bootstate.merge({"update": FULL_DOCUMENT["update"]}, path=path)
+    assert written == {"update": FULL_DOCUMENT["update"]}
+    assert bootstate.read(path) == written
+    assert BootStateStore(path).read_sync().update == FULL_DOCUMENT["update"]
+
+
+def test_a_start_marker_creates_a_missing_document(
+    tmp_path: Path, bootstate: ModuleType
+) -> None:
+    path = tmp_path / "boot-state.json"
+    state = bootstate.mark_started(
+        path=path, app_dir=tmp_path / "nowhere", at="2026-09-26T10:00:00+12:00"
+    )
+    assert state == {"started": {"version": None, "at": "2026-09-26T10:00:00+12:00"}}
+    assert json.loads(path.read_text(encoding="utf-8")) == state
+
+
+def test_an_empty_document_reads_as_no_document_on_both_sides(
+    tmp_path: Path, bootstate: ModuleType
+) -> None:
+    """What a writer that died between creating and renaming leaves behind."""
+    path = tmp_path / "boot-state.json"
+    path.write_text("", encoding="utf-8")
+    assert bootstate.read(path) == {}
+    assert BootStateStore(path).read_sync() == BootState()
+
+    bootstate.merge({"active_slot": "b"}, path=path)
+    assert bootstate.read(path) == {"active_slot": "b"}
+
+
+def test_a_document_that_is_not_json_is_still_refused(
+    tmp_path: Path, bootstate: ModuleType
+) -> None:
+    """Empty is "nothing yet"; anything else unparseable is still an error."""
+    path = tmp_path / "boot-state.json"
+    path.write_text("{not json", encoding="utf-8")
+    with pytest.raises(bootstate.BootStateError, match="not valid JSON"):
+        bootstate.read(path)
+    with pytest.raises(bootstate.BootStateError, match="not valid JSON"):
+        bootstate.merge({"active_slot": "b"}, path=path)
+    assert path.read_text(encoding="utf-8") == "{not json"
+
+
 # -- versions come from the directory name ------------------------------------
 
 

@@ -12,6 +12,7 @@ suite.
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -61,6 +62,41 @@ def _never_bind_the_real_artnet_port(monkeypatch: pytest.MonkeyPatch) -> None:
     from proskenion.core.dmx.endpoint import ArtNetEndpoint
 
     monkeypatch.setattr(ArtNetEndpoint, "default_port", 0)
+
+
+@pytest.fixture(scope="session")
+def _no_machine(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A machine root with no device tree, no DMI and no kernel command line."""
+    return tmp_path_factory.getbasetemp() / "no-machine"
+
+
+@pytest.fixture(autouse=True)
+def _the_test_machine_is_not_an_appliance(
+    monkeypatch: pytest.MonkeyPatch, _no_machine: Path
+) -> None:
+    """Detect the platform as the development machine, on every host (§5.4).
+
+    The application detects its platform from ``/``: on any Linux host that is
+    ``GenericLinuxPlatform`` — correctly, since an x86 appliance is one — and a
+    Linux platform keeps its state under the real ``/data`` and
+    ``/srv/appliance`` whatever ``config.app`` says, because on an appliance
+    those are the mounts nginx and the root-side scripts read. A test machine
+    running Linux is not an appliance, and a test that boots the application
+    must never reach its real ``/data``. Detection is therefore pointed at an
+    empty machine root, where it finds nothing and returns
+    :class:`DevelopmentPlatform` with the configured directories — as it
+    already does on Windows. A test that passes ``root`` itself (a fake
+    Raspberry Pi tree) still gets exactly that root.
+    """
+    from proskenion.core import platform
+
+    real = platform.detect_platform
+
+    def detect(*, root: Path | None = None, **kwargs: Any) -> platform.Platform:
+        return real(root=_no_machine if root is None else root, **kwargs)
+
+    monkeypatch.setattr("proskenion.core.lifecycle.detect_platform", detect)
+    monkeypatch.setattr("proskenion.api.setup.detect_platform", detect)
 
 
 @pytest.fixture(autouse=True)

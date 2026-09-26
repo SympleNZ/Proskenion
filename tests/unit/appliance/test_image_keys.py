@@ -76,8 +76,12 @@ def test_the_private_half_is_root_only_and_the_public_half_is_world_readable(
 ) -> None:
     import stat
 
+    from proskenion.core import packages as core_packages
+
     directory = tmp_path / "image-keys"
-    image_keys.ensure_key_pair(directory)
+    # Passed explicitly, as every test here does: the helper's own loader
+    # rightly refuses an implementation imported from a checkout.
+    image_keys.ensure_key_pair(directory, packages_module=core_packages)
     private_path, public_path = image_keys.key_paths(directory)
     assert stat.S_IMODE(private_path.stat().st_mode) == 0o600
     assert stat.S_IMODE(public_path.stat().st_mode) == 0o644

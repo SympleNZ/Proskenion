@@ -622,9 +622,14 @@ class TestCaptureImageStreams:
 
         reads: list[int] = []
         real_read = os.read
+        device_inode = device.stat().st_ino
 
         def counting_read(fd: int, n: int) -> bytes:
-            reads.append(n)
+            # Only reads of the device itself. On POSIX, subprocess.Popen
+            # reads its own exec-status pipe through os.read too, and that
+            # read is not the helper's.
+            if os.fstat(fd).st_ino == device_inode:
+                reads.append(n)
             return real_read(fd, n)
 
         monkeypatch.setattr(os, "read", counting_read)

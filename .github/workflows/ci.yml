@@ -21,10 +21,20 @@
 # every update against (§6.11). CI produces the unsigned artefact; signing is a
 # deliberate step on the developer's own machine.
 #
-# The repository has no remote yet (§20.3: symplenz, private initially), so
-# this file has been written and reviewed but never executed. It is here
-# because §22.8 asks that enabling CI be a configuration file rather than a
-# refactor — that claim is what this file tests.
+# §22.8 asks that enabling CI be a configuration file rather than a refactor;
+# this file is that claim.
+#
+# The runner image is pinned to ubuntu-24.04 rather than ubuntu-latest, so a
+# run changes only when this file does: ubuntu-latest moves to a new Ubuntu
+# release on GitHub's schedule, not ours, and the suite should not start
+# failing on an unrelated push because the image under it changed. Neither is
+# the appliance's Debian 13 (§5.1); what matters is Linux, POSIX permissions
+# and a non-root user, which tools/test-linux.sh reproduces locally on the
+# same Ubuntu release. Moving to the next image is a deliberate edit here and
+# in tools/test-linux.Dockerfile together.
+#
+# Actions are at majors that run on Node 24. astral-sh/setup-uv publishes no
+# floating major tag (since its v8), so it is pinned to an exact release.
 
 name: CI
 
@@ -51,11 +61,11 @@ jobs:
   # -- every push, any branch ---------------------------------------------------
   checks:
     name: Lint, type-check and unit tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
@@ -74,7 +84,7 @@ jobs:
         # unit suite alone is what every push runs.
         run: uv run pytest tests/unit
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -108,11 +118,11 @@ jobs:
     name: Integration tests
     needs: checks
     if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
@@ -130,11 +140,11 @@ jobs:
     name: End-to-end tests
     needs: integration
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
@@ -142,7 +152,7 @@ jobs:
       - name: Install the Python environment
         run: uv sync
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -171,7 +181,7 @@ jobs:
 
       - name: Keep the failures
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-artifacts
           path: tests/e2e/.artifacts
@@ -182,16 +192,16 @@ jobs:
     name: Build the package (unsigned)
     needs: e2e
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -206,7 +216,7 @@ jobs:
         run: ./build_package.sh --unsigned --version "${GITHUB_REF_NAME}"
 
       - name: Keep the unsigned package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: auditorium-${{ github.ref_name }}-unsigned
           path: dist/auditorium_${{ github.ref_name }}.aupkg

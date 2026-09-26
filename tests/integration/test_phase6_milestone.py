@@ -726,12 +726,16 @@ def test_with_no_verifier_on_the_read_only_root_nothing_is_ever_applied(
     try:
         package = appliance.app_package("v1.3.0")
         staged = appliance.staged(package)
-        outcome = run_helper(
-            helper_module,
-            appliance,
-            "apply-update",
-            {"package": str(staged.path), "version": "v1.3.0"},
-        )
+        # Confined to the test's directories, as the `helper` fixture does, so
+        # the request reaches the verifier rather than being refused for its
+        # path first.
+        with helper_confined_to(helper_module, (appliance.tmp, appliance.local)):
+            outcome = run_helper(
+                helper_module,
+                appliance,
+                "apply-update",
+                {"package": str(staged.path), "version": "v1.3.0"},
+            )
         assert outcome.failed
         assert outcome.error is not None and "verifier" in outcome.error
         assert not (appliance.data / "app" / "v1.3.0").exists()

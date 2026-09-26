@@ -27,7 +27,29 @@ port = 8765
 
 [logging]
 path = "{logs}"
+
+[app]
+state_dir = "{state}"
+data_dir = "{data}"
 """
+
+
+def config_text(tmp_path: Path, db_name: str = "a.db") -> str:
+    """``CONFIG`` with every directory under ``tmp_path``.
+
+    ``[app]``'s directories default to the appliance's own ``/srv/appliance``
+    and ``/data``, which ``main()`` verifies before it starts: left at the
+    defaults they are created for real on a machine that allows it, and on one
+    that does not — Linux, as anyone but root — ``main()`` exits with
+    ``EXIT_DATA_UNAVAILABLE`` before reaching what the test is about.
+    ``[app]`` is the last table, so a test can append keys to it.
+    """
+    return CONFIG.format(
+        db=(tmp_path / db_name).as_posix(),
+        logs=(tmp_path / "logs").as_posix(),
+        state=(tmp_path / "state").as_posix(),
+        data=(tmp_path / "data").as_posix(),
+    )
 
 
 def test_exit_codes() -> None:
@@ -64,7 +86,7 @@ def test_main_runs_uvicorn_with_proxy_settings(
 ) -> None:
     config_path = tmp_path / "config.toml"
     config_path.write_text(
-        CONFIG.format(db=(tmp_path / "a.db").as_posix(), logs=(tmp_path / "logs").as_posix()),
+        config_text(tmp_path),
         encoding="utf-8",
     )
     calls: list[tuple[Any, dict[str, Any]]] = []
@@ -95,7 +117,7 @@ def test_main_runs_uvicorn_with_proxy_settings(
 def write_config(tmp_path: Path, db_name: str = "a.db") -> Path:
     path = tmp_path / "config.toml"
     path.write_text(
-        CONFIG.format(db=(tmp_path / db_name).as_posix(), logs=(tmp_path / "logs").as_posix()),
+        config_text(tmp_path, db_name),
         encoding="utf-8",
     )
     return path
@@ -279,8 +301,7 @@ def test_main_applies_the_artnet_hook_before_serving(
     """The whole entry point, not just the helper: a real e2e appliance's path."""
     config_path = tmp_path / "config.toml"
     config_path.write_text(
-        CONFIG.format(db=(tmp_path / "a.db").as_posix(), logs=(tmp_path / "logs").as_posix())
-        + '\n[app]\nenvironment = "development"\n',
+        config_text(tmp_path) + 'environment = "development"\n',
         encoding="utf-8",
     )
     monkeypatch.setenv(entry.ARTNET_PORT_ENV, "54322")

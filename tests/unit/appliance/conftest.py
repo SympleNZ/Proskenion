@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import os
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -81,8 +82,25 @@ def slots() -> ModuleType:
 
 
 @pytest.fixture(scope="session")
-def helper() -> ModuleType:
+def helper_module() -> ModuleType:
     return load_script(BIN / "auditorium-helper", "auditorium_helper")
+
+
+@pytest.fixture
+def helper(helper_module: ModuleType, monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    """The helper, told that the user running the tests is the application.
+
+    On the appliance the helper accepts a request or a confined file only when
+    it is owned by root or by the ``auditorium`` user (uid 900), and the files
+    a test writes stand in for the application's. On a POSIX machine they are
+    owned by whoever runs the tests, so that is the uid the helper is given —
+    the check itself is unchanged, and
+    ``test_a_request_owned_by_another_user_is_refused`` proves it still refuses
+    a uid that is neither.
+    """
+    if hasattr(os, "getuid"):
+        monkeypatch.setattr(helper_module, "APP_UID", os.getuid())
+    return helper_module
 
 
 @pytest.fixture(scope="session")

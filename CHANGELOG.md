@@ -705,6 +705,21 @@ All notable changes to this project are recorded here, per release.
     routes (`configureDesk`/`emitDesk` in `fixtures/stubs.ts`); the platform
     check that skips where 127.0.0.2 will not bind on loopback follows
     `tests/unit/core/dmx/test_artnet_handoff.py`'s own.
+- v0.1.7, from the first run of the suite on Linux (GitHub Actions):
+  - **A root-side write to a missing `boot-state.json` failed and left an
+    empty file behind** (`appliance/lib/auditorium_bootstate.py`, image-level).
+    To lock a document that does not exist yet, `locked()` creates it empty,
+    and the read-merge under that lock then refused the empty file as
+    invalid JSON. So when the file was absent — a re-created `/srv/appliance`,
+    a restore, a deleted file — `auditorium-helper`'s update record,
+    `confirm-slot` and trial records, and `auditorium-update-rollback`'s
+    rollback record all failed, and the empty file they left made every later
+    root-side read fail too, until the application next wrote a marker. An
+    empty document now reads as `{}`, as the application's own reader
+    (`proskenion.core.platform.BootStateStore`) already did; anything else
+    that is not JSON is still refused. Hidden on Windows, where the lock is a
+    no-op and nothing is created before the read. The image seeds the file at
+    build time, so a normally built appliance never had it absent.
 - Packages are written as pax, not ustar: a wheel name over 100 bytes made
   `tools/package.py build` fail.
 - Every installed version now gets `config.toml -> /data/config/auditorium.toml`

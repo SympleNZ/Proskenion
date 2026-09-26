@@ -137,6 +137,16 @@ def marker(version: str | None, at: str | None = None) -> dict[str, Any]:
 
 
 def loads(text: str, *, source: str = "boot-state.json") -> dict[str, Any]:
+    """The document ``text`` holds; an empty one when it holds nothing.
+
+    Empty is not corruption. Every write finishes with ``rename``, so the only
+    way the file is empty is that ``locked()`` has just created it in order to
+    lock it: the first write to a missing document reads it under that lock,
+    and a writer that died before its rename leaves it behind. Both mean "no
+    document yet", which is how ``proskenion.core.platform`` reads it too.
+    """
+    if not text.strip():
+        return {}
     try:
         data = json.loads(text)
     except ValueError as exc:
@@ -147,7 +157,7 @@ def loads(text: str, *, source: str = "boot-state.json") -> dict[str, Any]:
 
 
 def read(path: Path = BOOT_STATE) -> dict[str, Any]:
-    """The document, or an empty one when the file does not exist yet."""
+    """The document, or an empty one when the file does not exist yet or is empty."""
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
