@@ -1,0 +1,11 @@
+# /data/config/knxd.conf — knxd options (§4.11), reached from /etc/knxd.conf
+# through a symlink so the gateway address can change without a rebuild (§4.3).
+#
+#   -e 0.0.1        knxd's own bus address
+#   -E 0.0.2:8      addresses handed to clients (the application is one)
+#   -b ipt:HOST     KNXnet/IP tunnelling to the gateway (§3.1: 10.2.30.252)
+#
+# Do NOT add -u, -i or -d: knxd.socket and knxd-net.socket provide the
+# sockets (/run/knx and TCP 6720) and the unit runs knxd in the foreground.
+# Verify at the bench with:  knxtool groupsocketlisten ip:localhost
+KNXD_OPTS="-e 0.0.1 -E 0.0.2:8 -b ipt:10.2.30.252"

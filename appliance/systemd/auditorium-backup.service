@@ -1,0 +1,18 @@
+# auditorium-backup.service — started by auditorium-backup.timer (§13.1-§13.4,
+# contracts §5, Q3). Runs as `auditorium`, not root, so it works whether or
+# not auditorium-core.service is up and leaves every archive owned the same
+# way the application owns everything else under /data, /srv/local and
+# /mnt/backup.
+
+[Unit]
+Description=Nightly data backup
+RequiresMountsFor=/data /srv/appliance
+
+[Service]
+Type=oneshot
+User=auditorium
+Group=auditorium
+ExecStart=/usr/local/bin/auditorium-backup
+SyslogIdentifier=auditorium-backup
+Environment=PYTHONUNBUFFERED=1
+Environment=TZ=Pacific/Auckland

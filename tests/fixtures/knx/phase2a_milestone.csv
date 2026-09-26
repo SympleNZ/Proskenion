@@ -1,0 +1,6 @@
+Main,Middle,Sub,Name,Description,Data Type
+1,0,1,Stage Bank 1 Command,South wall panel button,1.001
+1,0,2,Stage Bank 1 Status,South wall panel indicator,1.001
+1,0,9,Stage Lighting External Control,Panel indicator: a desk has the rig,1.001
+1,3,1,Foyer Sign,Written by the Show Start scene,1.001
+2,1,1,House Dimmer Centre,Absolute dimming,5.001

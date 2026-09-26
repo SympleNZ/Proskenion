@@ -1,0 +1,17 @@
+[Unit]
+Description=Check for an unconfirmed network change past its revert deadline (§10.8)
+
+[Timer]
+# Fires shortly after every boot too, so a deadline that passed while the
+# machine was down — or the application was dead — is still caught; the
+# marker and the deadline live on /data, not in this process's memory (see
+# proskenion.core.network's module docstring). Thirty seconds is well inside
+# the three-minute confirm window (contracts §5) without polling pointlessly
+# often the rest of the time — auditorium-network-revert.service's own
+# ConditionPathExists skips the actual work when nothing is pending.
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

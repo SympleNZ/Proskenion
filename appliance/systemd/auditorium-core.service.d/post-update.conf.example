@@ -1,0 +1,26 @@
+# post-update.conf.example — how the update process suspends the application
+# watchdog for the first 60 s after an update (§4.7, §14.5).
+#
+# WatchdogSec= cannot be changed for a running service from outside it, so the
+# updater does this around the restart that applies a new version:
+#
+#   1. Install this drop-in as
+#        /run/systemd/system/auditorium-core.service.d/post-update.conf
+#      (/run, not /etc: it must not survive a reboot on a read-only root).
+#   2. systemctl daemon-reload && systemctl restart auditorium-core.service
+#      The new instance starts with a 90 s window: the normal 30 s plus 60 s.
+#   3. Once the application has run healthily for 60 s it tightens its own
+#      window with sd_notify("WATCHDOG_USEC=30000000") — a running service may
+#      lower its watchdog timeout at any time — and writes the healthy marker
+#      to /srv/appliance/boot-state.json.
+#   4. The updater removes the drop-in and runs daemon-reload, so the next
+#      start is back to the 30 s in the unit file.
+#
+# Startup itself (before READY=1) is bounded by TimeoutStartSec, not
+# WatchdogSec; a long migration extends it with EXTEND_TIMEOUT_USEC.
+#
+# This file is installed at /usr/local/share/auditorium/post-update.conf.example
+# for reference; it is never active by itself.
+
+[Service]
+WatchdogSec=90s

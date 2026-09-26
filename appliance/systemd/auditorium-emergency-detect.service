@@ -1,0 +1,41 @@
+# auditorium-emergency-detect.service — entry path 1 into emergency mode (§4.6, Q12).
+#
+# ConditionPathIsReadWrite=!/data is the boot-time entry the specification
+# already covers: /data not mounted, or mounted read-only after an
+# errors=remount-ro. On a normal boot the condition fails and the unit is
+# skipped — see docs/build/image.md, "Known gaps", for why nofail on /data is
+# what lets boot reach this far at all rather than dropping to systemd's own
+# emergency target first.
+#
+# WantedBy=multi-user.target pulls both this unit and
+# auditorium-emergency.service into every boot's transaction.
+# Before=auditorium-emergency.service ensures this unit's ExecStart — which
+# writes /srv/appliance/emergency-reason.json — finishes before systemd even
+# attempts to start that unit, so its own
+# ConditionPathExists=/srv/appliance/emergency-reason.json is already true by
+# the time it is evaluated: two conditions of different types cannot be ORed
+# together in one unit, which is why this is a separate unit rather than a
+# second condition line on auditorium-emergency.service itself — that unit
+# also has to be startable directly, by auditorium-update-rollback, when
+# /data is perfectly readable and writable (migration_failed, disk_full).
+# Before=nginx.service keeps nginx from starting with the normal config
+# (which references certificates under /data) before
+# auditorium-emergency.service has had a chance to switch it to
+# emergency.conf — belt and braces, since that unit also does the switch
+# itself on every start of its own.
+
+[Unit]
+Description=Detect why /data is unavailable and record it for emergency mode (§4.6 entry path 1)
+ConditionPathIsReadWrite=!/data
+After=local-fs.target
+Before=auditorium-emergency.service nginx.service
+Wants=auditorium-emergency.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/auditorium-emergency --detect
+SyslogIdentifier=auditorium-emergency-detect
+
+[Install]
+WantedBy=multi-user.target

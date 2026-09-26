@@ -1,0 +1,34 @@
+# A full override of Debian's knxd.socket (§4.11), not a *.d/ drop-in.
+#
+# Debian's unit reads:
+#
+#   [Socket]
+#   ListenStream=/var/run/knx
+#   ListenStream=6720
+#
+# and systemd warns at every daemon-reload:
+#
+#   knxd.socket:5: ListenStream= references a path below legacy directory
+#   /var/run/, updating /var/run/knx -> /run/knx; please update the unit file
+#   accordingly.
+#
+# A drop-in that resets ListenStream= and sets /run/knx does silence the
+# *effective* configuration, but not the warning: systemd emits it while
+# parsing line 5 of the package's own file, before any drop-in is read, so the
+# line still has to exist somewhere for knxd.socket to work at all. Proved in
+# appliance/tests/verify-in-docker.sh: a *.d/auditorium.conf drop-in here left
+# the warning exactly as it was. Only replacing the file removes the line that
+# triggers it — checked there too, against the same real Debian package.
+#
+# /var/run is already a symlink to /run on Debian, so this changes nothing
+# about where knxd actually listens.
+
+[Unit]
+Description=KNX Daemon (socket)
+
+[Socket]
+ListenStream=/run/knx
+ListenStream=6720
+
+[Install]
+WantedBy=sockets.target

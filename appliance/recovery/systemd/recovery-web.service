@@ -1,0 +1,26 @@
+[Unit]
+Description=Proskenion recovery web interface (§13.7)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/recovery/venv/bin/python /opt/recovery/webapp/app.py
+WorkingDirectory=/opt/recovery/webapp
+Environment=RECOVERY_WORK_DIR=/var/lib/recovery/work
+Environment=RECOVERY_USB_MOUNT=/mnt/backup
+Environment=RECOVERY_ATTACHED_MOUNT=/mnt/attached
+Environment=RECOVERY_BOOT_MOUNT=/boot/firmware
+StateDirectory=recovery
+Restart=on-failure
+RestartSec=2
+# This runs as root by design: partitioning a disk and writing a root
+# filesystem to a raw block device needs it, and there is no lower-privilege
+# helper to delegate to on a single-purpose recovery environment that is
+# rebuilt and reflashed rather than kept patched (contrast the main
+# appliance's auditorium-helper, §6.11, whose whole reason for existing is
+# that auditorium-core.service must not run as root).
+User=root
+
+[Install]
+WantedBy=multi-user.target

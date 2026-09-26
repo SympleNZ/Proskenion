@@ -1,0 +1,20 @@
+# certbot-renew.service — started by certbot-renew.timer (§4.11, §3.2, Q7).
+#
+# Touches the signal file auditorium-core's CertificateManager.watch polls
+# for; the renewal itself — ACME, Cloudflare, the atomic pair, the six
+# §21.24 progress steps — runs inside that already-running application, not
+# here (see auditorium-certbot-renew). User=auditorium so the signal file it
+# writes is one the application can remove itself, the same as
+# auditorium-core.service.
+
+[Unit]
+Description=Certificate renewal check
+RequiresMountsFor=/data
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=auditorium
+Group=auditorium
+ExecStart=/usr/local/bin/auditorium-certbot-renew
+SyslogIdentifier=certbot-renew

@@ -1,0 +1,26 @@
+# auditorium-config-apply.timer — nightly re-run of auditorium-config-apply.service
+# (§11.4, phase-6 contracts §4): "auditorium-config-apply resolves the host,
+# writes one outbound rule per resolved address on that port, and
+# re-resolves on each apply and nightly."
+#
+# Everything else the service does (hostname, timezone, the device address
+# table) is idempotent and re-applying it nightly costs nothing; the reason
+# this timer exists is network.smtp_relay's DNS resolution, which nothing
+# else in the boot sequence repeats once the appliance is up. Chosen over a
+# bespoke re-resolve script so there is exactly one place that renders
+# /etc/nftables.conf, at boot or overnight alike — see the script's own
+# "network.smtp_relay" docstring section for the caching this depends on.
+
+[Unit]
+Description=Nightly re-resolve of the SMTP relay and firewall re-apply
+
+[Timer]
+# 03:15 Pacific/Auckland (timers use the system timezone) — between the
+# 02:30 backup and the 03:30 monthly verify, so nothing else is also
+# touching /etc/nftables.conf at the same time.
+OnCalendar=*-*-* 03:15:00
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target

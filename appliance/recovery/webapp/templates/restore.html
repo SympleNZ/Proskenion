@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Restore data — Proskenion recovery{% endblock %}
+{% block content %}
+<h2>Restore data from a backup archive</h2>
+<p class="warn">This replaces the database, configuration, certificates and baselines on the target <code>/data</code>. It is unsigned input: it is checked (checksum, then every member) before anything is written.</p>
+
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+{% if not plan %}
+<form method="post">
+  <label>Archive (found on the USB stick or an attached drive)
+    <select name="archive" required>
+      {% for archive in archives %}
+      <option value="{{ archive }}">{{ archive }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <input type="hidden" name="source" value="medium">
+  <button type="submit">Review</button>
+</form>
+{% if not archives %}<p>No archive was found. Insert the backup stick, or configure a network destination on the <a href="/network">Network</a> screen first.</p>{% endif %}
+
+{% else %}
+<div class="confirm">
+  <h3>This will replace /data's database, configuration, certificates and baselines</h3>
+  <ul>
+    <li>Source: <strong>{{ plan.archive }}</strong></li>
+    <li>The archive's checksum and every member are verified before anything is written.</li>
+    <li>Device passwords will need re-entering afterwards if this is replacement hardware.</li>
+  </ul>
+  <form method="post">
+    <input type="hidden" name="source" value="medium">
+    <input type="hidden" name="archive" value="{{ plan.archive }}">
+    <input type="hidden" name="confirm_token" value="{{ plan.token }}">
+    <button type="submit" class="destructive">Restore from this archive</button>
+  </form>
+  <p><a href="/restore">Cancel</a></p>
+</div>
+{% endif %}
+{% endblock %}

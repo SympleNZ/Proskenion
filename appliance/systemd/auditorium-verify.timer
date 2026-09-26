@@ -1,0 +1,14 @@
+# auditorium-verify.timer — monthly backup integrity verification (§4.11, §13).
+# Service is a Phase 6 placeholder.
+
+[Unit]
+Description=Monthly backup integrity verification
+
+[Timer]
+# First of the month, 03:30 Pacific/Auckland
+OnCalendar=*-*-01 03:30:00
+RandomizedDelaySec=600
+Persistent=true
+
+[Install]
+WantedBy=timers.target

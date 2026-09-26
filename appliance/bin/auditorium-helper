@@ -1,0 +1,2293 @@
+#!/usr/bin/python3
+"""auditorium-helper — the one privileged path out of the application (§4.3, §14.2).
+
+auditorium-core.service runs as the unprivileged `auditorium` user under
+NoNewPrivileges=yes, so it cannot restart services, reboot, write a root slot
+or replace its own tree. Rather than give it a way to become root — sudo,
+polkit, a setuid binary — it writes a request file in a directory it owns, and
+auditorium-helper.path starts this script as root to act on it. The same shape
+as auditorium-cert-reload.path, with arguments.
+
+Everything in a request comes from the web application. None of it is
+trusted:
+
+  * the file must be a regular file with no symlink anywhere in its path,
+    owned by root or by the application user, not group- or world-writable,
+    and small;
+  * the filename must be a UUID, and the id inside must match it, so one
+    request can never be made to overwrite another's status;
+  * `verb` must be one this build knows;
+  * `args` must carry exactly the arguments that verb accepts — no more —
+    and each one must pass its own rule: a slot is "a" or "b"; a version is
+    vX.Y.Z; a path is inside /data/tmp or /srv/local, has no ".." in it, and
+    is opened with O_NOFOLLOW at every component so a symlink cannot redirect
+    it after it was checked;
+  * `requested_at` must be an ISO 8601 time with an offset, no older than ten
+    minutes and no further ahead than a minute of clock skew.
+
+Anything else is refused, recorded in the status file and logged. A refusal
+never partially applies: every argument is validated before the verb runs.
+
+Packages are re-verified here, against the trust anchors on the read-only
+root, before anything is written outside /data — the application's verdict is
+never trusted, and an update that could vouch for itself would authorise
+every update after it (§6.11, contracts §2). If no verifier is available the
+request is refused; there is no path through this script that treats an
+unverified package as verified.
+
+Protocol (contracts §2):
+
+  request  /data/run/helper/<uuid>.json          0600, owned by auditorium
+    {"verb": "apply-update", "id": "<uuid>", "requested_at": "…",
+     "args": {"package": "/data/tmp/upload-<uuid>.tar", "version": "v1.3.0"}}
+
+  status   /data/run/helper/<uuid>.status.json   0644, written by this script
+    {"id": "<uuid>", "state": "running|done|failed", "step": 2, "of": 5,
+     "message": "Verifying signature", "error": null, "finished_at": null}
+
+A request is deleted once it has been handled, however it ended. Its status
+file stays for an hour so the application can still report an operation whose
+WebSocket dropped.
+
+Usage:
+  auditorium-helper --dispatch queue     drain the directory, oldest first
+  auditorium-helper --dispatch <uuid>    handle exactly that request
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import errno
+import hashlib
+import io
+import json
+import os
+import re
+import shutil
+import sqlite3
+import stat
+import subprocess
+import sys
+import tarfile
+import time
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from pathlib import Path, PurePosixPath
+from typing import Any
+
+sys.path.insert(0, "/usr/local/lib/auditorium")
+
+import auditorium_bootstate as bootstate  # noqa: E402
+import auditorium_emergency as emergency  # noqa: E402
+import auditorium_emergency_reason as emergency_reason  # noqa: E402
+import auditorium_image_keys as image_keys  # noqa: E402
+import auditorium_packages as packages  # noqa: E402
+import auditorium_slots as slots  # noqa: E402
+
+HELPER_DIR = Path("/data/run/helper")
+APP_DIR = Path("/data/app")
+CURRENT = APP_DIR / "current"
+DB = Path("/data/auditorium.db")
+#: §4.14 and §5.2: every version directory's config.toml is a symlink to the
+#: one bootstrap file on /data/config, which the image build writes. ExecStart
+#: and every tool read /opt/auditorium/config.toml, which resolves through
+#: /data/app/current into the version directory. A package cannot carry the
+#: link — the verifier refuses every link member (contracts §3) — so the
+#: installer makes it, as proskenion.core.update does on the application's side.
+BOOTSTRAP_CONFIG = Path("/data/config/auditorium.toml")
+CONFIG_LINK = "config.toml"
+SNAPSHOTS = Path("/data/backups/snapshots")
+BOOT_STATE = bootstate.BOOT_STATE
+CORE_UNIT = "auditorium-core.service"
+APP_UID = 900  # the auditorium user (fixed in build.sh)
+
+#: §4.3's network/firewall renderer — what "apply-network" and
+#: "--check-network-revert" both call to make system.json's addressing,
+#: hostname and firewall live.
+CONFIG_APPLY = Path("/usr/local/bin/auditorium-config-apply")
+#: The application writes both directly (§4.3 pattern 1: config data under
+#: /data needs no privilege) — see proskenion.core.network and
+#: proskenion.core.system_config for the application's side.
+SYSTEM_CONFIG = Path("/data/config/system.json")
+NETWORK_PENDING = Path("/data/config/.network-revert.json")
+
+#: §2.3's p1, FAT32, mounted read-only and remounted read-write only for a
+#: deliberate OS upgrade. It holds config.txt, tryboot.txt and one slot-x/
+#: directory per root slot (§14.4).
+BOOT_DIR = Path("/boot/firmware")
+#: Where the kernel exposes partitions by the ID §4.4 mounts everything by.
+BY_PARTUUID = Path("/dev/disk/by-partuuid")
+#: The running kernel's command line, which says which slot booted (§14.4).
+PROC_CMDLINE = Path("/proc/cmdline")
+#: Where a slot's freshly written filesystem is mounted for the one file that
+#: cannot come from the package. Under /run, so it never survives a reboot.
+SLOT_MOUNT = Path("/run/auditorium-slot")
+#: The members an OS package's payload may carry (contracts §3, Q10).
+#: ``payload/root.img.gz`` is a captured system image's own root member
+#: (P6-T10, §13.6, Q13): a *gzip*-compressed partition, matching the
+#: ``.img.gz`` naming §2.4 and contracts §8's eviction glob both use, so the
+#: same write-slot path that unpacks an OS package's zstd-compressed root also
+#: unpacks a restored image's gzip one.
+ROOT_IMAGE_MEMBERS: tuple[str, ...] = ("payload/root.img.zst", "payload/root.img", "payload/root.img.gz")
+BOOT_TREE_PREFIX = "payload/boot/"
+#: One megabyte at a time: a root image is gigabytes and this machine has four.
+IMAGE_CHUNK = 1 << 20
+
+#: Where a system image's signing key pair lives (contracts §3, Q13),
+#: generated once at first boot by auditorium_image_keys.
+IMAGE_KEYS_DIR = image_keys.IMAGE_KEYS_DIR
+#: contracts §8 / §2.4's naming: auditorium-<version>-<stamp>.img.gz.
+IMAGE_FILENAME_RE = re.compile(
+    r"\Aauditorium-(v(?:0|[1-9][0-9]{0,3})\.(?:0|[1-9][0-9]{0,3})\.(?:0|[1-9][0-9]{0,3}))"
+    r"-([0-9]{8}-[0-9]{6})\.img\.gz\Z"
+)
+
+#: Directories a path argument may name (contracts §2). /data/tmp holds
+#: uploads (Q9: they stream to disk, never RAM); /srv/local holds archives
+#: (backups/) and captured images (images/), the two directories build.sh
+#: makes application-owned under a root-owned partition root (§2.3).
+CONFINED_ROOTS: tuple[str, ...] = ("/data/tmp", "/srv/local")
+
+#: A request older than this is refused: the application asked for something
+#: ten minutes ago and has long since given up, and a request file left over
+#: from before a reboot must not be acted on.
+MAX_REQUEST_AGE_S = 600
+#: Tolerance for a request timestamped slightly ahead of us (§4.9's clock may
+#: still be settling). Anything further ahead is not a request we wrote.
+MAX_REQUEST_SKEW_S = 60
+#: How long a status file survives after its request was handled.
+STATUS_RETENTION_S = 3600
+#: A request is a few hundred bytes. This is three orders of magnitude of room.
+MAX_REQUEST_BYTES = 64 * 1024
+#: §4.7: WatchdogSec is suspended for the first 60 seconds after an update.
+WATCHDOG_SUSPEND_S = 60.0
+#: The longest window a request may ask for. The application chooses how long
+#: the widened window stays open, but not how long it may be: a request that
+#: could hold systemd's watchdog off indefinitely is a way to stop the one
+#: mechanism that catches a wedged event loop, and the request comes from the
+#: process an attacker would already be inside.
+#: How long a restart whose command failed is given to prove the unit came
+#: up anyway. Long enough for a superseded job to finish, short enough that a
+#: genuine failure is still reported while someone is watching.
+RESTART_SETTLE_S = 15.0
+
+MAX_WATCHDOG_WINDOW_S = 300
+#: How often the window is re-checked while it is open.
+WATCHDOG_POLL_S = 0.25
+#: §14.5's "healthy" is 30 s of running; the §4.7 window above is already 60,
+#: so on the appliance the marker is normally there when the window closes.
+#: This bounds the wait when it is not (a slow first start, the harness's
+#: shortened window) before emergency mode entered as not_installed is left.
+FIRST_INSTALL_HEALTHY_WAIT_S = 120.0
+
+DROPIN_DIR = Path("/run/systemd/system/auditorium-core.service.d")
+DROPIN_NAME = "post-update.conf"
+DROPIN_RECIPE = Path("/usr/local/share/auditorium/post-update.conf.example")
+DROPIN_FALLBACK = "[Service]\nWatchdogSec=90s\n"
+
+UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
+
+#: The appliance is Debian, where O_NOFOLLOW always exists and an open either
+#: gets the inode that was checked or fails. Where it does not exist — a
+#: developer's machine running the validation tests — the helper falls back to
+#: lstat, which answers the same question with a gap between the check and the
+#: open. That gap is acceptable only because nothing privileged runs there.
+O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+
+#: Ownership and permission bits mean what they say on the appliance. On a
+#: development machine they do not exist, so the checks that rest on them are
+#: skipped there and their tests are marked POSIX-only. Nothing privileged
+#: runs on a development machine; on the appliance every one of them applies.
+POSIX = os.name == "posix"
+REQUEST_SUFFIX = ".json"
+STATUS_SUFFIX = ".status.json"
+
+
+def log(message: str) -> None:
+    print(f"auditorium-helper: {message}", flush=True)
+
+
+class Refused(Exception):
+    """The request is not one we will act on. Nothing has been changed."""
+
+
+class Failed(Exception):
+    """The verb was accepted but could not be carried out."""
+
+
+# --------------------------------------------------------------- validation
+
+
+def _text(value: object, *, name: str, limit: int) -> str:
+    if not isinstance(value, str):
+        raise Refused(f"{name} must be a string")
+    if not value or len(value) > limit:
+        raise Refused(f"{name} must be 1 to {limit} characters")
+    if "\0" in value:
+        raise Refused(f"{name} contains a null byte")
+    return value
+
+
+def slot_arg(value: object, *, name: str = "slot") -> str:
+    """A root slot letter (§14.4). Exactly "a" or "b"; nothing else is a slot."""
+    text = _text(value, name=name, limit=1)
+    if text not in ("a", "b"):
+        raise Refused(f"{name} must be 'a' or 'b'")
+    return text
+
+
+def version_arg(value: object, *, name: str = "version") -> str:
+    """A version directory name, vX.Y.Z (contracts §1). Never a bare number."""
+    text = _text(value, name=name, limit=32)
+    if not bootstate.VERSION_RE.match(text):
+        raise Refused(f"{name} must look like v1.3.0")
+    return text
+
+
+def mode_arg(value: object, *, name: str = "mode") -> str:
+    text = _text(value, name=name, limit=16)
+    if text not in ("normal", "tryboot"):
+        raise Refused(f"{name} must be 'normal' or 'tryboot'")
+    return text
+
+
+def watchdog_window_arg(value: object, *, name: str = "watchdog_window_s") -> int:
+    """§4.7's post-update window, in whole seconds, bounded here (contracts §2).
+
+    A bool is an int in Python and would otherwise pass as 1, so it is
+    refused by type rather than coerced. The upper bound is this script's,
+    not the caller's: the request says how long the already-agreed drop-in
+    stays installed, and never what it contains.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise Refused(f"{name} must be a whole number of seconds")
+    if not 1 <= value <= MAX_WATCHDOG_WINDOW_S:
+        raise Refused(f"{name} must be 1 to {MAX_WATCHDOG_WINDOW_S} seconds")
+    return value
+
+
+def path_arg(value: object, *, name: str = "path") -> str:
+    """A path confined to /data/tmp or /srv/local, checked lexically.
+
+    Only the spelling is checked here, before anything runs: absolute, no
+    "..", no "." and no empty component, and strictly inside one of the two
+    roots. What is actually on disk is checked again by :func:`open_confined`
+    when the file is opened, because a name that was safe a moment ago can
+    have become a symlink.
+    """
+    text = _text(value, name=name, limit=4096)
+    # The literal spelling is what is checked, not PurePosixPath's view of it:
+    # the path classes quietly drop "." components and collapse "//", so a
+    # check made through them approves a string that is not the string the
+    # application sent.
+    segments = text.split("/")
+    if segments[0] != "":
+        raise Refused(f"{name} must be an absolute path")
+    parts = segments[1:]
+    if not parts:
+        raise Refused(f"{name} must name a file, not the root directory")
+    for part in parts:
+        if part in ("", ".", ".."):
+            raise Refused(f"{name} must not contain empty, '.' or '..' components")
+    for root in CONFINED_ROOTS:
+        root_parts = root.split("/")[1:]
+        if parts[: len(root_parts)] == root_parts and len(parts) > len(root_parts):
+            return text
+    raise Refused(f"{name} must be inside {' or '.join(CONFINED_ROOTS)}")
+
+
+@contextmanager
+def open_confined(path: str, *, name: str = "path") -> Iterator[int]:
+    """Open ``path`` with no symlink anywhere in it, and yield the descriptor.
+
+    Every component from the confinement root down is opened with O_NOFOLLOW,
+    so a symlink planted at any level fails rather than redirecting the open.
+    The caller then works through the descriptor — ``/proc/self/fd/N`` names
+    the very inode that was checked — so nothing can be swapped underneath
+    between the check and the use.
+    """
+    pure = PurePosixPath(path)
+    root = next((r for r in CONFINED_ROOTS if pure.is_relative_to(r)), None)
+    if root is None:
+        raise Refused(f"{name}: {path} is not inside {' or '.join(CONFINED_ROOTS)}")
+    relative = pure.relative_to(root).parts
+    try:
+        dir_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError as exc:
+        raise Refused(f"{name}: {root} is not available: {exc.strerror}") from exc
+    fd = -1
+    try:
+        for part in relative[:-1]:
+            try:
+                nxt = os.open(
+                    part, os.O_RDONLY | os.O_DIRECTORY | O_NOFOLLOW, dir_fd=dir_fd
+                )
+            except OSError as exc:
+                raise Refused(_why(name, path, part, exc, dir_fd)) from exc
+            os.close(dir_fd)
+            dir_fd = nxt
+        try:
+            fd = os.open(relative[-1], os.O_RDONLY | O_NOFOLLOW, dir_fd=dir_fd)
+        except OSError as exc:
+            raise Refused(_why(name, path, relative[-1], exc, dir_fd)) from exc
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise Refused(f"{name}: {path} is not a regular file")
+        if POSIX:
+            if info.st_uid not in (0, APP_UID):
+                raise Refused(f"{name}: {path} is owned by uid {info.st_uid}")
+            if info.st_mode & 0o022:
+                raise Refused(f"{name}: {path} is writable by group or other")
+        yield fd
+    finally:
+        os.close(dir_fd)
+        if fd >= 0:
+            os.close(fd)
+
+
+@contextmanager
+def create_confined(path: str, *, name: str = "path") -> Iterator[int]:
+    """Create a *new* file with no symlink anywhere in its path, and yield the descriptor.
+
+    :func:`open_confined` is for a file the application already wrote and the
+    helper only reads; ``capture-image`` (§13.6, Q13) writes a fresh one, so
+    this exists to give it the same guarantee by the same means — every
+    directory component from the confinement root down is opened with
+    ``O_NOFOLLOW``, and only the final component is created, with
+    ``O_CREAT | O_EXCL`` so a name that already exists (a symlink or, harder
+    to plant, a regular file) is refused rather than silently reused or
+    truncated. ``/srv/local/images`` is writable directly by the unprivileged
+    application (P6-T5's archives live beside it), so a compromised
+    application planting something at the destination ahead of time is
+    exactly what this closes off.
+    """
+    pure = PurePosixPath(path)
+    root = next((r for r in CONFINED_ROOTS if pure.is_relative_to(r)), None)
+    if root is None:
+        raise Refused(f"{name}: {path} is not inside {' or '.join(CONFINED_ROOTS)}")
+    relative = pure.relative_to(root).parts
+    try:
+        dir_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError as exc:
+        raise Refused(f"{name}: {root} is not available: {exc.strerror}") from exc
+    fd = -1
+    try:
+        for part in relative[:-1]:
+            try:
+                nxt = os.open(
+                    part, os.O_RDONLY | os.O_DIRECTORY | O_NOFOLLOW, dir_fd=dir_fd
+                )
+            except FileNotFoundError:
+                os.mkdir(part, 0o750, dir_fd=dir_fd)
+                nxt = os.open(
+                    part, os.O_RDONLY | os.O_DIRECTORY | O_NOFOLLOW, dir_fd=dir_fd
+                )
+            except OSError as exc:
+                raise Refused(_why(name, path, part, exc, dir_fd)) from exc
+            os.close(dir_fd)
+            dir_fd = nxt
+        try:
+            fd = os.open(
+                relative[-1],
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | O_NOFOLLOW,
+                0o640,
+                dir_fd=dir_fd,
+            )
+        except FileExistsError as exc:
+            raise Refused(f"{name}: {path} already exists; capture never overwrites") from exc
+        except OSError as exc:
+            raise Refused(_why(name, path, relative[-1], exc, dir_fd)) from exc
+        yield fd
+    finally:
+        os.close(dir_fd)
+        if fd >= 0:
+            os.close(fd)
+
+
+def _why(name: str, path: str, part: str, exc: OSError, dir_fd: int) -> str:
+    """Say what the component actually is, not which errno came back.
+
+    O_NOFOLLOW reports ELOOP on its own but ENOTDIR when it is combined with
+    O_DIRECTORY, so the same symlink is refused under two different errnos
+    depending on where in the path it sits. Both are refusals either way; the
+    journal should not make an administrator work that out.
+    """
+    if _is_symlink_at(part, dir_fd):
+        return f"{name}: {path} passes through a symlink at {part!r}"
+    if exc.errno in (errno.ELOOP, errno.EMLINK):
+        return f"{name}: {path} passes through a symlink at {part!r}"
+    if exc.errno == errno.ENOTDIR:
+        return f"{name}: {path} has a non-directory at {part!r}"
+    if exc.errno == errno.ENOENT:
+        return f"{name}: {path} does not exist"
+    return f"{name}: {path} could not be opened: {exc.strerror}"
+
+
+def _is_symlink_at(part: str, dir_fd: int) -> bool:
+    try:
+        return stat.S_ISLNK(os.lstat(part, dir_fd=dir_fd).st_mode)
+    except (OSError, NotImplementedError, TypeError):
+        return False
+
+
+def fd_path(fd: int, fallback: str) -> str:
+    """A name for the open descriptor, so a helper runs on the inode it checked."""
+    proc = f"/proc/self/fd/{fd}"
+    return proc if os.path.exists("/proc/self/fd") else fallback
+
+
+# ------------------------------------------------------------------ requests
+
+
+@dataclass(frozen=True)
+class Request:
+    id: str
+    verb: str
+    requested_at: dt.datetime
+    args: dict[str, Any]
+    path: Path
+
+
+def parse_time(value: object) -> dt.datetime:
+    text = _text(value, name="requested_at", limit=64)
+    try:
+        moment = dt.datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise Refused(f"requested_at is not an ISO 8601 time: {text!r}") from exc
+    if moment.tzinfo is None:
+        raise Refused("requested_at must carry a UTC offset (§4.9)")
+    return moment
+
+
+def read_request(path: Path, *, now: dt.datetime) -> Request:
+    """Read and fully validate one request file, or raise :class:`Refused`."""
+    name = path.name
+    if not name.endswith(REQUEST_SUFFIX) or name.endswith(STATUS_SUFFIX):
+        raise Refused(f"{name} is not a request file")
+    request_id = name[: -len(REQUEST_SUFFIX)]
+    if not UUID_RE.match(request_id):
+        raise Refused(f"{name} is not named after a UUID")
+
+    if not O_NOFOLLOW and path.is_symlink():
+        raise Refused(f"{name} is a symlink")
+    try:
+        fd = os.open(path, os.O_RDONLY | O_NOFOLLOW)
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.EMLINK):
+            raise Refused(f"{name} is a symlink") from exc
+        raise Refused(f"{name} could not be opened: {exc.strerror}") from exc
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise Refused(f"{name} is not a regular file")
+        if POSIX:
+            if info.st_uid not in (0, APP_UID):
+                raise Refused(f"{name} is owned by uid {info.st_uid}, not the application")
+            if info.st_mode & 0o077:
+                raise Refused(f"{name} is readable or writable beyond its owner")
+        if info.st_size > MAX_REQUEST_BYTES:
+            raise Refused(f"{name} is {info.st_size} bytes; the limit is {MAX_REQUEST_BYTES}")
+        raw = os.read(fd, MAX_REQUEST_BYTES + 1)
+    finally:
+        os.close(fd)
+
+    try:
+        body = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise Refused(f"{name} is not valid JSON: {exc}") from exc
+    if not isinstance(body, dict):
+        raise Refused(f"{name} must contain a JSON object")
+
+    if body.get("id") != request_id:
+        raise Refused(f"{name} carries id {body.get('id')!r}, which is not its filename")
+    verb = _text(body.get("verb"), name="verb", limit=32)
+    if verb not in VERBS:
+        raise Refused(f"unknown verb {verb!r}")
+    requested_at = parse_time(body.get("requested_at"))
+    age = (now - requested_at).total_seconds()
+    if age > MAX_REQUEST_AGE_S:
+        raise Refused(f"the request is {int(age)} s old; the limit is {MAX_REQUEST_AGE_S} s")
+    if age < -MAX_REQUEST_SKEW_S:
+        raise Refused(f"the request is timestamped {int(-age)} s in the future")
+
+    raw_args = body.get("args", {})
+    if raw_args is None:
+        raw_args = {}
+    if not isinstance(raw_args, dict):
+        raise Refused("args must be a JSON object")
+    args = VERBS[verb].validate(raw_args)
+    return Request(id=request_id, verb=verb, requested_at=requested_at, args=args, path=path)
+
+
+# ------------------------------------------------------------------- status
+
+
+class Status:
+    """The status file, rewritten atomically at every step."""
+
+    def __init__(self, directory: Path, request_id: str, *, of: int = 1) -> None:
+        self.path = directory / f"{request_id}{STATUS_SUFFIX}"
+        self.id = request_id
+        self.of = of
+        self.step = 0
+
+    def write(
+        self,
+        state: str,
+        *,
+        step: int | None = None,
+        message: str = "",
+        error: str | None = None,
+    ) -> None:
+        if step is not None:
+            self.step = step
+        body = {
+            "id": self.id,
+            "state": state,
+            "step": self.step,
+            "of": self.of,
+            "message": message,
+            "error": error,
+            "finished_at": bootstate.now_iso() if state in ("done", "failed") else None,
+        }
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(body, handle, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, self.path)
+
+    def step_to(self, step: int, message: str) -> None:
+        log(f"{self.id} step {step}/{self.of}: {message}")
+        self.write("running", step=step, message=message)
+
+
+# ---------------------------------------------------------------- the verbs
+
+
+@dataclass
+class Context:
+    """What a verb may use. Injected so the harness and the tests can steer it."""
+
+    status: Status
+    request: Request
+    boot_state: Path = BOOT_STATE
+    app_dir: Path = APP_DIR
+    db: Path = DB
+    snapshots: Path = SNAPSHOTS
+    dropin_dir: Path = DROPIN_DIR
+    watchdog_suspend_s: float = WATCHDOG_SUSPEND_S
+    core_unit: str = CORE_UNIT
+    boot_dir: Path = BOOT_DIR
+    by_partuuid: Path = BY_PARTUUID
+    proc_cmdline: Path = PROC_CMDLINE
+    slot_mount: Path = SLOT_MOUNT
+    partitions_env: Path = slots.PARTITIONS_ENV
+    host_fstab: Path = Path("/etc/fstab")
+    host_machine_id: Path = Path("/etc/machine-id")
+    emergency_reason: Path = emergency_reason.DEFAULT_PATH
+    emergency_alert_marker: Path = emergency.ALERT_MARKER_PATH
+    nginx_sites_enabled: Path = emergency.NGINX_SITES_ENABLED
+    nginx_sites_available: Path = emergency.NGINX_SITES_AVAILABLE
+    #: How long a first install waits, after its watchdog window, for the new
+    #: version's healthy marker before it will end emergency mode.
+    healthy_wait_s: float = FIRST_INSTALL_HEALTHY_WAIT_S
+    run: Callable[[Sequence[str]], subprocess.CompletedProcess[str]] | None = None
+
+    def command(self, argv: Sequence[str], *, timeout: float = 300.0) -> str:
+        if self.run is not None:
+            done = self.run(argv)
+        else:
+            done = subprocess.run(
+                list(argv), capture_output=True, text=True, timeout=timeout, check=False
+            )
+        if done.returncode != 0:
+            detail = (done.stderr or done.stdout or "").strip()[:400]
+            raise Failed(f"{' '.join(argv)} failed ({done.returncode}): {detail}")
+        return done.stdout
+
+
+#: A validator answers with the value it accepted, which is not always a
+#: string: watchdog_window_s is a bounded integer.
+Validator = Callable[[object], Any]
+
+
+@dataclass(frozen=True)
+class Verb:
+    """One verb: the arguments it accepts, and what carries it out.
+
+    Validation lives entirely in ``args``/``required``, so a later task adds a
+    verb by adding a row here — no new argument may reach a handler without a
+    rule, and no handler ever has to re-check what a rule already covers.
+    """
+
+    name: str
+    steps: int
+    args: Mapping[str, Validator] = field(default_factory=dict)
+    required: frozenset[str] = frozenset()
+    handler: Callable[[Context], None] | None = None
+    #: The §16.8 progress operation the application relays this as, if any.
+    operation: str | None = None
+
+    def validate(self, raw: Mapping[str, Any]) -> dict[str, Any]:
+        unknown = sorted(set(raw) - set(self.args))
+        if unknown:
+            raise Refused(f"{self.name} does not accept {', '.join(unknown)}")
+        missing = sorted(self.required - set(raw))
+        if missing:
+            raise Refused(f"{self.name} needs {', '.join(missing)}")
+        return {key: self.args[key](raw[key]) for key in raw}
+
+
+def named(validator: Callable[..., str], name: str) -> Validator:
+    return lambda value: validator(value, name=name)
+
+
+# -- backup-now ----------------------------------------------------------------
+#
+# "Back up now" (contracts §2, Q3) runs the same tool the nightly timer does,
+# as the auditorium user — via runuser, the same pattern avc-reset-password
+# uses — so the archive and its destinations end up owned the way the nightly
+# job leaves them, not root. Nothing here needs to be re-verified against the
+# trust anchors (§6.11): this verb runs code already on this build, not
+# something the request carried in.
+
+BACKUP_VENV_PYTHON = "/opt/auditorium/venv/bin/python"
+BACKUP_APP_USER = "auditorium"
+BACKUP_TIMEOUT_S = 1800.0  # matches this unit's own TimeoutStartSec
+
+
+def do_backup_now(ctx: Context) -> None:
+    ctx.status.step_to(1, "Starting the backup")
+    ctx.status.step_to(2, "Running the backup job")
+    try:
+        ctx.command(
+            [
+                "runuser",
+                "-u",
+                BACKUP_APP_USER,
+                "--",
+                BACKUP_VENV_PYTHON,
+                "-m",
+                "proskenion.tools.backup",
+                "--source",
+                "manual",
+            ],
+            timeout=BACKUP_TIMEOUT_S,
+        )
+    except Failed as exc:
+        # A non-zero exit means the backup job itself failed (§13.4) — an
+        # outcome already recorded in system_state for the caller to read.
+        # Re-raising here would report "Back up now" as unable to start when
+        # what actually happened is that it ran and the backup did not
+        # succeed; logging it is enough.
+        log(f"backup-now: the backup job reported a failure: {exc}")
+    ctx.status.step_to(3, "Backup job finished")
+    ctx.status.step_to(4, "Done")
+
+
+# -- restart-core -------------------------------------------------------------
+
+
+def _restart_core_unit(ctx: Context) -> None:
+    """``systemctl restart``, judged by where the unit ends up.
+
+    A restart that arrives while another is still running, or that lands on
+    the unit's own start rate limit (``StartLimitBurst=3``, which exists so
+    three failed starts fire the rollback), can exit non-zero although the
+    service is up moments later: systemd cancels the superseded job. Reporting
+    that as a failure would tell an operator the appliance did not restart
+    when it did — and would fail a queued request behind one that succeeded.
+
+    So the exit status is a hint, not the verdict: on a non-zero exit the unit
+    is given a few seconds to settle, and only a unit that is not running by
+    then is a failure. A unit that is running is reported as restarted,
+    whichever job actually did it.
+    """
+    try:
+        ctx.command(["systemctl", "restart", ctx.core_unit])
+        return
+    except Failed as exc:
+        deadline = time.monotonic() + RESTART_SETTLE_S
+        while time.monotonic() < deadline:
+            if _unit_is_active(ctx):
+                log(f"restart-core: {exc}; the unit is running, so the restart stands")
+                return
+            time.sleep(WATCHDOG_POLL_S)
+        raise
+
+
+def _unit_is_active(ctx: Context) -> bool:
+    return _unit_state(ctx) == "active"
+
+
+def do_restart_core(ctx: Context) -> None:
+    """Restart the application, optionally behind §4.7's widened watchdog window.
+
+    The window exists for §14.5: a version that has just been installed may
+    take longer to reach its first keep-alive than one that has been running
+    for months, and a slow first start must not be mistaken for a hang. The
+    application asks for it by passing `watchdog_window_s`; this script
+    decides both the bound and what the drop-in contains.
+
+    The window closes when the service is up or when it expires, whichever is
+    first, because once the service is notifying there is nothing left for a
+    wider window to protect — and leaving it open would blunt the watchdog for
+    no reason.
+    """
+    window_s = ctx.request.args.get("watchdog_window_s")
+    ctx.status.step_to(1, "Restarting the application")
+    if not window_s:
+        ctx.command(["systemctl", "reset-failed", ctx.core_unit])
+        _restart_core_unit(ctx)
+        ctx.status.step_to(2, "Application restarted")
+        return
+
+    _install_watchdog_dropin(ctx)
+    ctx.command(["systemctl", "daemon-reload"])
+    try:
+        ctx.command(["systemctl", "reset-failed", ctx.core_unit])
+        try:
+            _restart_core_unit(ctx)
+        finally:
+            # Held open across a failed restart too: a start that timed out
+            # while the service was still coming up is exactly the case the
+            # window is for, and closing it early would be the worst moment.
+            _hold_watchdog_window(ctx, float(window_s))
+    finally:
+        _remove_watchdog_dropin(ctx)
+        ctx.command(["systemctl", "daemon-reload"])
+    ctx.status.step_to(2, "Application restarted")
+
+
+def _hold_watchdog_window(ctx: Context, window_s: float) -> None:
+    """Wait until the unit has settled, or the window expires — whichever first."""
+    deadline = time.monotonic() + min(window_s, float(MAX_WATCHDOG_WINDOW_S))
+    while time.monotonic() < deadline:
+        if _unit_state(ctx) != "activating":
+            return
+        time.sleep(WATCHDOG_POLL_S)
+    log(f"the {window_s:g} s watchdog window expired with {ctx.core_unit} still activating")
+
+
+def _unit_state(ctx: Context) -> str:
+    """The unit's ActiveState.
+
+    `systemctl show` rather than `is-active`, which exits non-zero for every
+    state but active — so the state would arrive as the text of an exception
+    and have to be parsed back out of it.
+    """
+    try:
+        return ctx.command(
+            ["systemctl", "show", "-p", "ActiveState", "--value", ctx.core_unit], timeout=10.0
+        ).strip()
+    except Failed as exc:
+        log(f"cannot read {ctx.core_unit}'s state: {exc}")
+        return "unknown"
+
+
+# -- apply-network --------------------------------------------------------------
+
+
+def do_apply_network(ctx: Context) -> None:
+    """Re-render and reload from system.json — hostname, addressing and the
+    firewall (contracts §2, §4). No arguments: everything comes from
+    ``/data/config/system.json``, which ``auditorium-config-apply`` re-reads
+    itself, the same file the application just wrote directly (it is not
+    privileged, §4.3's pattern 1) before asking for this.
+    """
+    ctx.status.step_to(1, "Reading system.json")
+    ctx.status.step_to(2, "Applying network configuration")
+    ctx.command([str(CONFIG_APPLY)])
+    ctx.status.step_to(3, "Network configuration applied")
+
+
+# -- reboot -------------------------------------------------------------------
+
+
+def do_reboot(ctx: Context) -> None:
+    mode = ctx.request.args.get("mode", "normal")
+    ctx.status.step_to(1, "Rebooting" if mode == "normal" else "Rebooting into the staged slot")
+    # The machine goes away inside the next call, so the terminal status is
+    # written first: the application polls this file and would otherwise see
+    # an operation that never finished.
+    ctx.status.write("done", step=1, message="Rebooting")
+    if mode == "tryboot":
+        # §14.4: the Raspberry Pi bootloader reads tryboot.txt for one boot and
+        # falls back to config.txt by itself if that slot does not come up.
+        ctx.command(["reboot", "0 tryboot"])
+    else:
+        ctx.command(["systemctl", "reboot"])
+
+
+# -- apply-update -------------------------------------------------------------
+
+
+def do_apply_update(ctx: Context) -> None:
+    version = ctx.request.args["version"]
+    package = ctx.request.args["package"]
+    destination = ctx.app_dir / version
+
+    with open_confined(package, name="package") as fd:
+        ctx.status.step_to(1, "Verifying the package")
+        manifest = packages.verify_package(Path(fd_path(fd, package)), expect_type="app")
+        declared = _manifest_version(manifest)
+        if declared is not None and declared != version:
+            raise Refused(
+                f"the package is {declared}, not the {version} the request asked to apply"
+            )
+
+        ctx.status.step_to(2, f"Extracting {version}")
+        staging = ctx.app_dir / f".apply-{version}.{os.getpid()}"
+        _reset_dir(staging)
+        try:
+            _extract_app(Path(fd_path(fd, package)), staging)
+        except Exception:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+
+    previous = bootstate.current_version(ctx.app_dir)
+
+    ctx.status.step_to(3, "Capturing a database snapshot")
+    snapshot = _snapshot_database(ctx, version)
+
+    ctx.status.step_to(4, f"Installing {version}")
+    superseded = ctx.app_dir / f".superseded-{version}.{os.getpid()}"
+    if destination.exists() or destination.is_symlink():
+        os.replace(destination, superseded)
+    try:
+        os.replace(staging, destination)
+    except OSError:
+        if superseded.exists():
+            os.replace(superseded, destination)
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    shutil.rmtree(superseded, ignore_errors=True)
+    bootstate.merge(
+        {
+            "update": {
+                "from": previous,
+                "to": version,
+                "snapshot": str(snapshot) if snapshot else None,
+                "at": bootstate.now_iso(),
+            }
+        },
+        path=ctx.boot_state,
+    )
+    _repoint(ctx.app_dir, version)
+
+    ctx.status.step_to(5, "Restarting the application")
+    _install_watchdog_dropin(ctx)
+    try:
+        ctx.command(["systemctl", "daemon-reload"])
+        ctx.command(["systemctl", "reset-failed", ctx.core_unit])
+        ctx.command(["systemctl", "restart", ctx.core_unit])
+        ctx.status.step_to(6, "Restoring the watchdog window")
+        # §4.7: the new version gets 60 s of slack before a slow first start
+        # counts as a hang. Waiting here rather than leaving the drop-in for
+        # someone else to remove is what makes "applied and removed" a
+        # property of one operation.
+        time.sleep(ctx.watchdog_suspend_s)
+    finally:
+        _remove_watchdog_dropin(ctx)
+        ctx.command(["systemctl", "daemon-reload"])
+    _leave_not_installed(ctx, version)
+
+
+def _leave_not_installed(ctx: Context, version: str) -> None:
+    """End emergency mode entered as ``not_installed``, once ``version`` runs healthily.
+
+    A freshly built appliance boots with no application: the core fails, the
+    rollback enters emergency mode as ``not_installed``, and nginx serves the
+    emergency page. Emergency mode otherwise ends only on a reboot (§4.6), so
+    the first install used to report success while nginx went on serving that
+    page in front of the running application (the rebuilt appliance, 25
+    September 2026). This is the step that ends it — here, because this is
+    the one place that knows an application has just been installed and has
+    watched it start. The decision about *which* reasons an install may end
+    is :func:`auditorium_emergency.end_not_installed`'s: only
+    ``not_installed``, never a real fault.
+
+    "Healthy" is the application's own marker (§14.5's 30 s of running,
+    written to boot-state.json by the version it names) while the unit is
+    active — the same evidence the rollback trusts. Without it, emergency
+    mode stays and a reboot ends it the ordinary way.
+    """
+    document = emergency_reason.read(ctx.emergency_reason)
+    if document is None:
+        return
+    if document.get("reason") != "not_installed":
+        log(
+            f"{version} installed; emergency mode ({document.get('reason')}) is a fault an "
+            "install does not clear — reboot to leave it (§4.6)"
+        )
+        return
+    deadline = time.monotonic() + ctx.healthy_wait_s
+    while True:
+        try:
+            healthy = (bootstate.read(ctx.boot_state).get("healthy") or {}).get("version")
+        except (OSError, bootstate.BootStateError):
+            healthy = None
+        if healthy == version and _unit_is_active(ctx):
+            break
+        if time.monotonic() >= deadline:
+            log(
+                f"{version} did not report healthy within {ctx.healthy_wait_s:g} s; "
+                "emergency mode (not_installed) stays until a reboot"
+            )
+            return
+        time.sleep(1.0)
+
+    def run(argv: Sequence[str]) -> int:
+        try:
+            ctx.command(argv, timeout=60.0)
+        except Failed as exc:
+            log(str(exc))
+            return 1
+        return 0
+
+    outcome = emergency.end_not_installed(
+        reason_path=ctx.emergency_reason,
+        marker_path=ctx.emergency_alert_marker,
+        sites_enabled=ctx.nginx_sites_enabled,
+        sites_available=ctx.nginx_sites_available,
+        run=run,
+    )
+    if outcome == "ended":
+        log(f"{version} is healthy: emergency mode (not_installed) ended, nginx serves it")
+    else:
+        log(f"{version} is healthy, but emergency mode could not be ended ({outcome}); reboot")
+
+
+def _manifest_version(manifest: object) -> str | None:
+    if isinstance(manifest, Mapping):
+        value = manifest.get("version")
+        return value if isinstance(value, str) else None
+    value = getattr(manifest, "version", None)
+    return value if isinstance(value, str) else None
+
+
+#: A version directory. nginx's workers run as www-data and serve
+#: /opt/auditorium/web through it (and through /data/app, which build.sh makes
+#: 0755 too), so it must be traversable by others; at 0750 the interface was a
+#: 500 (the CM5, 24 September 2026). Nothing in a version is secret:
+#: config.toml is a symlink into 0750 /data/config, which stays closed.
+VERSION_DIR_MODE = 0o755
+
+
+def _reset_dir(path: Path) -> None:
+    """An empty staging directory that becomes the version directory by rename."""
+    shutil.rmtree(path, ignore_errors=True)
+    path.mkdir(parents=True)
+    # Explicit rather than mkdir's mode argument, which the umask can narrow.
+    # Only the directory just made: /data/app itself belongs to the
+    # application, and root changing the mode of whatever that name resolves
+    # to would be a primitive handed to a compromised application. build.sh
+    # and first-boot.sh set it.
+    os.chmod(path, VERSION_DIR_MODE)
+    os.chown(path, APP_UID, APP_UID)
+
+
+def _extract_app(package: Path, destination: Path) -> None:
+    """Unpack the verified package's payload into ``destination``.
+
+    The verifier has already rejected anything outside ``payload/`` and every
+    link, device and escaping path (contracts §3). This still extracts with
+    ``filter="data"`` — the same rules, applied by tarfile — because a second
+    check costs nothing and the extraction must not depend on the verifier
+    having been thorough.
+    """
+    with tarfile.open(package, mode="r:*") as archive:
+        members = [m for m in archive.getmembers() if m.name.startswith("payload/")]
+        if not members:
+            raise Failed("the package carries no payload/ members")
+        archive.extractall(destination, members=members, filter="data")
+    payload = destination / "payload"
+    inner = _single_app_archive(payload)
+    if inner is None:
+        # A payload that is already a tree: move it up into place.
+        for entry in payload.iterdir():
+            os.replace(entry, destination / entry.name)
+    else:
+        _unpack_stream(inner, destination)
+    shutil.rmtree(payload, ignore_errors=True)
+    link_bootstrap_config(destination)
+    _chown_tree(destination)
+
+
+def link_bootstrap_config(destination: Path, target: Path = BOOTSTRAP_CONFIG) -> None:
+    """Point ``destination/config.toml`` at this machine's bootstrap file (§4.14).
+
+    Whatever a package put at that name is replaced: the bootstrap file names
+    this machine's database and log paths, and nothing in a package may choose
+    them.
+    """
+    link = destination / CONFIG_LINK
+    if link.is_symlink() or link.exists():
+        if link.is_dir() and not link.is_symlink():
+            shutil.rmtree(link)
+        else:
+            link.unlink()
+    os.symlink(target, link)
+
+
+def _single_app_archive(payload: Path) -> Path | None:
+    for name in ("app.tar.zst", "app.tar.gz", "app.tar"):
+        candidate = payload / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _unpack_stream(archive: Path, destination: Path) -> None:
+    if archive.name.endswith(".zst"):
+        # Python 3.13 has no zstd module; Debian 13 ships the reference tool.
+        with subprocess.Popen(
+            ["zstd", "-dc", str(archive)], stdout=subprocess.PIPE
+        ) as decompress:
+            with tarfile.open(fileobj=decompress.stdout, mode="r|") as inner:
+                inner.extractall(destination, filter="data")
+            if decompress.wait() != 0:
+                raise Failed(f"zstd could not decompress {archive.name}")
+    else:
+        with tarfile.open(archive, mode="r:*") as inner:
+            inner.extractall(destination, filter="data")
+
+
+def _chown_tree(root: Path) -> None:
+    os.chown(root, APP_UID, APP_UID)
+    for directory, dirnames, filenames in os.walk(root):
+        for name in dirnames + filenames:
+            try:
+                os.chown(os.path.join(directory, name), APP_UID, APP_UID, follow_symlinks=False)
+            except OSError:
+                pass
+
+
+def _snapshot_database(ctx: Context, version: str) -> Path | None:
+    """§14.2's pre-update snapshot, taken with SQLite's online backup API.
+
+    A failure here stops the update before anything has been swapped, because
+    an update with no way back is worse than an update that did not happen.
+    """
+    if not ctx.db.exists():
+        log("no database yet; nothing to snapshot")
+        return None
+    ctx.snapshots.mkdir(parents=True, exist_ok=True)
+    target = ctx.snapshots / f"pre-update-{version}.db"
+    tmp = target.with_name(target.name + ".tmp")
+    try:
+        source = sqlite3.connect(f"file:{ctx.db}?mode=ro", uri=True)
+        try:
+            copy = sqlite3.connect(tmp)
+            try:
+                source.backup(copy)
+            finally:
+                copy.close()
+        finally:
+            source.close()
+        os.chmod(tmp, 0o640)
+        os.chown(tmp, APP_UID, APP_UID)
+        os.replace(tmp, target)
+    except (sqlite3.Error, OSError) as exc:
+        tmp.unlink(missing_ok=True)
+        raise Failed(f"could not snapshot {ctx.db}: {exc}") from exc
+    return target
+
+
+def _repoint(app_dir: Path, version: str) -> None:
+    """§14.2's atomic swap: symlink beside the target, then rename over it."""
+    tmp = app_dir / f".tmp-{os.getpid()}"
+    if tmp.is_symlink() or tmp.exists():
+        tmp.unlink()
+    os.symlink(version, tmp)
+    os.replace(tmp, app_dir / "current")
+
+
+def _dropin_body() -> str:
+    try:
+        text = DROPIN_RECIPE.read_text(encoding="utf-8")
+    except OSError:
+        return DROPIN_FALLBACK
+    return text if "WatchdogSec" in text else DROPIN_FALLBACK
+
+
+def _install_watchdog_dropin(ctx: Context) -> None:
+    """Widen WatchdogSec for the first seconds after an update (§4.7).
+
+    Under /run, never /etc: the read-only root cannot hold it and it must not
+    survive a reboot if this script is killed between installing and removing
+    it.
+    """
+    ctx.dropin_dir.mkdir(parents=True, exist_ok=True)
+    (ctx.dropin_dir / DROPIN_NAME).write_text(_dropin_body(), encoding="utf-8")
+
+
+def _remove_watchdog_dropin(ctx: Context) -> None:
+    (ctx.dropin_dir / DROPIN_NAME).unlink(missing_ok=True)
+    try:
+        ctx.dropin_dir.rmdir()
+    except OSError:
+        pass
+
+
+# -- the A/B root slots (§14.4, Q10, Q11) -------------------------------------
+#
+# Three verbs, in the order an OS upgrade uses them: write-slot fills the
+# standby slot, stage-slot arms one boot into it, and confirm-slot makes it
+# permanent once it has proved itself. Nothing here ever touches the running
+# slot, and nothing is written outside /data until the package has verified
+# against the trust anchors on the read-only root (§6.11).
+
+
+def _kernel_root_spec(ctx: Context) -> str | None:
+    """The ``root=`` value the running kernel was given."""
+    try:
+        cmdline = ctx.proc_cmdline.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for token in cmdline.split():
+        if token.startswith("root="):
+            return token[len("root=") :]
+    return None
+
+
+def _slot_table(ctx: Context) -> dict[str, str]:
+    """``boot-state.json``'s slot letter to root PARTUUID map (contracts §1)."""
+    table = bootstate.read(ctx.boot_state).get("slots") or {}
+    if not isinstance(table, dict):
+        raise Failed(f"{ctx.boot_state} has no usable slot table")
+    return {str(k): str(v) for k, v in table.items() if k in ("a", "b")}
+
+
+def active_slot(ctx: Context) -> str:
+    """Which root slot is running, from the kernel first and the record second.
+
+    The kernel command line is the fact: it names the partition this system
+    actually booted from. ``active_slot`` in ``boot-state.json`` is a record,
+    and a record is what would be stale if a confirm were interrupted. Both
+    are consulted, in that order, and a machine where neither answers is one
+    where nothing may be written to either slot.
+    """
+    table = _slot_table(ctx)
+    spec = _kernel_root_spec(ctx)
+    if spec is not None and spec.upper().startswith("PARTUUID="):
+        wanted = spec.split("=", 1)[1].lower()
+        for letter, partuuid in table.items():
+            if partuuid.lower() == wanted:
+                return letter
+    recorded = bootstate.read(ctx.boot_state).get("active_slot")
+    if recorded in ("a", "b"):
+        return str(recorded)
+    raise Failed(
+        f"cannot tell which root slot is running: the kernel's {spec!r} matches no "
+        f"PARTUUID in {ctx.boot_state} and no active_slot is recorded there"
+    )
+
+
+def _slot_partuuid(ctx: Context, slot: str) -> str:
+    table = _slot_table(ctx)
+    if slot not in table:
+        raise Failed(f"{ctx.boot_state} records no PARTUUID for slot {slot}")
+    return slots.check_partuuid(table[slot], what=f"the slot {slot} root PARTUUID")
+
+
+def _slot_device(ctx: Context, slot: str, *, active: str) -> str:
+    """The block device holding ``slot``'s root, with the running one refused.
+
+    Two independent checks stand between a request and the running root: the
+    slot letter is compared with the one the kernel booted, and the device the
+    standby's PARTUUID resolves to is compared with the device the active
+    slot's does. A slot table that has been edited to point both letters at
+    one partition is caught by the second.
+    """
+    if slot == active:
+        raise Refused(f"slot {slot} is the running root slot; write-slot never touches it")
+    device = _resolve_partuuid(ctx, _slot_partuuid(ctx, slot))
+    running = _resolve_partuuid(ctx, _slot_partuuid(ctx, active))
+    if device == running:
+        raise Refused(
+            f"slot {slot} resolves to {device}, which is the running root; refusing"
+        )
+    return device
+
+
+def _resolve_partuuid(ctx: Context, partuuid: str) -> str:
+    link = ctx.by_partuuid / partuuid
+    try:
+        device = os.path.realpath(link)
+        mode = os.stat(device).st_mode
+    except OSError as exc:
+        raise Failed(f"{link} does not resolve to a partition: {exc}") from exc
+    if not stat.S_ISBLK(mode):
+        raise Failed(f"{device} is not a block device")
+    return device
+
+
+@contextmanager
+def boot_partition_writable(ctx: Context) -> Iterator[Path]:
+    """Remount the boot partition read-write for the duration (§2.3, §4.3).
+
+    It is read-only in normal operation and read-write only during a
+    deliberate OS upgrade, so the window is exactly this block. The remount
+    back is in a ``finally``: a failure part way through a slot write must not
+    leave p1 writable until the next reboot.
+    """
+    ctx.command(["mount", "-o", "remount,rw", str(ctx.boot_dir)])
+    try:
+        yield ctx.boot_dir
+    finally:
+        try:
+            ctx.command(["mount", "-o", "remount,ro", str(ctx.boot_dir)])
+        except Failed as exc:
+            log(f"could not remount {ctx.boot_dir} read-only: {exc}")
+
+
+def _manifest_members(manifest: object) -> list[tuple[str, str, int]]:
+    """``(path, sha256, size)`` for every member the verified manifest names."""
+    raw: Any
+    if isinstance(manifest, Mapping):
+        raw = manifest.get("members") or ()
+    else:
+        raw = getattr(manifest, "members", ()) or ()
+    found: list[tuple[str, str, int]] = []
+    for entry in raw:
+        if isinstance(entry, Mapping):
+            path, digest, size = entry.get("path"), entry.get("sha256"), entry.get("size")
+        else:
+            path = getattr(entry, "path", None)
+            digest = getattr(entry, "sha256", None)
+            size = getattr(entry, "size", None)
+        if isinstance(path, str):
+            found.append((path, digest if isinstance(digest, str) else "", int(size or 0)))
+    return found
+
+
+def _package_manifest_bytes(package: Path) -> bytes:
+    with tarfile.open(package, mode="r:*") as archive:
+        member = archive.extractfile("manifest.json")
+        if member is None:
+            raise Failed("the package carries no manifest.json")
+        return member.read(packages_manifest_limit())
+
+
+def packages_manifest_limit() -> int:
+    """A manifest is small; anything larger is not one."""
+    return 1 << 20
+
+
+def _check_declared_manifest(package: Path, declared: str) -> None:
+    """The manifest the application reviewed must be the one that was signed.
+
+    The request carries both the package and the manifest the application
+    extracted from it for the admin's review card. They are compared byte for
+    byte here, so a package swapped in ``/data/tmp`` between the review and
+    this call — the application is unprivileged and owns that directory — is
+    refused rather than written to a slot under a manifest nobody saw.
+    """
+    signed = _package_manifest_bytes(package)
+    with open_confined(declared, name="manifest") as fd:
+        with os.fdopen(os.dup(fd), "rb") as handle:
+            offered = handle.read(packages_manifest_limit() + 1)
+    if offered.strip() != signed.strip():
+        raise Refused(
+            "the manifest the request carries is not the manifest the package is signed for"
+        )
+
+
+def _copy_hashed(reader: Any, write: Callable[[bytes], Any], expect: tuple[str, int]) -> None:
+    """Stream ``reader`` through ``write``, checking the manifest's digest and size.
+
+    The verifier has already hashed every member once. This hashes the bytes
+    that are actually written, which is a different claim: the pass that
+    writes is the pass that checks, and a root image is far too large to hold
+    anywhere while the two passes are compared.
+    """
+    digest, size = expect
+    running = hashlib.sha256()
+    total = 0
+    while True:
+        chunk = reader.read(IMAGE_CHUNK)
+        if not chunk:
+            break
+        running.update(chunk)
+        total += len(chunk)
+        write(chunk)
+    if size and total != size:
+        raise Failed(f"the member is {total} bytes, not the {size} its manifest declares")
+    if digest and running.hexdigest() != digest:
+        raise Failed("the member's SHA-256 does not match its manifest")
+
+
+def _write_image_to_device(ctx: Context, reader: Any, name: str, device: str, expect: tuple[str, int]) -> None:
+    """Decompress the root image straight onto the standby partition.
+
+    Nothing lands on ``/data`` on the way: a root image is larger than this
+    machine's memory and would be a second copy of it on the partition the
+    database lives on (Q9). ``zstd`` writes to the partition's descriptor
+    directly, and the descriptor is ``fsync``ed before it is closed so the
+    write is on the medium rather than in the page cache when the boot tree
+    starts naming it.
+    """
+    fd = os.open(device, os.O_WRONLY)
+    try:
+        if name.endswith(".zst") or name.endswith(".gz"):
+            # Python 3.13 has no zstd module; Debian 13 ships both reference
+            # tools. An OS package's root is zstd; a restored system image's
+            # is gzip (P6-T10, matching the .img.gz naming §2.4 and contracts
+            # §8 use) — either way the decompressor, not this function, is
+            # what differs.
+            tool = "zstd" if name.endswith(".zst") else "gzip"
+            with subprocess.Popen(
+                [tool, "-dc"], stdin=subprocess.PIPE, stdout=fd
+            ) as decompress:
+                assert decompress.stdin is not None
+                try:
+                    _copy_hashed(reader, decompress.stdin.write, expect)
+                finally:
+                    decompress.stdin.close()
+                if decompress.wait() != 0:
+                    raise Failed(f"{tool} could not decompress {name} onto {device}")
+        else:
+            _copy_hashed(reader, lambda chunk: _write_all(fd, chunk), expect)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _write_all(fd: int, data: bytes) -> None:
+    """Write every byte. ``os.write`` may write fewer than it is given."""
+    view = memoryview(data)
+    while view:
+        view = view[os.write(fd, view) :]
+
+
+def _write_slot_host_files(ctx: Context, device: str, root_partuuid: str) -> None:
+    """Write this machine's ``/etc/fstab`` and ``/etc/machine-id`` into the slot
+    just written (§14.1, Q10). Both are this machine's, not the package's.
+
+    The package's copy names the build host's partitions. This one is the
+    package's copy with every PARTUUID replaced by the one this machine has
+    for that mount point, so a filesystem a new OS added survives while none
+    of the IDs is the build host's. The four non-root IDs come from
+    ``partitions.env``, which the image build wrote, and from the running
+    root's own fstab when that file has been lost.
+    """
+    ctx.slot_mount.mkdir(parents=True, exist_ok=True)
+    ctx.command(["mount", "-t", "ext4", device, str(ctx.slot_mount)])
+    try:
+        target = ctx.slot_mount / "etc" / "fstab"
+        try:
+            template = target.read_text(encoding="utf-8")
+        except OSError:
+            template = _host_fstab(ctx)
+        partitions = slots.read_partitions(ctx.partitions_env)
+        if not partitions:
+            partitions = slots.partitions_from_fstab(_host_fstab(ctx))
+        partitions["/"] = root_partuuid
+        slots.fat_write(target, slots.render_fstab(template, partitions=partitions), mode=0o644)
+        _stamp_machine_id(ctx, ctx.slot_mount)
+    finally:
+        ctx.command(["umount", str(ctx.slot_mount)])
+
+
+#: A machine ID as systemd writes it: exactly 32 lowercase hexadecimal digits.
+MACHINE_ID = re.compile(r"[0-9a-f]{32}")
+
+
+def _stamp_machine_id(ctx: Context, slot_root: Path) -> None:
+    """Carry this machine's identity into the slot just written.
+
+    Why it cannot be left to the package: the root is read-only under a RAM
+    overlay, so a machine-id systemd generates at boot is never kept. A slot
+    whose /etc/machine-id is "uninitialized" — as a distributable OS image's
+    must be — therefore boots as a *first boot every time*: a new random ID,
+    Debian's presets re-applied (which switched systemd-networkd back on and
+    cost two minutes a boot), first-boot-only units re-run, and the persistent
+    journal split into a fresh directory per boot, none of them ever vacuumed.
+    All of that was found on the CM5, 24 September 2026. The golden image
+    writes an ID into slot A when it is built; this is the same guarantee for
+    every slot an OS upgrade or an image restore writes afterwards.
+
+    Nothing to carry is not a failure: an appliance still on an image that
+    predates the fix has a per-boot ID, and copying that one is what stops it
+    changing. Only an ID that is not one at all is skipped.
+    """
+    try:
+        current = ctx.host_machine_id.read_text(encoding="ascii").strip()
+    except (OSError, UnicodeDecodeError):
+        current = ""
+    if not MACHINE_ID.fullmatch(current):
+        log(f"this machine has no usable machine-id ({current[:40]!r}); the slot keeps its own")
+        return
+    slots.fat_write(slot_root / "etc" / "machine-id", f"{current}\n", mode=0o444)
+
+
+def _host_fstab(ctx: Context) -> str:
+    try:
+        return ctx.host_fstab.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+#: write-slot fills a slot from either of two artefacts that verify against
+#: different anchors (contracts §3, Q13): an OS upgrade package, or a
+#: restored system image (P6-T10 reuses this verb exactly as an OS upgrade
+#: uses it). Neither is trusted from the request — only these two are ever
+#: tried, and :func:`packages.verify_package`'s own rule 5 refuses anything
+#: whose signed manifest disagrees with whichever of them is picked.
+SLOT_WRITE_TYPES: tuple[str, ...] = ("os", "image")
+
+
+def _expect_type_for_slot_write(package: Path) -> str:
+    """Which anchors a write-slot call verifies this package against.
+
+    :func:`packages.peek_type` reads the *unverified* manifest, so this is a
+    routing hint, not a trust decision — a package that claims to be an image
+    to reach the image anchors and is not still fails the signature check
+    against them. Ambiguous or unreadable defaults to ``"os"``, the verb's
+    original and far more common caller.
+    """
+    peeked = packages.peek_type(package)
+    return peeked if peeked in SLOT_WRITE_TYPES else "os"
+
+
+def do_write_slot(ctx: Context) -> None:
+    """Fill the standby slot from a verified OS package or system image (§14.4, Q10, Q13).
+
+    The order is the safety: verify before anything is written outside
+    ``/data``; write the root image; write the one file inside it that cannot
+    come from the package; and build the boot tree in a staging directory that
+    only takes the slot's name once every file in it is on the medium. Nothing
+    here arms a boot — ``stage-slot`` does that, and until it runs this slot is
+    inert however far through this verb got.
+    """
+    slot = ctx.request.args["slot"]
+    package_arg = ctx.request.args["image"]
+    declared = ctx.request.args["manifest"]
+    active = active_slot(ctx)
+    device = _slot_device(ctx, slot, active=active)
+    root_partuuid = _slot_partuuid(ctx, slot)
+
+    with open_confined(package_arg, name="image") as fd:
+        package = Path(fd_path(fd, package_arg))
+        ctx.status.step_to(1, "Verifying the package")
+        expect_type = _expect_type_for_slot_write(package)
+        manifest = packages.verify_package(package, expect_type=expect_type)
+        _check_declared_manifest(package, declared)
+        version = _manifest_version(manifest)
+
+        ctx.status.step_to(2, f"Writing the root image to slot {slot}")
+        staging = ctx.boot_dir / f".{slots.slot_dirname(slot)}.incoming"
+        with boot_partition_writable(ctx):
+            shutil.rmtree(staging, ignore_errors=True)
+            staging.mkdir(parents=True)
+            _unpack_os_package(ctx, package, manifest, device=device, staging=staging)
+
+            ctx.status.step_to(3, f"Writing this machine's /etc/fstab and machine-id into slot {slot}")
+            _write_slot_host_files(ctx, device, root_partuuid)
+
+            ctx.status.step_to(4, f"Writing the slot-{slot} boot tree")
+            _finish_boot_tree(ctx, staging, slot, root_partuuid=root_partuuid, version=version)
+
+
+def _unpack_os_package(
+    ctx: Context, package: Path, manifest: object, *, device: str, staging: Path
+) -> None:
+    """One pass over the package: the root image to the partition, boot files to staging.
+
+    One pass rather than two because the container is read from end to end
+    either way and it is measured in gigabytes. Only members the signed
+    manifest names are written; anything else in the tar was already refused
+    by the verifier, and is ignored here as well rather than relied upon not
+    to be there.
+    """
+    expected = {path: (digest, size) for path, digest, size in _manifest_members(manifest)}
+    image_written = False
+    with tarfile.open(package, mode="r|*") as archive:
+        for info in archive:
+            if info.name not in expected or not info.isfile():
+                continue
+            reader = archive.extractfile(info)
+            if reader is None:
+                continue
+            if info.name in ROOT_IMAGE_MEMBERS:
+                _write_image_to_device(ctx, reader, info.name, device, expected[info.name])
+                image_written = True
+            elif info.name.startswith(BOOT_TREE_PREFIX):
+                relative = PurePosixPath(info.name).relative_to(BOOT_TREE_PREFIX)
+                target = staging.joinpath(*relative.parts)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                _write_member_file(target, reader, expected[info.name])
+    if not image_written:
+        raise Failed(
+            "the OS package carries no root image: expected one of "
+            + ", ".join(ROOT_IMAGE_MEMBERS)
+        )
+
+
+def _write_member_file(target: Path, reader: Any, expect: tuple[str, int]) -> None:
+    """Write one boot-tree file, checked, with FAT's rules (new file, fsync, rename)."""
+    tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            _copy_hashed(reader, handle.write, expect)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, target)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    slots.fsync_directory(target.parent)
+
+
+def _finish_boot_tree(
+    ctx: Context, staging: Path, slot: str, *, root_partuuid: str, version: str | None
+) -> None:
+    """Give the staged tree this machine's command line, then the slot's name.
+
+    ``cmdline.txt`` is rewritten rather than taken from the package: it names
+    a root partition, and the package cannot know this machine's (§14.1). Q10's
+    ``panic=10`` and bounded ``rootwait`` go on here, which is what makes a
+    slot that cannot mount its root fall back without a keyboard.
+
+    The directory swap is a delete and a rename rather than a rename over a
+    rename: a directory cannot replace a non-empty directory atomically, and
+    there is no atomic form of this on FAT. It is safe because the slot is
+    still inert — no ``tryboot.txt`` names it yet — so a machine that dies
+    inside the swap comes back on the slot it was already running and finds a
+    half-built directory nothing points at.
+    """
+    cmdline = staging / "cmdline.txt"
+    try:
+        template = cmdline.read_text(encoding="utf-8")
+    except OSError:
+        template = "console=tty1 rootfstype=ext4 fsck.repair=yes ro boot=overlay"
+    slots.fat_write(cmdline, slots.render_cmdline(template, root_partuuid=root_partuuid))
+    slots.fat_write(staging / slots.VERSION_FILENAME, f"{version or ''}\n")
+
+    final = ctx.boot_dir / slots.slot_dirname(slot)
+    shutil.rmtree(final, ignore_errors=True)
+    os.replace(staging, final)
+    slots.fsync_directory(ctx.boot_dir)
+    log(f"slot {slot} written: root={root_partuuid} version={version}")
+
+
+def slot_version(ctx: Context, slot: str) -> str | None:
+    """The OS version recorded in a slot's boot tree, if it has one."""
+    try:
+        text = (ctx.boot_dir / slots.slot_dirname(slot) / slots.VERSION_FILENAME).read_text(
+            encoding="utf-8"
+        )
+    except OSError:
+        return None
+    return text.strip() or None
+
+
+def do_stage_slot(ctx: Context) -> None:
+    """Arm one boot into ``slot`` and open its trial (§14.4, Q11).
+
+    ``tryboot.txt`` is ``config.txt`` with ``os_prefix=`` changed, and the
+    firmware reads it for exactly one boot: if that boot does not come up and
+    the machine reboots, it is back on ``config.txt`` and the previous slot
+    without anything having to notice. That is the whole fallback, and it is
+    why the write below has to be atomic — a truncated ``tryboot.txt`` is a
+    machine that does not boot at all.
+    """
+    slot = ctx.request.args["slot"]
+    active = active_slot(ctx)
+    if slot == active:
+        raise Refused(f"slot {slot} is already running; there is nothing to try")
+    tree = ctx.boot_dir / slots.slot_dirname(slot)
+    if not (tree / "cmdline.txt").is_file():
+        raise Refused(f"slot {slot} has no boot tree; write-slot has not filled it")
+
+    ctx.status.step_to(1, f"Arming one boot into slot {slot}")
+    config = ctx.boot_dir / "config.txt"
+    try:
+        text = config.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise Failed(f"{config} could not be read: {exc}") from exc
+    with boot_partition_writable(ctx):
+        slots.fat_write(ctx.boot_dir / "tryboot.txt", slots.with_os_prefix(text, slot))
+
+    ctx.status.step_to(2, f"Recording the trial of slot {slot}")
+    now = dt.datetime.now().astimezone()
+    deadline = now + dt.timedelta(
+        seconds=slots.TRIAL_BOOT_ALLOWANCE_S + slots.TRIAL_HEALTHY_S
+    )
+    bootstate.merge(
+        {
+            "staged": slot,
+            "trial": slots.trial_record(
+                slot,
+                slot_version(ctx, slot),
+                now=now.isoformat(timespec="seconds"),
+                deadline=deadline.isoformat(timespec="seconds"),
+            ),
+        },
+        path=ctx.boot_state,
+    )
+
+
+def do_confirm_slot(ctx: Context) -> None:
+    """Make the slot that is running permanent (§14.4).
+
+    Confirming is copying ``tryboot.txt`` over ``config.txt``: from then on
+    the ordinary boot path selects this slot and the one-shot is spent. It is
+    refused unless the slot named is the slot that is actually running — the
+    kernel command line, not the record — because confirming a slot nobody has
+    booted is how a machine ends up permanently pointed at a root it has never
+    started.
+    """
+    slot = ctx.request.args["slot"]
+    active = active_slot(ctx)
+    if slot != active:
+        raise Refused(
+            f"slot {slot} is not the running slot ({active}); only a slot that has "
+            "booted and proved itself may be confirmed"
+        )
+    tryboot = ctx.boot_dir / "tryboot.txt"
+    try:
+        text = tryboot.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise Failed(f"{tryboot} could not be read: {exc}") from exc
+    if f"os_prefix={slots.slot_dirname(slot)}/" not in text:
+        raise Refused(f"{tryboot} does not select slot {slot}; refusing to confirm")
+
+    ctx.status.step_to(1, f"Confirming slot {slot}")
+    with boot_partition_writable(ctx):
+        slots.fat_write(ctx.boot_dir / "config.txt", text)
+    bootstate.merge(
+        {"active_slot": slot, "last_known_good": slot, "staged": None, "trial": None},
+        path=ctx.boot_state,
+    )
+    log(f"slot {slot} confirmed: config.txt now selects {slots.slot_dirname(slot)}/")
+
+
+# -- capture-image (§13.6, Q13, contracts §3) ---------------------------------
+#
+# A manual, deliberate capture of the *active* slot's root partition plus its
+# slot-x/ boot tree, streamed straight into a signed image package the same
+# shape as an OS package's (write-slot already reads either — see
+# _expect_type_for_slot_write above). The application is running throughout:
+# the root filesystem is mounted read-only with an overlay for anything
+# written at runtime (§4.3), so what a live read sees is exactly what boots —
+# there is no writer to race, unlike a writable filesystem where a capture
+# mid-write could see a torn file.
+#
+# Two passes over the root partition would double an operation that already
+# moves several gigabytes on a machine with four, so the compressed image is
+# written once, straight to a staging file beside the final destination —
+# same filesystem, so the later rename is instant and cannot leave a partial
+# file under the name the application will list. Its hash is taken as it
+# streams (Q9), never by reading it back.
+
+
+def _boot_tree_files(ctx: Context, slot: str) -> list[tuple[str, Path]]:
+    """Every file in ``slot``'s boot tree, as ``(payload path, real path)``, sorted.
+
+    The boot partition is mounted read-only in normal operation (§2.3), so
+    this needs no remount — only write-slot and stage-slot touch it read-write.
+    """
+    tree = ctx.boot_dir / slots.slot_dirname(slot)
+    if not (tree / "cmdline.txt").is_file():
+        raise Refused(f"slot {slot} has no boot tree to capture; write-slot has not filled it")
+    found: list[tuple[str, Path]] = []
+    for root, dirnames, filenames in os.walk(tree):
+        dirnames.sort()
+        for filename in sorted(filenames):
+            real = Path(root) / filename
+            relative = real.relative_to(tree).as_posix()
+            found.append((f"{BOOT_TREE_PREFIX}{relative}", real))
+    if not found:
+        raise Failed(f"slot {slot}'s boot tree at {tree} carries no files")
+    found.sort(key=lambda item: item[0])
+    return found
+
+
+def _compress_device_to_file(device: str, staging: Path) -> tuple[str, int]:
+    """Gzip the raw bytes of ``device`` into a new file at ``staging``.
+
+    Returns the compressed file's ``(sha256, size)`` — of the bytes actually
+    on disk afterwards, not of the partition, the same "hash what was written"
+    discipline :func:`_copy_hashed` uses for the reverse direction in
+    write-slot. ``gzip`` names the image (Q4, §2.4's ``.img.gz``); the root
+    filesystem is read-only so a partition read while the application runs is
+    consistent, never torn (§4.3).
+    """
+    digest = hashlib.sha256()
+    total = 0
+    src = os.open(device, os.O_RDONLY)
+    try:
+        out = os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o640)
+        try:
+            with subprocess.Popen(
+                ["gzip", "-c"], stdin=subprocess.PIPE, stdout=out
+            ) as compress:
+                assert compress.stdin is not None
+                try:
+                    while True:
+                        chunk = os.read(src, IMAGE_CHUNK)
+                        if not chunk:
+                            break
+                        compress.stdin.write(chunk)
+                    compress.stdin.flush()
+                finally:
+                    compress.stdin.close()
+                if compress.wait() != 0:
+                    raise Failed(f"gzip could not compress {device}")
+            os.fsync(out)
+        finally:
+            os.close(out)
+    finally:
+        os.close(src)
+    # The compressed bytes are what the manifest hashes and what write-slot's
+    # own _copy_hashed will check on restore, so they are read back once,
+    # exactly as the payload will be read on the way into the final tar.
+    with open(staging, "rb") as handle:
+        while chunk := handle.read(IMAGE_CHUNK):
+            digest.update(chunk)
+            total += len(chunk)
+    return digest.hexdigest(), total
+
+
+def _write_tar_member(tar: tarfile.TarFile, name: str, data: bytes, *, mtime: int) -> None:
+    info = tarfile.TarInfo(name)
+    info.size = len(data)
+    info.mtime = mtime
+    info.mode = 0o644
+    info.type = tarfile.REGTYPE
+    tar.addfile(info, io.BytesIO(data))
+
+
+def _write_tar_file_member(
+    tar: tarfile.TarFile, name: str, source: Path, *, size: int, mtime: int
+) -> None:
+    info = tarfile.TarInfo(name)
+    info.size = size
+    info.mtime = mtime
+    info.mode = 0o644
+    info.type = tarfile.REGTYPE
+    with open(source, "rb") as handle:
+        tar.addfile(info, handle)
+
+
+def do_capture_image(ctx: Context) -> None:
+    """Capture the active slot to a signed system image (§13.6, Q13).
+
+    Only the *active* slot may be captured — the spec's "a compressed image
+    of the active root slot" is not a choice the request gets to make, and
+    re-checking it here rather than trusting the application matches every
+    other verb's stance (Q2, §6.11).
+    """
+    slot = ctx.request.args["slot"]
+    destination = Path(ctx.request.args["destination"])
+    active = active_slot(ctx)
+    if slot != active:
+        raise Refused(
+            f"slot {slot} is not the running slot ({active}); "
+            "only the active slot's image may be captured (§13.6)"
+        )
+    if not IMAGE_FILENAME_RE.match(destination.name):
+        raise Refused(
+            f"destination {destination.name!r} is not named "
+            "auditorium-<version>-<stamp>.img.gz"
+        )
+    version = slot_version(ctx, slot)
+    if version is None or not bootstate.VERSION_RE.match(version):
+        raise Failed(f"slot {slot} records no usable OS version to capture ({version!r})")
+
+    # P6-T16 (docs/plans/phase-6-contracts.md's "what a captured image
+    # carries" addition) reads this machine's own six GPT PARTUUIDs from
+    # payload/partitions.env, in exactly the KEY=value shape
+    # appliance/image/build.sh already writes to this same file — so it is
+    # embedded verbatim, not reconstructed. Without it, an image cannot be
+    # restored onto a bare disk, which is the whole point of capturing one.
+    # Checked before anything privileged or slow, the same as every other
+    # cheap precondition above.
+    try:
+        partitions_env_bytes = ctx.partitions_env.read_bytes()
+    except OSError as exc:
+        raise Failed(
+            f"{ctx.partitions_env} could not be read: {exc}; a captured image "
+            "cannot be restored onto a replacement disk without it (P6-T16)"
+        ) from exc
+    if not partitions_env_bytes.strip():
+        raise Failed(f"{ctx.partitions_env} is empty; refusing to capture an unrestorable image")
+
+    device = _resolve_partuuid(ctx, _slot_partuuid(ctx, slot))
+    pkg = packages.load_packages_module()
+
+    ctx.status.step_to(1, "Verifying the image signing key")
+    signing_key = image_keys.load_signing_key(IMAGE_KEYS_DIR, packages_module=pkg)
+
+    ctx.status.step_to(2, f"Streaming the root partition of slot {slot}")
+    staging = destination.with_name(f".{destination.name}.{os.getpid()}.partial")
+    try:
+        root_sha256, root_size = _compress_device_to_file(device, staging)
+
+        ctx.status.step_to(3, "Capturing the boot tree")
+        boot_files = _boot_tree_files(ctx, slot)
+        members = [
+            pkg.Member(path="payload/root.img.gz", sha256=root_sha256, size=root_size),
+            pkg.Member(
+                path="payload/partitions.env",
+                sha256=hashlib.sha256(partitions_env_bytes).hexdigest(),
+                size=len(partitions_env_bytes),
+            ),
+        ]
+        boot_sizes: dict[str, int] = {}
+        for member_path, real_path in boot_files:
+            digest, size = pkg.hash_file(real_path)
+            members.append(pkg.Member(path=member_path, sha256=digest, size=size))
+            boot_sizes[member_path] = size
+
+        ctx.status.step_to(4, "Writing and signing the manifest")
+        created_at = bootstate.now_iso()
+        document = pkg.build_manifest_document(
+            package_type="image",
+            version=version,
+            created_at=created_at,
+            members=members,
+            description=f"Captured from slot {slot}",
+        )
+        manifest_bytes = pkg.canonical_manifest_bytes(document)
+        signature = pkg.sign_manifest(signing_key, manifest_bytes)
+        mtime = int(time.time())
+
+        with create_confined(str(destination), name="destination") as out_fd:
+            # Group auditorium: the application re-verifies the image the
+            # moment this returns (proskenion.core.images) and copies it to the
+            # USB stick, both as uid 900. Created root:root 0640 it could do
+            # neither. Owner stays root, so the application can read it but
+            # not rewrite it; write-slot re-verifies the signature regardless.
+            if POSIX:
+                os.fchown(out_fd, 0, APP_UID)
+            with os.fdopen(os.dup(out_fd), "wb") as handle:
+                with tarfile.open(fileobj=handle, mode="w", format=tarfile.USTAR_FORMAT) as tar:
+                    _write_tar_member(tar, "manifest.json", manifest_bytes, mtime=mtime)
+                    _write_tar_member(tar, "manifest.json.sig", signature, mtime=mtime)
+                    _write_tar_file_member(
+                        tar, "payload/root.img.gz", staging, size=root_size, mtime=mtime
+                    )
+                    _write_tar_member(
+                        tar, "payload/partitions.env", partitions_env_bytes, mtime=mtime
+                    )
+                    for member_path, real_path in boot_files:
+                        _write_tar_file_member(
+                            tar, member_path, real_path, size=boot_sizes[member_path], mtime=mtime
+                        )
+                handle.flush()
+                os.fsync(handle.fileno())
+    finally:
+        try:
+            staging.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    # P6-T16's recovery environment has no /srv/appliance to read (the disk
+    # that just failed may be the one that held it), so the anchor it trusts
+    # travels with the image instead: image-keys/*.pub beside the image file
+    # on whatever medium it is found on. Written here for the local copy;
+    # proskenion.core.images.ImagesService carries the same sidecar across
+    # when it copies the image to the USB stick.
+    _write_image_keys_sidecar(destination.parent)
+    log(f"captured slot {slot} ({version}) to {destination}")
+
+
+def _write_image_keys_sidecar(medium_dir: Path) -> None:
+    """Ensure ``<medium_dir>/image-keys/<PUBLIC_KEY_NAME>`` carries this
+    machine's own anchor (P6-T16), copied verbatim from
+    ``IMAGE_KEYS_DIR`` rather than reformatted, so the bytes on the medium are
+    identical to the ones this machine itself verifies against. Idempotent:
+    every capture signs with the same key, so an existing, identical sidecar
+    is left alone."""
+    _, source_public = image_keys.key_paths(IMAGE_KEYS_DIR)
+    try:
+        public_bytes = source_public.read_bytes()
+    except OSError as exc:
+        raise Failed(f"{source_public} could not be read: {exc}") from exc
+    sidecar_dir = medium_dir / "image-keys"
+    target = sidecar_dir / image_keys.PUBLIC_KEY_NAME
+    try:
+        if target.is_file() and target.read_bytes() == public_bytes:
+            return
+    except OSError:
+        pass
+    sidecar_dir.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    tmp.write_bytes(public_bytes)
+    os.replace(tmp, target)
+
+
+VERBS: dict[str, Verb] = {
+    verb.name: verb
+    for verb in (
+        Verb(
+            "restart-core",
+            steps=2,
+            args={"watchdog_window_s": named(watchdog_window_arg, "watchdog_window_s")},
+            handler=do_restart_core,
+        ),
+        Verb(
+            "reboot",
+            steps=1,
+            args={"mode": named(mode_arg, "mode")},
+            handler=do_reboot,
+        ),
+        Verb(
+            "apply-network", steps=3, operation="network_apply", handler=do_apply_network
+        ),
+        Verb(
+            "apply-update",
+            steps=6,
+            args={
+                "package": named(path_arg, "package"),
+                "version": named(version_arg, "version"),
+            },
+            required=frozenset({"package", "version"}),
+            handler=do_apply_update,
+            operation="update_apply",
+        ),
+        Verb(
+            "write-slot",
+            steps=5,
+            args={
+                "slot": named(slot_arg, "slot"),
+                "image": named(path_arg, "image"),
+                "manifest": named(path_arg, "manifest"),
+            },
+            required=frozenset({"slot", "image", "manifest"}),
+            handler=do_write_slot,
+            operation="os_write",
+        ),
+        Verb(
+            "stage-slot",
+            steps=2,
+            args={"slot": named(slot_arg, "slot")},
+            required=frozenset({"slot"}),
+            handler=do_stage_slot,
+            operation="os_stage",
+        ),
+        Verb(
+            "confirm-slot",
+            steps=1,
+            args={"slot": named(slot_arg, "slot")},
+            required=frozenset({"slot"}),
+            handler=do_confirm_slot,
+        ),
+        Verb(
+            "capture-image",
+            steps=4,
+            args={
+                "slot": named(slot_arg, "slot"),
+                "destination": named(path_arg, "destination"),
+            },
+            required=frozenset({"slot", "destination"}),
+            handler=do_capture_image,
+            operation="image_capture",
+        ),
+        Verb("backup-now", steps=4, handler=do_backup_now, operation="backup_run"),
+    )
+}
+
+
+# ------------------------------------------------------------------ dispatch
+
+
+def handle(request: Request, *, directory: Path, watchdog_suspend_s: float) -> bool:
+    verb = VERBS[request.verb]
+    status = Status(directory, request.id, of=verb.steps)
+    status.write("running", step=0, message=f"Starting {verb.name}")
+    ctx = Context(
+        status=status, request=request, watchdog_suspend_s=watchdog_suspend_s
+    )
+    if verb.handler is None:
+        message = f"{verb.name} is not implemented in this build"
+        log(f"{request.id}: {message}")
+        status.write("failed", message=message, error=message)
+        return False
+    try:
+        verb.handler(ctx)
+    except (Refused, Failed) as exc:
+        log(f"{request.id}: {verb.name} failed: {exc}")
+        status.write("failed", message=f"{verb.name} failed", error=str(exc))
+        return False
+    except Exception as exc:  # never leave a status saying "running" forever
+        log(f"{request.id}: {verb.name} raised {type(exc).__name__}: {exc}")
+        status.write("failed", message=f"{verb.name} failed", error=f"{type(exc).__name__}: {exc}")
+        return False
+    status.write("done", step=verb.steps, message=f"{verb.name} complete")
+    log(f"{request.id}: {verb.name} complete")
+    return True
+
+
+def refuse(directory: Path, path: Path, reason: str) -> None:
+    """Record and log a refusal, and take the request away.
+
+    A status is written only when the filename gave us a request id to key it
+    on; a file whose very name is wrong is logged and deleted, because writing
+    a status for it would mean letting the name choose the status file.
+    """
+    log(f"refused {path.name}: {reason}")
+    request_id = path.name[: -len(REQUEST_SUFFIX)] if path.name.endswith(REQUEST_SUFFIX) else ""
+    if UUID_RE.match(request_id):
+        Status(directory, request_id).write(
+            "failed", step=0, message="Request refused", error=reason
+        )
+    _unlink(path)
+
+
+def _unlink(path: Path) -> None:
+    try:
+        os.unlink(path)
+    except OSError as exc:
+        if exc.errno != errno.ENOENT:
+            log(f"could not remove {path}: {exc.strerror}")
+
+
+def pending(directory: Path) -> list[Path]:
+    """Request files, oldest first. Status files are not requests.
+
+    A file whose name is not a UUID is still picked up here, and refused by
+    :func:`read_request` on that very ground. The path unit's glob will not
+    fire for it — that glob is the UUID shape, so the helper's own status
+    files cannot trigger it — so it waits for the next run rather than
+    accumulating unnoticed in a directory the application writes to.
+    """
+    try:
+        entries = list(os.scandir(directory))
+    except FileNotFoundError:
+        return []
+    found: list[tuple[float, Path]] = []
+    for entry in entries:
+        name = entry.name
+        if not name.endswith(REQUEST_SUFFIX) or name.endswith(STATUS_SUFFIX):
+            continue
+        if name.startswith("."):  # a writer's own temporary file
+            continue
+        try:
+            found.append((entry.stat(follow_symlinks=False).st_mtime, Path(entry.path)))
+        except OSError:
+            continue
+    return [path for _, path in sorted(found, key=lambda item: item[0])]
+
+
+def prune_statuses(directory: Path, *, retention_s: float = STATUS_RETENTION_S) -> int:
+    """Statuses outlive their request by an hour, then go (contracts §2)."""
+    cutoff = time.time() - retention_s
+    removed = 0
+    try:
+        entries = list(os.scandir(directory))
+    except FileNotFoundError:
+        return 0
+    for entry in entries:
+        if not entry.name.endswith(STATUS_SUFFIX):
+            continue
+        try:
+            if entry.stat(follow_symlinks=False).st_mtime < cutoff:
+                os.unlink(entry.path)
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
+def dispatch(directory: Path, instance: str, *, watchdog_suspend_s: float) -> int:
+    """Handle the named request, or drain the queue when the instance is generic.
+
+    systemd runs one instance of a given unit name at a time, so
+    ``auditorium-helper@queue.service`` is itself the "one request at a time"
+    rule; draining here as well only saves the path unit a round trip.
+    """
+    prune_statuses(directory)
+    if UUID_RE.match(instance):
+        candidates = [directory / f"{instance}{REQUEST_SUFFIX}"]
+        if not candidates[0].exists():
+            log(f"{instance}: no such request")
+            return 0
+    else:
+        candidates = pending(directory)
+        if not candidates:
+            log("no requests pending")
+            return 0
+
+    # Every request is deleted once handled, so re-scanning picks up only what
+    # arrived while we worked. `seen` is the backstop: a file we could not
+    # delete is reported once and never handled twice.
+    seen: set[str] = set()
+    while candidates:
+        path = candidates.pop(0)
+        if path.name in seen:
+            continue
+        seen.add(path.name)
+        now = dt.datetime.now().astimezone()
+        try:
+            request = read_request(path, now=now)
+        except Refused as exc:
+            refuse(directory, path, str(exc))
+            continue
+        try:
+            handle(request, directory=directory, watchdog_suspend_s=watchdog_suspend_s)
+        finally:
+            _unlink(path)
+        if not candidates:
+            candidates = [p for p in pending(directory) if p.name not in seen]
+    # Having refused a request is not a failure of this unit: refusing is the
+    # job, and where it went is in the status file the application is reading.
+    # Exiting non-zero here would let a run of malformed requests trip
+    # systemd's start limiter and leave the appliance with no way to restart,
+    # reboot or update at all — which is a denial of service handed to
+    # whatever sent them.
+    return 0
+
+
+# ------------------------------------------------------------ network revert
+#
+# §10.8's confirm-or-revert (contracts §5 step 4). The application writes the
+# pending marker (proskenion.core.network.begin_change) before it ever asks
+# for "apply-network" — see that module's docstring for why. This is the
+# other half: it runs from a systemd timer (auditorium-network-revert.timer)
+# independently of the application, and the timer also fires shortly after
+# every boot, so a deadline that passed while the machine was down or the
+# application was dead is still caught. Nothing here trusts the marker's
+# *content* to be a privileged instruction — only that it names a previous
+# configuration to restore, exactly what "apply-network" already applies
+# whatever is in system.json unquestioned.
+
+
+def _read_json(path: Path) -> dict[str, Any] | None:
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _write_json_atomic(path: Path, data: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o640)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        _unlink(tmp)
+        raise
+
+
+def check_network_revert(
+    *,
+    pending_path: Path = NETWORK_PENDING,
+    system_config_path: Path = SYSTEM_CONFIG,
+    config_apply: Path = CONFIG_APPLY,
+    now: dt.datetime | None = None,
+    run: Callable[[Sequence[str]], subprocess.CompletedProcess[str]] | None = None,
+) -> bool:
+    """Revert an unconfirmed network change past its deadline. Returns
+    ``True`` when a revert actually happened; ``False`` for "nothing
+    pending", "not due yet" and "the marker could not be used" alike — none
+    of those are failures worth a non-zero exit from ``main``.
+    """
+    pending = _read_json(pending_path)
+    if pending is None:
+        return False
+    reverts_at_raw = pending.get("reverts_at")
+    try:
+        reverts_at = dt.datetime.fromisoformat(str(reverts_at_raw))
+    except ValueError:
+        log(f"{pending_path} has no usable reverts_at; removing it")
+        _unlink(pending_path)
+        return False
+    moment = now if now is not None else dt.datetime.now().astimezone()
+    if moment < reverts_at:
+        return False
+
+    previous = pending.get("previous")
+    if not isinstance(previous, dict):
+        log(f"{pending_path} carries no usable previous configuration; removing it")
+        _unlink(pending_path)
+        return False
+
+    log(
+        f"network change {pending.get('confirm_token')} was not confirmed by "
+        f"{reverts_at_raw}; reverting (§10.8)"
+    )
+    system_config = _read_json(system_config_path) or {}
+    if "hostname" in previous:
+        system_config["hostname"] = previous["hostname"]
+    network = system_config.get("network")
+    if not isinstance(network, dict):
+        network = {}
+    previous_network = previous.get("network")
+    if isinstance(previous_network, dict):
+        for key in ("address", "gateway", "dns"):
+            if key in previous_network:
+                network[key] = previous_network[key]
+            else:
+                network.pop(key, None)
+    system_config["network"] = network
+    _write_json_atomic(system_config_path, system_config)
+    _unlink(pending_path)
+
+    runner = run or (
+        lambda argv: subprocess.run(argv, capture_output=True, text=True, timeout=60)
+    )
+    result = runner([str(config_apply)])
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()[:400]
+        log(f"auditorium-config-apply failed while reverting the network change: {detail}")
+        return False
+    log("network change reverted")
+    return True
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description="Carry out one privileged request (contracts §2)")
+    parser.add_argument(
+        "--dispatch",
+        default="queue",
+        help="a request UUID, or anything else to drain the queue",
+    )
+    parser.add_argument("--directory", type=Path, default=HELPER_DIR)
+    parser.add_argument(
+        "--watchdog-suspend-s",
+        type=float,
+        default=WATCHDOG_SUSPEND_S,
+        help="§4.7's window after an update. Set by the unit, never by a request.",
+    )
+    parser.add_argument(
+        "--check-network-revert",
+        action="store_true",
+        help="§10.8: revert an unconfirmed network change past its deadline, and exit",
+    )
+    args = parser.parse_args(argv)
+    if os.name == "posix" and os.geteuid() != 0:
+        log("refusing to run unprivileged: this is the boundary, not a client")
+        return 2
+    if args.check_network_revert:
+        check_network_revert()
+        return 0
+    return dispatch(
+        args.directory, args.dispatch, watchdog_suspend_s=args.watchdog_suspend_s
+    )
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

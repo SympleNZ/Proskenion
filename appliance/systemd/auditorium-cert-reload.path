@@ -1,0 +1,30 @@
+# auditorium-cert-reload.path — watches for a certificate having been written
+# and triggers auditorium-cert-reload.service (§6.16).
+#
+# auditorium-core.service runs as the unprivileged `auditorium` user under
+# NoNewPrivileges=yes (§4.11), so it cannot reload nginx itself once it has
+# written a certificate (proskenion/core/certs.py). This path unit is the
+# privileged half of that split: the application is granted no privilege at
+# all, and this is the only thing that needs to notice the certificate
+# directory changing. It reloads nginx regardless of what wrote the
+# certificate — the startup fallback (§3.2), the first-run wizard's
+# self-signed pair, a Let's Encrypt issue or renewal — so the same mechanism
+# serves them all, and starts an nginx that failed for want of one.
+#
+# It watches a sentinel file rather than the certificate directory: inotify
+# on a directory reports only changes to its immediate entries, so a renewal
+# rewriting files inside an existing /data/certs/live/<hostname>/ would never
+# be seen. Whatever writes a certificate touches
+# /data/certs/reload-requested (proskenion/core/certs.py's request_reload),
+# which states the intent instead of inferring it from a modification time.
+
+[Unit]
+Description=Watch the certificate directory for changes
+RequiresMountsFor=/data
+
+[Path]
+PathModified=/data/certs/reload-requested
+Unit=auditorium-cert-reload.service
+
+[Install]
+WantedBy=multi-user.target

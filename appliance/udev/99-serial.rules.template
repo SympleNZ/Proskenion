@@ -1,0 +1,27 @@
+# /etc/udev/rules.d/99-serial.rules — stable names for USB serial devices (§4.12).
+#
+# TEMPLATE. The finished file lives at /data/config/99-serial.rules (the path
+# in /etc is a symlink to it, §4.3). Replace the @…_SERIAL@ placeholders with
+# the serial numbers captured at commissioning, then:
+#     sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+# Capture a serial (with only that one cable plugged in):
+#     udevadm info -a -n /dev/ttyUSB0 | grep '{serial}' | head -1
+# and record it in docs/hardware/network_map.md.
+#
+# FTDI cables commonly present 0403:6001, so vendor/product cannot tell two
+# apart — match on the serial. A cable with no serial number can only be
+# matched by physical port (KERNELS=="1-1.2"), which binds to the socket, not
+# the device; avoid it (§4.12). brltty is purged from the image so it cannot
+# claim CP210x/CH340 devices before the serial driver does.
+#
+# The application references /dev/hdmi-matrix and /dev/dmx0 only, never a
+# ttyUSB node. Both are group dialout; the application user is a member.
+
+# HDMI matrix — USB-to-serial cable to the LKV422 (USB 2.0 port #1, §17.2)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{serial}=="@HDMI_SERIAL@", \
+  SYMLINK+="hdmi-matrix", GROUP="dialout", MODE="0660"
+
+# DMX adapter — fallback only; unused while the eDMX8 MAX is in service (USB 2.0 port #2)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", \
+  ATTRS{serial}=="@DMX_SERIAL@", SYMLINK+="dmx0", GROUP="dialout", MODE="0660"

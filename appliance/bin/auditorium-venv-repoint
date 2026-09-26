@@ -1,0 +1,194 @@
+#!/usr/bin/python3
+"""auditorium-venv-repoint — the application's environment across an OS change (Q11, B54).
+
+auditorium-core.service starts /opt/auditorium/venv/bin/proskenion, and
+/opt/auditorium resolves to /data/app/current. `venv` is a symlink to an
+environment named for the interpreter it was built against — `venv-cp313`
+(§14.2, contracts §1). That indirection exists for one event: an OS upgrade
+that brings a newer Python.
+
+B54 puts interpreter patching inside the A/B upgrade mechanism deliberately,
+rather than owning a second one. The consequence is that the root filesystem
+under /data/app can change interpreter version while the application tree does
+not, and an environment built against 3.13 holds compiled extensions that a
+3.14 interpreter will not load. Left alone, the first boot of a new OS is an
+application that cannot start — under a slot on trial, which is precisely the
+failure §14.4 exists to recover from, but recovering from it means the upgrade
+never lands.
+
+So at every start, before the application runs:
+
+  1. Work out this interpreter's environment name. This script is run by the
+     system python3 from the root filesystem that just booted, so the name is
+     the new OS's ABI and not the old one's.
+  2. If that environment is already there, point `venv` at it and stop. This
+     is the normal case and costs a readlink.
+  3. If an older layout left a real `venv` directory built against this same
+     interpreter, give it the ABI name rather than rebuilding it.
+  4. Otherwise rebuild it from the wheels the package retained beside the
+     application (§14.1: every dependency travels in the package, so this
+     works on a VLAN with no route to an index).
+
+`venv` is replaced by rename, never by unlink-then-link: ExecStart resolves
+through it, and a window where it does not resolve is a start that fails for
+no reason.
+
+This runs as the auditorium user — /data/app is its own tree — so nothing here
+is privileged and it is not part of the helper.
+
+  auditorium-venv-repoint [--app-dir /data/app] [--dry-run]
+"""
+
+from __future__ import annotations
+
+import argparse
+import configparser
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+APP_DIR = Path("/data/app")
+WHEELS_DIRNAME = "wheels"
+VENV_LINK = "venv"
+#: Long enough for pip to install a few dozen vendored wheels on an SSD, and
+#: short enough that a wedged build gives up before TimeoutStartSec does.
+BUILD_TIMEOUT_S = 600.0
+
+
+def log(message: str) -> None:
+    print(f"venv-repoint: {message}", flush=True)
+
+
+def venv_name(info: tuple[int, int] | None = None) -> str:
+    """The environment directory name for an interpreter ABI (Q11).
+
+    The same name :func:`proskenion.core.update.venv_name` produces, because
+    the updater builds the directory this script goes looking for.
+    """
+    major, minor = info or (sys.version_info.major, sys.version_info.minor)
+    return f"venv-cp{major}{minor}"
+
+
+def existing_abi(venv: Path) -> tuple[int, int] | None:
+    """The interpreter version an environment was built against, from pyvenv.cfg."""
+    parser = configparser.ConfigParser()
+    try:
+        # pyvenv.cfg is key = value with no section header.
+        parser.read_string("[venv]\n" + (venv / "pyvenv.cfg").read_text(encoding="utf-8"))
+    except (OSError, configparser.Error):
+        return None
+    version = parser["venv"].get("version") or parser["venv"].get("version_info") or ""
+    parts = version.split(".")
+    try:
+        return int(parts[0]), int(parts[1])
+    except (IndexError, ValueError):
+        return None
+
+
+def repoint(current: Path, name: str, dry_run: bool) -> None:
+    """Make ``venv`` name ``name``, by rename so it always resolves."""
+    link = current / VENV_LINK
+    if link.is_symlink() and os.readlink(link) == name:
+        return
+    log(f"pointing {link} at {name}")
+    if dry_run:
+        return
+    tmp = current / f".{VENV_LINK}.{os.getpid()}"
+    if tmp.is_symlink() or tmp.exists():
+        tmp.unlink()
+    os.symlink(name, tmp)
+    os.replace(tmp, link)
+
+
+def rebuild(current: Path, name: str, dry_run: bool) -> bool:
+    """Build ``name`` from the wheels beside the application, offline (§14.1)."""
+    wheels = current / WHEELS_DIRNAME
+    found = sorted(wheels.glob("*.whl")) if wheels.is_dir() else []
+    if not found:
+        log(f"{wheels} holds no wheels; {name} cannot be rebuilt here")
+        return False
+    log(f"building {name} from {len(found)} retained wheels")
+    if dry_run:
+        return True
+    staging = current / f".{name}.incoming"
+    shutil.rmtree(staging, ignore_errors=True)
+    try:
+        run([sys.executable, "-m", "venv", str(staging)])
+        run(
+            [
+                str(staging / "bin" / "python"),
+                "-m",
+                "pip",
+                "install",
+                "--no-index",
+                "--no-deps",
+                "--disable-pip-version-check",
+                "--find-links",
+                str(wheels),
+                *[str(wheel) for wheel in found],
+            ]
+        )
+    except (OSError, subprocess.SubprocessError, RuntimeError) as exc:
+        shutil.rmtree(staging, ignore_errors=True)
+        log(f"could not build {name}: {exc}")
+        return False
+    target = current / name
+    shutil.rmtree(target, ignore_errors=True)
+    os.rename(staging, target)
+    return True
+
+
+def run(argv: list[str]) -> None:
+    done = subprocess.run(argv, capture_output=True, text=True, timeout=BUILD_TIMEOUT_S, check=False)
+    if done.returncode != 0:
+        detail = (done.stderr or done.stdout or "").strip()[-1000:]
+        raise RuntimeError(f"{argv[0]} failed (exit {done.returncode}): {detail}")
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--app-dir", type=Path, default=APP_DIR)
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args(argv)
+
+    current = args.app_dir / "current"
+    if not current.is_dir():
+        log(f"{current} does not resolve to an application directory; nothing to repoint")
+        return 0
+
+    name = venv_name()
+    wanted = current / name
+    if wanted.is_dir():
+        repoint(current, name, args.dry_run)
+        return 0
+
+    link = current / VENV_LINK
+    if link.is_dir() and not link.is_symlink():
+        # A tree from before environments were named for their ABI. If it was
+        # built against this interpreter it is the environment we want, under
+        # the wrong name; if it was not, it is the thing that has to be
+        # replaced and keeping it would be the failure this script prevents.
+        if existing_abi(link) == (sys.version_info.major, sys.version_info.minor):
+            log(f"adopting the existing {link} as {name}")
+            if not args.dry_run:
+                os.rename(link, wanted)
+                repoint(current, name, args.dry_run)
+            return 0
+        log(f"{link} was built against a different interpreter; it will be rebuilt")
+
+    if rebuild(current, name, args.dry_run):
+        repoint(current, name, args.dry_run)
+        return 0
+
+    # Exiting 0 deliberately: ExecStart is about to fail with the real reason,
+    # and a failed ExecStartPre counts against StartLimitBurst identically
+    # while hiding it. The line above is the diagnosis, in the journal, where
+    # whoever reads the automatic rollback will find it.
+    log(f"the application environment for this interpreter ({name}) is missing")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

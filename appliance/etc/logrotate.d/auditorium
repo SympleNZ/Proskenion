@@ -1,0 +1,64 @@
+# /etc/logrotate.d/auditorium — application log rotation (§4.10).
+#
+# Runs hourly (logrotate.timer drop-in) so "100 MB or daily, whichever comes
+# first" is honoured. State lives in /data/logs/.logrotate.state
+# (logrotate.service drop-in) because /var/lib is on the RAM overlay.
+#
+# copytruncate: the application keeps its files open and is not sent a signal;
+# a line written in the instant between copy and truncate can be lost. If the
+# application adopts WatchedFileHandler, switch to create and drop copytruncate.
+
+# Application logs: structured JSON, one object per line. Named explicitly,
+# not /data/logs/*.log: that glob also matched access.log below, and logrotate
+# refuses a config where two stanzas claim the same file ("duplicate log
+# entry"), which failed this unit on every run. proskenion/logging.py's
+# APPLICATION_LOG_NAME and appliance/bin/auditorium-update-rollback's EVENTS
+# are the two files this stanza is for; *.jsonl is kept as a glob so a future
+# .jsonl file needs no change here.
+/data/logs/application.log /data/logs/*.jsonl {
+    daily
+    maxsize 100M
+    rotate 90
+    maxage 90
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su auditorium auditorium
+    dateext
+    dateformat -%Y%m%d-%H%M%S
+}
+
+# uvicorn/FastAPI access log, combined format
+/data/logs/access.log {
+    daily
+    maxsize 50M
+    rotate 30
+    maxage 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su auditorium auditorium
+    dateext
+    dateformat -%Y%m%d-%H%M%S
+}
+
+# nginx's own logs stay under /var/log/nginx on the RAM overlay; keep them
+# small so they can never exhaust memory. Replaces Debian's /etc/logrotate.d/nginx.
+/var/log/nginx/*.log {
+    hourly
+    maxsize 20M
+    rotate 3
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 www-data adm
+    sharedscripts
+    postrotate
+        if [ -f /run/nginx.pid ]; then kill -USR1 "$(cat /run/nginx.pid)"; fi
+    endscript
+}

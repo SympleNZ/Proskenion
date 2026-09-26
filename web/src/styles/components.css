@@ -1,0 +1,4665 @@
+/*
+ * Component styles (spec §21.1, §21.3 quick reference). Two things live here:
+ * shadcn/ui's CSS variables, remapped onto our tokens so any shadcn component
+ * inherits the dark palette; and the class vocabulary our own components use.
+ * Every colour, space, radius and duration is a token. No raw values.
+ */
+
+/* ── shadcn/ui variable overrides → tokens ───────────────────────────────── */
+:root {
+  --background: var(--color-bg-base);
+  --foreground: var(--color-text-primary);
+  --card: var(--color-bg-surface);
+  --card-foreground: var(--color-text-primary);
+  --popover: var(--color-bg-elevated);
+  --popover-foreground: var(--color-text-primary);
+  --primary: var(--color-teal-500);
+  --primary-foreground: var(--color-text-inverse);
+  --secondary: var(--color-bg-elevated);
+  --secondary-foreground: var(--color-text-primary);
+  --muted: var(--color-bg-surface);
+  --muted-foreground: var(--color-text-muted);
+  --accent: var(--color-bg-overlay);
+  --accent-foreground: var(--color-text-primary);
+  --destructive: var(--color-danger);
+  --destructive-foreground: var(--color-danger-text);
+  --border: var(--border-elevated);
+  --input: var(--border-input);
+  --ring: var(--color-teal-500);
+  --radius: var(--radius-md);
+  --chart-1: var(--group-ocean);
+  --chart-2: var(--group-amber);
+  --chart-3: var(--group-violet);
+  --chart-4: var(--group-fern);
+  --chart-5: var(--group-rose);
+  --sidebar: var(--color-bg-surface);
+  --sidebar-foreground: var(--color-text-secondary);
+  --sidebar-primary: var(--color-teal-500);
+  --sidebar-primary-foreground: var(--color-text-inverse);
+  --sidebar-accent: var(--color-bg-elevated);
+  --sidebar-accent-foreground: var(--color-text-primary);
+  --sidebar-border: var(--border-elevated);
+  --sidebar-ring: var(--color-teal-500);
+}
+
+/* ── Elevation (§21.3) — background colour, not shadow ───────────────────── */
+.elevated {
+  background: var(--color-bg-elevated);
+  border-top: var(--hairline) solid var(--border-elevated); /* catches ambient light */
+}
+
+.overlay {
+  background: var(--color-bg-overlay);
+  border: var(--hairline) solid var(--border-overlay);
+  box-shadow: var(--shadow-overlay); /* positioning context only */
+}
+
+/* ── Card ────────────────────────────────────────────────────────────────── */
+.card {
+  background: var(--color-bg-surface);
+  border: var(--hairline) solid var(--border-elevated);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+}
+
+.card-compact {
+  padding: var(--space-3);
+}
+
+.card-title {
+  font-size: var(--text-lg);
+  line-height: var(--leading-lg);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-primary);
+}
+
+/* ── Buttons — all five states (§21.3) ───────────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: var(--touch-standard);
+  min-width: var(--touch-min);
+  padding: 0 var(--space-4);
+  border: var(--hairline) solid transparent;
+  border-radius: var(--radius-md);
+  font-size: var(--text-base);
+  line-height: var(--leading-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  user-select: none;
+  transition:
+    background-color var(--duration-base) var(--ease-in-out),
+    border-color var(--duration-base) var(--ease-in-out),
+    color var(--duration-base) var(--ease-in-out),
+    transform var(--duration-fast) var(--ease-in-out),
+    box-shadow var(--duration-base) var(--ease-out);
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(var(--active-scale));
+}
+
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  opacity: var(--disabled-opacity);
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--color-teal-500);
+  color: var(--color-text-inverse);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--color-teal-400);
+}
+
+.btn-primary:active:not(:disabled) {
+  background: var(--color-teal-500);
+}
+
+.btn-secondary {
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--color-bg-overlay);
+  border-color: var(--color-teal-500);
+}
+
+.btn-secondary:active:not(:disabled) {
+  background: var(--color-bg-elevated);
+}
+
+.btn-destructive {
+  background: transparent;
+  color: var(--color-danger-text);
+  border-color: var(--color-danger);
+}
+
+.btn-destructive:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+}
+
+.btn-destructive:active:not(:disabled) {
+  background: color-mix(in srgb, var(--color-danger) 20%, transparent);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--color-bg-elevated);
+  border-color: var(--color-teal-500);
+  color: var(--color-text-primary);
+}
+
+.btn-ghost:active:not(:disabled) {
+  background: var(--color-bg-surface);
+}
+
+.btn-lg {
+  min-height: var(--touch-primary);
+  padding: 0 var(--space-6);
+  font-size: var(--text-lg);
+}
+
+.btn-hirer {
+  min-height: var(--touch-hirer);
+  padding: 0 var(--space-8);
+  font-size: var(--text-lg);
+}
+
+.btn-icon {
+  width: var(--touch-min);
+  height: var(--touch-min);
+  padding: 0;
+}
+
+.btn-block {
+  width: 100%;
+}
+
+/* Buttons show an inline loading state at fixed width (§21.27) */
+.btn.is-loading {
+  position: relative;
+  color: transparent;
+}
+
+.btn.is-loading::after {
+  content: "";
+  position: absolute;
+  width: var(--space-4);
+  height: var(--space-4);
+  border-radius: var(--radius-full);
+  border: var(--focus-ring-width) solid currentColor;
+  border-right-color: transparent;
+  color: var(--color-text-inverse);
+  animation: btn-spin var(--duration-very-slow) linear infinite;
+}
+
+.btn-secondary.is-loading::after,
+.btn-ghost.is-loading::after,
+.btn-destructive.is-loading::after {
+  color: var(--color-text-primary);
+}
+
+@keyframes btn-spin {
+  to { transform: rotate(1turn); }
+}
+
+/* Successful sign-in: the button glows briefly (§21.8) */
+.btn.is-success {
+  animation: teal-glow var(--duration-very-slow) var(--ease-out) both;
+}
+
+/* ── Inputs (§21.3 quick reference) ──────────────────────────────────────── */
+.input {
+  display: block;
+  width: 100%;
+  min-height: var(--touch-standard);
+  padding: 0 var(--space-3);
+  background: var(--color-bg-base);
+  border: var(--hairline) solid var(--border-input);
+  border-radius: var(--radius-md);
+  color: var(--color-text-primary);
+  font-size: var(--text-base);
+  line-height: var(--leading-base);
+  transition:
+    border-color var(--duration-base) var(--ease-in-out),
+    background-color var(--duration-base) var(--ease-in-out);
+}
+
+.input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.input:hover:not(:disabled) {
+  border-color: var(--border-overlay);
+}
+
+.input:focus,
+.input:focus-visible {
+  outline: none;
+  border-color: var(--color-teal-500);
+}
+
+.input:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: not-allowed;
+}
+
+.input[aria-invalid="true"] {
+  border-color: var(--color-danger);
+}
+
+.input-mono {
+  font-family: var(--font-mono);
+}
+
+.input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input-wrap .input {
+  padding-right: var(--touch-min);
+}
+
+.input-wrap .input-affix {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.field-label {
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  font-weight: var(--weight-medium);
+  color: var(--color-text-secondary);
+}
+
+/* A label plus its optional inline-help trigger (§19.1) */
+.field-label-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.field-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--space-6);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  color: var(--color-danger-text);
+}
+
+.field-error:empty {
+  display: none;
+}
+
+/* ── Status dot (§21.3 quick reference, §21.7, §24.1) ────────────────────── */
+.status-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--status-dot-size);
+  height: var(--status-dot-size);
+  border-radius: var(--radius-full);
+  flex: none;
+  color: var(--color-status-grey);
+  transition: background-color var(--duration-fast) var(--ease-in-out);
+}
+
+.status-dot[data-status="connecting"] {
+  color: var(--color-teal-300);
+  background: transparent;
+}
+
+.status-dot[data-status="connecting"] svg {
+  animation: btn-spin var(--duration-very-slow) linear infinite;
+}
+
+.status-dot[data-status="connected"] {
+  color: var(--color-status-green);
+  background: radial-gradient(circle at 35% 35%, var(--color-text-primary), var(--color-status-green) 40%, var(--color-teal-900) 100%);
+  box-shadow: 0 0 var(--space-1) var(--focus-ring-width) color-mix(in srgb, var(--color-status-green) 80%, transparent);
+}
+
+.status-dot[data-status="degraded"] {
+  color: var(--color-status-amber);
+  background: transparent;
+}
+
+.status-dot[data-status="error"] {
+  color: var(--color-status-red);
+  background: transparent;
+}
+
+.status-dot[data-status="unconfigured"] {
+  color: var(--color-status-grey);
+  background: transparent;
+}
+
+.status-dot svg {
+  width: var(--status-dot-size);
+  height: var(--status-dot-size);
+}
+
+.status-dot-lg {
+  width: var(--space-4);
+  height: var(--space-4);
+}
+
+.status-dot-lg svg {
+  width: var(--space-4);
+  height: var(--space-4);
+}
+
+/* An expired certificate (§21.24: "pulsing red when expired"). */
+.status-dot-pulse {
+  animation: cert-expired-pulse var(--duration-very-slow) var(--ease-in-out) infinite;
+}
+
+@keyframes cert-expired-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--color-status-red); }
+  50% { box-shadow: 0 0 var(--space-1) var(--space-1) transparent; }
+}
+
+/* ── Banner — a state, not an event (Appendix B37) ───────────────────────── */
+.banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--touch-min);
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-bg-elevated);
+  border-top: var(--hairline) solid var(--border-elevated);
+  border-left: var(--nav-active-border) solid var(--color-info);
+  color: var(--color-text-primary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.banner-icon {
+  flex: none;
+  color: var(--color-info-text);
+}
+
+.banner[data-tone="warning"] {
+  border-left-color: var(--color-warning);
+}
+
+.banner[data-tone="warning"] .banner-icon {
+  color: var(--color-warning-text);
+}
+
+.banner[data-tone="danger"] {
+  border-left-color: var(--color-danger);
+}
+
+.banner[data-tone="danger"] .banner-icon {
+  color: var(--color-danger-text);
+}
+
+.banner[data-tone="success"] {
+  border-left-color: var(--color-success);
+}
+
+.banner[data-tone="success"] .banner-icon {
+  color: var(--color-success-text);
+}
+
+.banner-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.banner-title {
+  font-weight: var(--weight-semibold);
+}
+
+/* §21.27's "cached" label on last-known values during an outage. */
+.cached-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: var(--space-2);
+  padding: 0 var(--space-2);
+  border: var(--hairline) solid var(--color-warning);
+  border-radius: var(--radius-sm);
+  color: var(--color-warning-text);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  vertical-align: middle;
+}
+
+/* Between the status bar and page content (§21.26); several stack in priority order. */
+.system-banners {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Sheet and dialog (Radix Dialog) ─────────────────────────────────────── */
+.sheet-backdrop,
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, var(--color-bg-base) 70%, transparent);
+  animation: fade-in var(--duration-base) var(--ease-out) both;
+  z-index: 40;
+}
+
+.sheet-content {
+  /* §24.4: text-muted fails AA on bg-elevated (4.01, below the 4.5
+   * threshold) — every existing rule that colours text with
+   * --color-text-muted still applies inside a sheet, so the token itself is
+   * redefined for this container rather than hunting down each class. */
+  --color-text-muted: var(--color-text-secondary);
+  position: fixed;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  background: var(--color-bg-elevated);
+  border-top: var(--hairline) solid var(--border-elevated);
+  color: var(--color-text-primary);
+  padding: var(--space-5) var(--space-5) var(--space-6);
+  overflow-y: auto;
+  /* Mobile: bottom sheet with --radius-xl (§21.3) */
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 85dvh;
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  animation: slide-up var(--duration-moderate) var(--ease-out) both;
+}
+
+@media (min-width: theme(--breakpoint-tablet)) {
+  .sheet-content {
+    top: 0;
+    bottom: 0;
+    left: auto;
+    right: 0;
+    width: min(100%, var(--sheet-width, calc(var(--space-20) * 6)));
+    max-height: none;
+    border-radius: 0;
+    border-left: var(--hairline) solid var(--border-elevated);
+    animation: slide-in-right var(--duration-moderate) var(--ease-out) both;
+  }
+
+  .sheet-content[data-side="left"] {
+    left: 0;
+    right: auto;
+    border-left: 0;
+    border-right: var(--hairline) solid var(--border-elevated);
+    animation: slide-in-left var(--duration-moderate) var(--ease-out) both;
+  }
+}
+
+.sheet-content[data-side="left"] {
+  animation: slide-in-left var(--duration-moderate) var(--ease-out) both;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: auto;
+  max-height: none;
+  width: min(100%, calc(var(--space-20) * 4));
+  border-radius: 0;
+}
+
+.sheet-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: var(--hairline) solid var(--border-elevated);
+}
+
+.sheet-title {
+  font-size: var(--text-xl);
+  line-height: var(--leading-xl);
+  font-weight: var(--weight-semibold);
+}
+
+.sheet-description {
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.dialog-content {
+  /* Same reason as .sheet-content above: bg-elevated fails AA for
+   * --color-text-muted, so the token is redefined for this container. */
+  --color-text-muted: var(--color-text-secondary);
+  position: fixed;
+  z-index: 50;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(calc(100% - var(--space-8)), calc(var(--space-20) * 6));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  background: var(--color-bg-elevated);
+  border-top: var(--hairline) solid var(--border-elevated);
+  border-radius: var(--radius-md);
+  padding: var(--space-6);
+  color: var(--color-text-primary);
+  animation: fade-in var(--duration-slow) var(--ease-out) both;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+/* Key–value rows in the device detail sheet (§21.7) */
+.kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: var(--space-5);
+  row-gap: var(--space-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.kv dt {
+  color: var(--color-text-secondary);
+  font-weight: var(--weight-medium);
+}
+
+.kv dd {
+  margin: 0;
+  color: var(--color-text-primary);
+}
+
+.kv .technical {
+  font-family: var(--font-mono);
+}
+
+/* ── Menus (Radix DropdownMenu) ──────────────────────────────────────────── */
+.menu-content {
+  z-index: 50;
+  min-width: calc(var(--space-20) * 2);
+  padding: var(--space-1);
+  background: var(--color-bg-overlay);
+  border: var(--hairline) solid var(--border-overlay);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-overlay);
+  color: var(--color-text-primary);
+  animation: fade-in var(--duration-base) var(--ease-out) both;
+}
+
+.menu-label {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-primary);
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--touch-min);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-base);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+
+.menu-item[data-highlighted] {
+  background: var(--color-bg-elevated);
+}
+
+.menu-item[data-disabled] {
+  opacity: var(--disabled-opacity);
+  cursor: not-allowed;
+}
+
+/* A destructive menu item — Delete on the stage plan's long-press menu (§21.18) — reads
+ * as danger even before it is highlighted; colour pairs with the word "Delete" itself
+ * rather than standing alone (§24.1). */
+.menu-item-destructive {
+  color: var(--color-danger-text);
+}
+
+.menu-item-destructive[data-highlighted] {
+  background: var(--color-danger);
+  color: var(--color-text-inverse);
+}
+
+.menu-separator {
+  height: var(--hairline);
+  margin: var(--space-1) 0;
+  background: var(--border-overlay);
+}
+
+/* ── Inline help (Radix Popover, §19.1) ──────────────────────────────────── */
+.btn-help-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.help-trigger {
+  color: var(--color-text-muted);
+  flex: none;
+}
+
+.help-trigger:hover:not(:disabled) {
+  background: transparent;
+  border-color: transparent;
+  color: var(--color-teal-500);
+}
+
+.help-popover {
+  z-index: 50;
+  max-width: min(calc(var(--space-20) * 4), 90vw);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-bg-overlay);
+  border: var(--hairline) solid var(--border-overlay);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-overlay);
+  animation: fade-in var(--duration-base) var(--ease-out) both;
+}
+
+.help-popover-term {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.help-popover-body {
+  margin-top: var(--space-1);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  /* §24.4: text-secondary fails AA on bg-overlay (4.46, below 4.5) — the
+   * popover's own background — and the rule that follows from the table is
+   * exactly this: "text on it uses text-primary". */
+  color: var(--color-text-primary);
+}
+
+.help-popover-arrow {
+  fill: var(--color-bg-overlay);
+}
+
+/* ── Navigation (§21.3 quick reference, §21.6) ───────────────────────────── */
+.nav-group-label {
+  padding: var(--space-4) var(--space-5) var(--space-1);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  font-weight: var(--weight-semibold);
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--touch-min);
+  padding: 0 var(--space-5);
+  border-left: var(--nav-active-border) solid transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  transition:
+    background-color var(--duration-base) var(--ease-in-out),
+    color var(--duration-base) var(--ease-in-out);
+}
+
+.nav-item:hover {
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+}
+
+.nav-item:active {
+  background: var(--color-bg-surface);
+}
+
+/* Nav item active: bg --color-bg-surface, teal left border --nav-active-border */
+.nav-item[aria-current="page"] {
+  background: var(--color-bg-surface);
+  border-left-color: var(--color-teal-500);
+  color: var(--color-teal-300);
+  font-weight: var(--weight-semibold);
+}
+
+.admin-sidebar .nav-item[aria-current="page"] {
+  background: var(--color-bg-elevated);
+}
+
+/* Operator tab strip — at the top, never the bottom (§21.6) */
+.tab-strip {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-1);
+  padding: 0 var(--space-3);
+  background: var(--color-bg-surface);
+  border-bottom: var(--hairline) solid var(--border-elevated);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--touch-min);
+  padding: 0 var(--space-4);
+  border-bottom: var(--nav-active-border) solid transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  transition:
+    color var(--duration-base) var(--ease-in-out),
+    background-color var(--duration-base) var(--ease-in-out);
+}
+
+.tab:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-elevated);
+}
+
+.tab:active {
+  background: var(--color-bg-surface);
+}
+
+.tab[aria-current="page"],
+.tab[data-state="active"] {
+  color: var(--color-teal-300);
+  border-bottom-color: var(--color-teal-500);
+  background: var(--color-bg-surface);
+  font-weight: var(--weight-semibold);
+}
+
+/* Phone in landscape: the strip becomes a rail on the left (§21.6, §21.9) */
+.nav-rail {
+  display: none;
+}
+
+@media (max-height: theme(--viewport-short-height)) {
+  .tab-strip {
+    display: none;
+  }
+
+  .nav-rail {
+    display: flex;
+    flex-direction: column;
+    width: calc(var(--space-20) + var(--space-12));
+    flex: none;
+    background: var(--color-bg-surface);
+    border-right: var(--hairline) solid var(--border-elevated);
+    overflow-y: auto;
+  }
+
+  .nav-rail .nav-item {
+    padding: 0 var(--space-3);
+    font-size: var(--text-sm);
+  }
+
+  .shell-body {
+    flex-direction: row;
+  }
+}
+
+/* Rail overflow: device state moves here when the status bar hides */
+.rail-devices {
+  margin-top: auto;
+  border-top: var(--hairline) solid var(--border-elevated);
+  padding: var(--space-2) 0;
+}
+
+.rail-devices summary {
+  display: flex;
+  align-items: center;
+  min-height: var(--touch-min);
+  padding: 0 var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  list-style: none;
+}
+
+.rail-devices li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--space-8);
+  padding: 0 var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+}
+
+/* ── Shells ──────────────────────────────────────────────────────────────── */
+.shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  height: 100dvh;
+}
+
+.shell-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.shell-main {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-4);
+}
+
+@media (min-width: theme(--breakpoint-desktop)) {
+  .shell-main {
+    padding: var(--space-8) var(--space-16);
+  }
+}
+
+.shell-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-3);
+  min-height: var(--touch-min);
+  background: var(--color-bg-surface);
+  border-bottom: var(--hairline) solid var(--border-elevated);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-primary);
+  font-weight: var(--weight-semibold);
+  font-size: var(--text-base);
+}
+
+.brand-host {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.admin-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.admin-sidebar {
+  display: none;
+  flex-direction: column;
+  width: calc(var(--space-20) * 3);
+  flex: none;
+  background: var(--color-bg-surface);
+  border-right: var(--hairline) solid var(--border-elevated);
+  overflow-y: auto;
+  padding-bottom: var(--space-6);
+}
+
+.admin-sidebar .brand {
+  padding: var(--space-4) var(--space-5);
+  border-bottom: var(--hairline) solid var(--border-elevated);
+}
+
+@media (min-width: theme(--breakpoint-desktop)) {
+  .admin-sidebar {
+    display: flex;
+  }
+
+  .admin-menu-button,
+  .admin-mobile-header {
+    display: none;
+  }
+
+  /*
+   * `.shell-body`'s base rule (below) is column — right for a phone rail,
+   * wrong here: with no row override, the admin sidebar and `.shell-main`
+   * stacked vertically instead of side by side. `.shell-body` has no
+   * `overflow`, so the sidebar's content spilled past its own box into the
+   * status bar's screen position rather than showing side by side or
+   * scrolling — invisible while the nav list was short enough to end above
+   * the fold, and a real bug regardless of how many items are in it.
+   * `.admin-layout-shell` (already set by `AdminShell.tsx`) scopes the fix
+   * to the admin sidebar without touching the phone-landscape rail case,
+   * which sets the same property inside its own media query.
+   */
+  .admin-layout-shell .shell-body {
+    flex-direction: row;
+  }
+}
+
+.admin-drawer {
+  --sheet-width: calc(var(--space-20) * 3);
+  padding: 0;
+  gap: 0;
+}
+
+/* The way back to the main interface (25 Sep 2026, v0.1.2): pushed to the
+   header's trailing edge, the same corner a close affordance would sit in. */
+.admin-header-main-link {
+  margin-left: auto;
+}
+
+/* A visible break from the ADMIN_NAV sections below it in the sidebar —
+   this link is not one of them. */
+.admin-main-link {
+  border-bottom: var(--hairline) solid var(--border-elevated);
+}
+
+.view-title {
+  font-size: var(--text-2xl);
+  line-height: var(--leading-2xl);
+  font-weight: var(--weight-bold);
+  color: var(--color-text-primary);
+}
+
+@media (min-width: theme(--breakpoint-desktop)) {
+  .view-title {
+    font-size: var(--text-3xl);
+    line-height: var(--leading-3xl);
+  }
+}
+
+.view-lede {
+  margin-top: var(--space-1);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  max-width: 80ch;
+}
+
+/* ── Status bar (§21.7) — persistent along the bottom ────────────────────── */
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex: none;
+  min-height: var(--touch-min);
+  padding: 0 var(--space-4);
+  background: var(--color-bg-surface);
+  border-top: var(--hairline) solid var(--border-elevated);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+@media (max-height: theme(--viewport-short-height)) {
+  .status-bar {
+    display: none;
+  }
+}
+
+.status-bar-devices {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+}
+
+.device-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--touch-min);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  transition: background-color var(--duration-base) var(--ease-in-out);
+}
+
+button.device-indicator:hover {
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+}
+
+button.device-indicator:active {
+  background: var(--color-bg-overlay);
+}
+
+.status-bar-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-left: auto;
+  flex: none;
+}
+
+.status-sep {
+  width: var(--hairline);
+  height: var(--space-5);
+  background: var(--border-overlay);
+}
+
+.timer {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.timer-display {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-base);
+  color: var(--color-teal-300);
+  min-width: calc(var(--space-20) + var(--space-2));
+  text-align: right;
+}
+
+.timer-display[data-running="false"] {
+  color: var(--color-text-secondary);
+}
+
+.clock {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-base);
+  color: var(--color-text-primary);
+  min-height: var(--touch-min);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+button.clock:hover {
+  background: var(--color-bg-elevated);
+}
+
+/* §24.6: the hirer surface's larger touch-target minimum (--touch-hirer)
+ * applies to the status bar's clock and its one button (Log out,
+ * HirerLogout.tsx) — they share this footer with the operator/admin one,
+ * whose smaller (--touch-min) controls are correct there but too small
+ * here. */
+.status-bar[data-tier="hirer"] .clock {
+  min-width: var(--touch-hirer);
+  min-height: var(--touch-hirer);
+  justify-content: center;
+}
+
+.status-bar[data-tier="hirer"] .btn {
+  min-width: var(--touch-hirer);
+  min-height: var(--touch-hirer);
+}
+
+.clock-marker {
+  color: var(--color-warning-text);
+  display: inline-flex;
+}
+
+.account-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--touch-min);
+  height: var(--touch-min);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-elevated);
+  border: var(--hairline) solid var(--border-overlay);
+  color: var(--color-text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  transition:
+    background-color var(--duration-base) var(--ease-in-out),
+    border-color var(--duration-base) var(--ease-in-out);
+}
+
+.account-chip:hover {
+  background: var(--color-bg-overlay);
+  border-color: var(--color-teal-500);
+}
+
+.account-chip:active {
+  transform: scale(var(--active-scale));
+}
+
+.reconnecting .shell-main {
+  opacity: var(--muted-strip-opacity);
+  pointer-events: none;
+}
+
+/* ── Login (§21.8) ───────────────────────────────────────────────────────── */
+.login-page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6) var(--space-4);
+  gap: var(--space-8);
+}
+
+.login-brand {
+  text-align: center;
+}
+
+.login-brand h1 {
+  font-size: var(--text-2xl);
+  line-height: var(--leading-2xl);
+  font-weight: var(--weight-bold);
+  letter-spacing: -0.01em;
+}
+
+.login-column {
+  width: 100%;
+  max-width: calc(var(--space-20) * 5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.login-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.divider::before,
+.divider::after {
+  content: "";
+  flex: 1;
+  height: var(--hairline);
+  background: var(--border-overlay);
+}
+
+.pin-boxes {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+
+.pin-box {
+  flex: 1;
+  min-width: 0;
+  height: var(--touch-primary);
+  min-height: var(--touch-min);
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xl);
+  padding: 0;
+  caret-color: var(--color-teal-300);
+}
+
+.pin-box.is-filled {
+  border-color: var(--border-overlay);
+}
+
+.pin-box.is-glow {
+  border-color: var(--color-teal-500);
+  animation: teal-glow var(--duration-very-slow) var(--ease-out) both;
+  animation-delay: calc(var(--glow-index, 0) * var(--duration-fast));
+}
+
+.pin-boxes.is-shaking {
+  animation: shake var(--duration-slow) var(--ease-in-out) both;
+}
+
+.section-title {
+  font-size: var(--text-lg);
+  line-height: var(--leading-lg);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.note {
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+/* ── Session overlays (§6.5, §21.8) ──────────────────────────────────────── */
+.session-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: color-mix(in srgb, var(--color-bg-base) 60%, transparent);
+  backdrop-filter: blur(var(--space-2));
+  -webkit-backdrop-filter: blur(var(--space-2));
+  animation: fade-in var(--duration-slow) var(--ease-out) both;
+}
+
+.session-dialog {
+  width: min(100%, calc(var(--space-20) * 6));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  background: var(--color-bg-elevated);
+  border-top: var(--hairline) solid var(--border-elevated);
+  border-radius: var(--radius-md);
+  padding: var(--space-6);
+  color: var(--color-text-primary);
+}
+
+.session-dialog h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xl);
+  line-height: var(--leading-xl);
+}
+
+.session-dialog p {
+  color: var(--color-text-secondary);
+}
+
+/* ── Empty, error and loading states (§21.27) ────────────────────────────── */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: var(--space-3);
+  padding: var(--space-12) var(--space-4);
+  min-height: calc(var(--space-20) * 3);
+}
+
+.empty-illustration {
+  color: var(--color-text-disabled);
+  margin-bottom: var(--space-2);
+}
+
+.empty-title {
+  font-size: var(--text-lg);
+  line-height: var(--leading-lg);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.empty-detail {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  max-width: 80ch;
+}
+
+.error-state {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-8) var(--space-4);
+  max-width: calc(var(--space-20) * 7);
+}
+
+.error-state .error-icon {
+  color: var(--color-warning-text);
+}
+
+.error-status {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.skeleton {
+  background: var(--color-bg-surface);
+  border-radius: var(--radius-md);
+  animation: skeleton-pulse var(--duration-very-slow) var(--ease-in-out) infinite alternate;
+}
+
+@keyframes skeleton-pulse {
+  from { opacity: var(--muted-strip-opacity); }
+  to { opacity: 1; }
+}
+
+.centre {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-8);
+}
+
+/* ── Sonner toasts → tokens ──────────────────────────────────────────────── */
+[data-sonner-toaster] {
+  --normal-bg: var(--color-bg-elevated);
+  --normal-border: var(--border-elevated);
+  --normal-text: var(--color-text-primary);
+  --success-bg: var(--color-bg-elevated);
+  --success-border: var(--color-success);
+  --success-text: var(--color-success-text);
+  --error-bg: var(--color-bg-elevated);
+  --error-border: var(--color-danger);
+  --error-text: var(--color-danger-text);
+  --warning-bg: var(--color-bg-elevated);
+  --warning-border: var(--color-warning);
+  --warning-text: var(--color-warning-text);
+  --info-bg: var(--color-bg-elevated);
+  --info-border: var(--color-info);
+  --info-text: var(--color-info-text);
+  --border-radius: var(--radius-md);
+  font-family: var(--font-body);
+}
+
+[data-sonner-toast] {
+  font-size: var(--text-sm);
+}
+
+[data-sonner-toast] [data-button] {
+  min-height: var(--space-8);
+  border-radius: var(--radius-sm);
+  background: var(--color-teal-500);
+  color: var(--color-text-inverse);
+  font-weight: var(--weight-semibold);
+}
+
+[data-sonner-toast] [data-close-button] {
+  min-width: var(--space-6);
+  min-height: var(--space-6);
+}
+
+/* ── Selects and checkboxes (§21.3 quick reference) ──────────────────────── */
+.select {
+  display: block;
+  width: 100%;
+  min-height: var(--touch-standard);
+  padding: 0 var(--space-3);
+  background: var(--color-bg-base);
+  border: var(--hairline) solid var(--border-input);
+  border-radius: var(--radius-md);
+  color: var(--color-text-primary);
+  font-size: var(--text-base);
+  line-height: var(--leading-base);
+  transition: border-color var(--duration-base) var(--ease-in-out);
+}
+
+.select:hover:not(:disabled) {
+  border-color: var(--border-overlay);
+}
+
+.select:focus,
+.select:focus-visible {
+  outline: none;
+  border-color: var(--color-teal-500);
+}
+
+.select:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: not-allowed;
+}
+
+.select[aria-invalid="true"] {
+  border-color: var(--color-danger);
+}
+
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--touch-min);
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.checkbox input {
+  position: absolute;
+  width: var(--hairline);
+  height: var(--hairline);
+  opacity: 0;
+}
+
+.checkbox-box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-6);
+  height: var(--space-6);
+  flex: none;
+  border: var(--hairline) solid var(--border-input);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-base);
+  color: transparent;
+  transition:
+    background-color var(--duration-fast) var(--ease-in-out),
+    color var(--duration-fast) var(--ease-in-out);
+}
+
+.checkbox:has(input:checked) .checkbox-box {
+  background: var(--color-teal-500);
+  border-color: var(--color-teal-500);
+  color: var(--color-text-inverse);
+}
+
+.checkbox:has(input:focus-visible) .checkbox-box {
+  outline: var(--focus-ring-width) solid var(--color-teal-300);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.checkbox:has(input:disabled) {
+  opacity: var(--disabled-opacity);
+  cursor: not-allowed;
+}
+
+/* ── Generated forms (§21.24, §5.5) ──────────────────────────────────────── */
+.technical {
+  font-family: var(--font-mono);
+}
+
+.schema-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.schema-field {
+  gap: var(--space-2);
+}
+
+.field-help,
+.field-note {
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  color: var(--color-text-muted);
+}
+
+.field-note {
+  color: var(--color-text-secondary);
+}
+
+.field-required {
+  color: var(--color-text-muted);
+  font-weight: var(--weight-regular);
+}
+
+.sect-label {
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding-bottom: var(--space-2);
+  border-bottom: var(--hairline) solid var(--border-elevated);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  line-height: var(--space-5);
+}
+
+/* The ? help sheet and the Help screen under System (§19.1, §21.24, §24.2) */
+.help-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.help-content .kv dd .pill {
+  margin-left: var(--space-2);
+}
+
+/* The bundled documentation the ? sheet's Documentation section renders
+ * (spec §21.24, `help/docs/markdown.tsx`). `ul`/`ol` reset to no marker
+ * globally (base.css) — a run sheet's numbered rebuild steps or a checklist
+ * need that restored, or the sequence and the list itself are both lost. */
+.doc-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.doc-reader {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.doc-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  color: var(--color-text-secondary);
+}
+
+.doc-content h1,
+.doc-content h2,
+.doc-content h3,
+.doc-content h4,
+.doc-content h5,
+.doc-content h6 {
+  margin-top: var(--space-3);
+}
+
+.doc-content ul,
+.doc-content ol {
+  list-style: revert;
+  padding-inline-start: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.doc-content li {
+  display: revert;
+}
+
+.doc-checkbox-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  list-style: none !important;
+}
+
+.doc-content blockquote {
+  margin: 0;
+  padding-inline-start: var(--space-3);
+  border-inline-start: var(--nav-active-border) solid var(--border-elevated);
+  color: var(--color-text-muted);
+}
+
+.doc-content code {
+  background: var(--color-bg-elevated);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-1);
+}
+
+.doc-content pre {
+  background: var(--color-bg-elevated);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  overflow-x: auto;
+}
+
+.link-button {
+  color: var(--color-teal-300);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  color: var(--color-teal-400);
+}
+
+/* ── Devices screen (§21.24) ─────────────────────────────────────────────── */
+.view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.view-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.device-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.device-card {
+  gap: var(--space-4);
+}
+
+.device-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.device-head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.device-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.device-sub {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.device-body,
+.device-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.device-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.device-actions,
+.step-actions,
+.serial-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.connection-list,
+.health-devices,
+.setup-device-list,
+.remap-list,
+.review-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.connection-row,
+.health-device,
+.setup-device {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-2) 0;
+  border-bottom: var(--hairline) solid var(--border-elevated);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+/* Step 4's per-device test connection button (§10.4) reuses the admin card's
+   two-stage report; it always drops to its own full-width line within the
+   row's flex-wrap rather than crowding the name and status. */
+.setup-device .test-result {
+  flex: 1 0 100%;
+}
+
+.connection-name,
+.health-device-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-primary);
+  font-weight: var(--weight-medium);
+}
+
+.connection-purpose {
+  color: var(--color-text-muted);
+}
+
+/* ── Capabilities, as connected (§5.5, B56) ──────────────────────────────── */
+.caps-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.caps-source {
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  color: var(--color-text-secondary);
+}
+
+.caps-source[data-connected="false"] {
+  color: var(--color-warning-text);
+}
+
+.caps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.cap {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  border: var(--hairline) solid var(--border-elevated);
+  background: var(--color-bg-elevated);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.cap[data-present="true"] {
+  color: var(--color-success-text);
+}
+
+.cap[data-present="false"] {
+  color: var(--color-text-disabled);
+  text-decoration: line-through;
+}
+
+.caps-facts {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  color: var(--color-text-muted);
+}
+
+/* ── Serial device picker (§21.24, §5.5) ─────────────────────────────────── */
+.serial-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.serial-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.serial-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-height: var(--touch-min);
+  padding: var(--space-3);
+  border: var(--hairline) solid var(--border-input);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-base);
+  cursor: pointer;
+}
+
+.serial-option.is-selected {
+  border-color: var(--color-teal-500);
+  background: var(--color-teal-900);
+}
+
+.serial-option:has(input:focus-visible) {
+  outline: var(--focus-ring-width) solid var(--color-teal-300);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.serial-option-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.serial-option-title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  color: var(--color-text-primary);
+  font-weight: var(--weight-medium);
+}
+
+.serial-flags {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.serial-path,
+.serial-selected {
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  color: var(--color-text-muted);
+  word-break: break-all;
+}
+
+.serial-selected {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.flag {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  color: var(--color-warning-text);
+}
+
+.flag[data-tone="warning"]::before {
+  content: "⚠";
+}
+
+/* ── Two-stage test report (§5.3) ────────────────────────────────────────── */
+.test-result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-base);
+  border: var(--hairline) solid var(--border-elevated);
+}
+
+.test-summary {
+  color: var(--color-text-primary);
+  font-weight: var(--weight-medium);
+}
+
+.test-result[data-outcome="passed"] .test-summary {
+  color: var(--color-success-text);
+}
+
+.test-result[data-outcome="failed"] .test-summary {
+  color: var(--color-danger-text);
+}
+
+.test-detail {
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  color: var(--color-text-secondary);
+}
+
+.test-stages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.test-stage {
+  display: grid;
+  grid-template-columns: var(--space-6) minmax(0, max-content) minmax(0, max-content) 1fr;
+  align-items: baseline;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.test-stage-name {
+  color: var(--color-text-primary);
+  font-weight: var(--weight-medium);
+}
+
+.test-stage[data-outcome="passed"] .test-stage-icon,
+.test-stage[data-outcome="passed"] .test-stage-word {
+  color: var(--color-success-text);
+}
+
+.test-stage[data-outcome="failed"] .test-stage-icon,
+.test-stage[data-outcome="failed"] .test-stage-word {
+  color: var(--color-danger-text);
+}
+
+.test-stage[data-outcome="not-attempted"] .test-stage-icon,
+.test-stage[data-outcome="not-attempted"] .test-stage-word {
+  color: var(--color-text-disabled);
+}
+
+.test-stage-detail {
+  color: var(--color-text-muted);
+}
+
+/* ── ProgressPanel — real steps, never a spinner (§21.24, §16.8) ─────────── */
+.progress-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-base);
+  border: var(--hairline) solid var(--border-elevated);
+  list-style: none;
+  margin: 0;
+}
+
+.progress-step {
+  display: grid;
+  grid-template-columns: var(--space-6) 1fr;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  color: var(--color-text-disabled);
+}
+
+.progress-step-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-5);
+  height: var(--space-5);
+}
+
+.progress-step-icon svg {
+  width: var(--space-4);
+  height: var(--space-4);
+}
+
+.progress-step-dot {
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-full);
+  background: currentColor;
+  opacity: 0.4;
+}
+
+.progress-step[data-state="done"] {
+  color: var(--color-success-text);
+}
+
+.progress-step[data-state="current"] {
+  color: var(--color-text-primary);
+  font-weight: var(--weight-medium);
+}
+
+.progress-step[data-state="current"] .progress-step-icon svg {
+  animation: btn-spin var(--duration-very-slow) linear infinite;
+  color: var(--color-teal-300);
+}
+
+.progress-step-message {
+  grid-column: 2;
+  color: var(--color-text-muted);
+  font-weight: var(--weight-regular);
+}
+
+/* ── Conflict difference and remapping (§21.27, §5.5) ────────────────────── */
+.diff-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.diff-table th,
+.diff-table td {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: var(--hairline) solid var(--border-elevated);
+  color: var(--color-text-primary);
+}
+
+.diff-table thead th {
+  color: var(--color-text-secondary);
+  font-weight: var(--weight-medium);
+}
+
+.remap-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.remap-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.remap-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  font-weight: var(--weight-medium);
+}
+
+.remap-head-new {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.remap-old {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.remap-name {
+  color: var(--color-text-primary);
+  font-weight: var(--weight-medium);
+}
+
+/* The sheet sits on an elevated surface, where muted text is not permitted (§21.3). */
+.remap-ref {
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.remap-new {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1 1 calc(var(--space-20) * 2);
+  max-width: calc(var(--space-20) * 3);
+}
+
+.remap-row > .field-error {
+  flex-basis: 100%;
+}
+
+.sheet-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-5);
+  overflow-y: auto;
+}
+
+/* ── Health (§21.24 *Health*, §11.2) ─────────────────────────────────────── */
+.health-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-4);
+}
+
+.health-card {
+  gap: var(--space-2);
+}
+
+.health-overall {
+  padding-bottom: var(--space-2);
+}
+
+.level-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: var(--weight-medium);
+  color: var(--color-text-primary);
+}
+
+.level-badge[data-level="amber"] {
+  color: var(--color-warning-text);
+}
+
+.level-badge[data-level="red"] {
+  color: var(--color-danger-text);
+}
+
+.level-badge[data-level="unknown"] {
+  color: var(--color-text-muted);
+}
+
+.metric-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+  align-items: baseline;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-2) 0;
+  border-bottom: var(--hairline) solid var(--border-elevated);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.metric-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-secondary);
+  font-weight: var(--weight-medium);
+}
+
+.metric-value {
+  color: var(--color-text-primary);
+  text-align: right;
+}
+
+.metric-value[data-unavailable="true"] {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.metric-note {
+  grid-column: 1 / -1;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+}
+
+/* ── First-run wizard (§10.4) ────────────────────────────────────────────── */
+.wizard {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-6);
+  width: 100%;
+  margin: 0 auto;
+}
+
+.wizard-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.wizard-lock {
+  color: var(--color-text-muted);
+}
+
+.wizard-layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.wizard-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.wizard-step {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  border-left: var(--nav-active-border) solid transparent;
+}
+
+.wizard-step[data-state="current"] {
+  background: var(--color-bg-elevated);
+  border-left-color: var(--color-teal-500);
+}
+
+.wizard-step-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-6);
+  height: var(--space-6);
+  flex: none;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-overlay);
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+
+.wizard-step[data-state="complete"] .wizard-step-mark {
+  background: var(--color-teal-900);
+  color: var(--color-success-text);
+}
+
+.wizard-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  flex: 1;
+  min-width: 0;
+}
+
+.wizard-step-label {
+  color: var(--color-text-primary);
+  font-weight: var(--weight-medium);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.wizard-step-summary {
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+}
+
+.wizard-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  background: var(--color-bg-surface);
+  border: var(--hairline) solid var(--border-elevated);
+  border-radius: var(--radius-md);
+}
+
+.step-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.cert-options {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-4);
+}
+
+.cert-option[data-available="false"] {
+  opacity: var(--muted-strip-opacity);
+}
+
+.cert-choice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--touch-min);
+  color: var(--color-text-primary);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}
+
+.cert-option[data-available="false"] .cert-choice {
+  cursor: not-allowed;
+}
+
+.guidance-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  list-style: decimal;
+  padding-left: var(--space-5);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.review-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) max-content;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: var(--hairline) solid var(--border-elevated);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.review-step {
+  color: var(--color-text-primary);
+  font-weight: var(--weight-medium);
+}
+
+.review-summary {
+  color: var(--color-text-muted);
+}
+
+/* Two-column layouts from the tablet breakpoint (§21.6). */
+@media (min-width: theme(--breakpoint-tablet)) {
+  .health-grid,
+  .cert-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .wizard-layout {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  }
+}
+
+/* ── Faders (§10.3, §21.2, §21.3, §21.4, §21.5) ──────────────────────────── */
+.fader-strip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+}
+
+.fader-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+.fader-readout {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+
+.fader-ghost-value {
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+
+/* A held detent turns the readout amber, so being held is visible without
+ * watching the number (§21.13). The cap ring is `.fader-thumb[data-detent]` below. */
+.fader-value[data-detent="true"] {
+  color: var(--color-warning-text);
+}
+
+.fader-live-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--color-teal-900);
+  color: var(--color-teal-300);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.06em;
+}
+
+/* The whole track is the hit target (§24.4 "44 × 44 minimum") — not just the
+ * thumb — and owns pointer capture, keyboard focus and the ARIA slider role. */
+.fader-track-wrap {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  width: var(--touch-min);
+  min-height: calc(var(--space-20) * 2);
+  flex: 1;
+  touch-action: none; /* the drag is vertical; nothing above should also pan the page */
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+/* The printed legend (§5.5, §21.13): the law's labelled points, left of the
+ * track, each centred on its own position; a detent (unity) is longer and
+ * brighter, because it is the reference an operator looks for. */
+.fader-scale {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 100%;
+  pointer-events: none;
+}
+
+.fader-scale-mark {
+  position: absolute;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  transform: translateY(50%);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--color-text-muted);
+}
+
+.fader-scale-mark::after {
+  content: "";
+  width: var(--space-1);
+  height: var(--hairline);
+  background: currentColor;
+}
+
+.fader-scale-mark[data-detent="true"] {
+  color: var(--color-text-primary);
+  font-weight: var(--weight-semibold);
+}
+
+.fader-scale-mark[data-detent="true"]::after {
+  width: var(--space-2);
+}
+
+.fader-track-wrap:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-teal-300);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.fader-track-wrap[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: var(--disabled-opacity);
+}
+
+.fader-track-wrap[aria-readonly="true"] {
+  cursor: default;
+}
+
+/* Manual external control: last-known controller values, dimmed (§21.11) */
+.fader-track-wrap.is-reduced {
+  opacity: var(--muted-strip-opacity);
+}
+
+/* A scene driving this channel (§10.6, §21.11): pulsing teal normally, a
+ * static red ring — and the control disabled — under a critical scene. */
+.fader-track-wrap[data-scene-ring="normal"] {
+  box-shadow: 0 0 0 var(--focus-ring-width) var(--color-teal-500);
+  animation: led-pulse var(--duration-very-slow) var(--ease-in-out) infinite;
+}
+
+.fader-track-wrap[data-scene-ring="critical"] {
+  box-shadow: 0 0 0 var(--focus-ring-width) var(--color-danger);
+}
+
+.fader-track {
+  position: relative;
+  width: var(--space-2);
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: linear-gradient(
+    to bottom,
+    var(--color-fader-track),
+    var(--color-fader-track-mid) 20%,
+    var(--color-fader-track-mid) 80%,
+    var(--color-fader-track-edge)
+  );
+  box-shadow: var(--shadow-fader-track);
+}
+
+/* The track carries the full gradient at all times; the cover shrinks
+ * downward as the fader rises, revealing colour from the bottom up — honest
+ * position feedback, not signal metering (§21.3, and CONVENTIONS "fader
+ * position never drives a meter"). */
+.fader-fill {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--color-fader-grad);
+}
+
+.fader-cover {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: var(--color-fader-cover);
+  border-radius: inherit;
+  transition: height var(--duration-fast) var(--ease-out);
+}
+
+/* Muted: the cover extends to full, hiding the gradient entirely; the thumb
+ * stays visible and the strip drops to 60% opacity — never opacity alone
+ * (§21.3, §24.1: "A muted fader shows a grey fill and a striped pattern,
+ * not just reduced opacity"). */
+.fader-track[data-muted="true"] {
+  opacity: var(--muted-strip-opacity);
+}
+
+.fader-track[data-muted="true"] .fader-cover {
+  height: 100%;
+  background: repeating-linear-gradient(
+    45deg,
+    var(--color-fader-muted),
+    var(--color-fader-muted) var(--space-1),
+    var(--color-fader-cover) var(--space-1),
+    var(--color-fader-cover) calc(var(--space-1) * 2)
+  );
+}
+
+/* Ghost mark (§9.4): a faint secondary mark at the composited output —
+ * "what the fixture is doing", distinct from the thumb's "what was set". */
+.fader-ghost-mark {
+  position: absolute;
+  left: calc(-1 * var(--space-1));
+  right: calc(-1 * var(--space-1));
+  height: var(--hairline);
+  background: var(--color-text-primary);
+  opacity: 0.6;
+  transform: translateY(50%);
+}
+
+/* A hirer's ceiling (§18 Q4, §21.15): "the limit visible on the track so it
+ * reads as designed rather than broken". The cap dims the unreachable travel
+ * above it; the mark is the crisp line at the limit itself, brighter than
+ * the ghost mark and in the warning token so it reads as a limit, not a
+ * second value. */
+.fader-ceiling-cap {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: var(--color-fader-cover);
+  opacity: 0.55;
+}
+
+.fader-ceiling-mark {
+  position: absolute;
+  left: calc(-1 * var(--space-1));
+  right: calc(-1 * var(--space-1));
+  height: var(--hairline);
+  background: var(--color-warning);
+  transform: translateY(50%);
+}
+
+.fader-thumb {
+  position: absolute;
+  left: 50%;
+  width: var(--touch-thumb);
+  height: var(--touch-thumb);
+  transform: translate(-50%, 50%);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(to bottom, var(--color-fader-thumb), var(--color-fader-thumb-mid) 60%, var(--color-fader-thumb-edge));
+  box-shadow: var(--shadow-fader-thumb);
+}
+
+/* A law's detent held under the pointer: the cap shows a ring (§21.2, §21.13). */
+.fader-thumb[data-detent="true"] {
+  outline: var(--focus-ring-width) solid var(--color-teal-300);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* ── Lighting operator view (§21.11) ─────────────────────────────────────── */
+.lighting-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.lighting-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+
+.lighting-header-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.lighting-fade-control {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1;
+  min-width: calc(var(--space-20) * 3);
+}
+
+.lighting-fade-control label {
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  flex: none;
+}
+
+.lighting-fade-control input[type="range"] {
+  flex: 1;
+  accent-color: var(--color-teal-500);
+}
+
+.lighting-fade-value {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--color-text-primary);
+  flex: none;
+  min-width: calc(var(--space-8) + var(--space-2));
+  text-align: right;
+}
+
+.lighting-master-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+/* External control's LED toggle: amber and glowing when active, unlit off (§21.11) */
+.led-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--touch-min);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+  border: var(--hairline) solid var(--border-input);
+  background: var(--color-bg-base);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+
+.led-toggle-lamp {
+  width: var(--status-dot-size);
+  height: var(--status-dot-size);
+  border-radius: var(--radius-full);
+  background: var(--color-mute-off);
+  flex: none;
+  transition: background-color var(--duration-base) var(--ease-in-out), box-shadow var(--duration-base) var(--ease-in-out);
+}
+
+.led-toggle[data-active="true"] .led-toggle-lamp {
+  background: var(--color-warning);
+  box-shadow: 0 0 var(--space-1) var(--focus-ring-width) color-mix(in srgb, var(--color-warning) 70%, transparent);
+}
+
+.led-toggle[data-active="true"] {
+  color: var(--color-warning-text);
+  border-color: var(--color-warning);
+}
+
+.led-toggle:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: not-allowed;
+}
+
+.lighting-banks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+}
+
+.lighting-banks-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.lighting-bank {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--touch-primary);
+  min-width: var(--touch-primary);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-md);
+  border: var(--hairline) solid var(--border-input);
+  background: var(--color-bg-base);
+  color: var(--color-text-primary);
+  font-weight: var(--weight-semibold);
+}
+
+.lighting-bank[aria-pressed="true"] {
+  border-color: var(--color-teal-500);
+  background: var(--color-teal-900);
+  color: var(--color-teal-300);
+}
+
+.lighting-bank:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: not-allowed;
+}
+
+/* ○ off, ● on (§21.11's wireframe) — hollow versus filled, not colour alone (§24.1). */
+.lighting-bank-lamp {
+  width: var(--status-dot-size);
+  height: var(--status-dot-size);
+  border-radius: var(--radius-full);
+  border: var(--hairline) solid var(--color-status-grey);
+  background: transparent;
+  flex: none;
+}
+
+.lighting-bank[aria-pressed="true"] .lighting-bank-lamp {
+  border-color: var(--color-teal-500);
+  background: var(--color-teal-500);
+  box-shadow: 0 0 var(--space-1) var(--focus-ring-width) color-mix(in srgb, var(--color-teal-500) 70%, transparent);
+}
+
+.lighting-lockout {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-warning-text);
+  font-size: var(--text-sm);
+}
+
+/* Groups and Fixtures rows: horizontal scroll with scroll-snap (§21.11) */
+.lighting-scroller {
+  display: flex;
+  gap: var(--space-4);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  padding: var(--space-4);
+  scrollbar-width: thin;
+}
+
+.lighting-scroller > * {
+  scroll-snap-align: start;
+  flex: none;
+}
+
+.lighting-group-strip,
+.lighting-fixture-strip {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+  width: calc(var(--space-20) + var(--space-4));
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+}
+
+/* Group colour identity accent at the top of the strip — never status (§21.3) */
+.lighting-group-accent,
+.lighting-fixture-accent {
+  height: var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--accent-colour, var(--color-bg-overlay));
+}
+
+.lighting-dominated-hint {
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.lighting-section-title {
+  padding: 0 var(--space-4);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* ── Stage plan (§9.3, §21.4, §21.5, §21.12) ─────────────────────────────── */
+.stage-plan-container {
+  position: relative;
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-surface);
+  border: var(--hairline) solid var(--border-elevated);
+  padding: var(--space-4);
+  overflow: hidden;
+}
+
+.stage-plan-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  touch-action: none;
+}
+
+.stage-plan-bar-line {
+  stroke: var(--border-overlay);
+  stroke-dasharray: 4 8;
+}
+
+.stage-plan-bar-label {
+  fill: var(--color-text-muted);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* One fixture (§21.4's LED treatment: a bright emitter, a bloom that falls
+ * off rapidly, and a specular highlight — reserved for control surfaces, and
+ * this is one). Nodes transition over the actual fade as frames arrive
+ * (§21.3) — the duration matches the batched-frame interval (§21.2), so a
+ * chain of small transitions across many frames sums to the real fade time.
+ * `.fixture-node` (not `-wrap`) is the class the reduced-motion block in
+ * base.css already targets to drop the fade entirely. */
+.fixture-node-wrap {
+  cursor: pointer;
+  outline-offset: var(--focus-ring-offset);
+}
+
+.fixture-node-wrap.is-reduced {
+  opacity: var(--muted-strip-opacity);
+}
+
+.fixture-node-wrap.is-locked {
+  opacity: var(--disabled-opacity);
+  cursor: not-allowed;
+}
+
+.fixture-node-wrap.is-drag-ghost {
+  opacity: var(--muted-strip-opacity);
+}
+
+.fixture-node {
+  transition:
+    opacity var(--duration-fast) linear,
+    fill var(--duration-fast) linear;
+}
+
+.fixture-node-base {
+  fill: var(--color-status-grey);
+  stroke: var(--color-bg-base);
+}
+
+.fixture-node-selection-ring {
+  fill: none;
+  stroke: var(--color-teal-500);
+}
+
+.fixture-node-label {
+  fill: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+}
+
+.fixture-node-conflict {
+  fill: var(--color-warning-text);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+
+.fixture-node-live {
+  fill: var(--color-teal-300);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.fixture-node-lock {
+  fill: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+/* ── Multi-select action bar (§21.12): "N selected [Group] [Set level] [✕]",
+ * animated up from the bottom on first selection. */
+.stage-plan-selection-bar {
+  position: sticky;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  margin-top: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  border: var(--hairline) solid var(--border-elevated);
+  box-shadow: var(--shadow-overlay);
+  animation: slide-up var(--duration-moderate) var(--ease-out) both;
+}
+
+.stage-plan-selection-count {
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-primary);
+  margin-right: auto;
+}
+
+.stage-plan-bar-reorder {
+  display: inline-flex;
+  gap: var(--space-1);
+}
+
+.stage-plan-admin-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 0 var(--space-4) var(--space-3);
+  flex-wrap: wrap;
+}
+
+.stage-plan-root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.stage-plan-bar-reorder-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+}
+
+.stage-plan-bar-reorder-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+/* ── KNX library (§21.19) ─────────────────────────────────────────────────
+ * Test write's inline mini-form. */
+.test-write {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-base);
+}
+
+/* Radio buttons: the same hidden-input-plus-drawn-mark pattern as .checkbox,
+ * a filled circle instead of a tick (§21.19 *Add and edit* direction group,
+ * the import wizard's duplicate-strategy choice). */
+.radio {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--touch-min);
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.radio input {
+  position: absolute;
+  width: var(--hairline);
+  height: var(--hairline);
+  opacity: 0;
+}
+
+.radio-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-5);
+  height: var(--space-5);
+  flex: none;
+  border: var(--hairline) solid var(--border-input);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-base);
+  transition:
+    background-color var(--duration-fast) var(--ease-in-out),
+    border-color var(--duration-fast) var(--ease-in-out);
+}
+
+.radio-mark::after {
+  content: "";
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-text-inverse);
+  transform: scale(0);
+  transition: transform var(--duration-fast) var(--ease-in-out);
+}
+
+.radio:has(input:checked) .radio-mark {
+  background: var(--color-teal-500);
+  border-color: var(--color-teal-500);
+}
+
+.radio:has(input:checked) .radio-mark::after {
+  transform: scale(1);
+}
+
+.radio:has(input:focus-visible) .radio-mark {
+  outline: var(--focus-ring-width) solid var(--color-teal-300);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.radio:has(input:disabled) {
+  opacity: var(--disabled-opacity);
+  cursor: not-allowed;
+}
+
+/* A data table inside a card: the card itself never scrolls vertically, but
+ * a wide table may scroll horizontally on a narrow screen (§21.9, B63). */
+.table-scroll {
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.data-table th,
+.data-table td {
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  vertical-align: top;
+  border-bottom: var(--hairline) solid var(--border-elevated);
+  white-space: nowrap;
+}
+
+.data-table td:has(ul) {
+  white-space: normal;
+}
+
+.data-table thead th {
+  color: var(--color-text-secondary);
+  font-weight: var(--weight-medium);
+  text-transform: uppercase;
+  font-size: var(--text-xs);
+  letter-spacing: 0.04em;
+}
+
+.data-table tbody tr[data-importable="false"] {
+  color: var(--color-text-muted);
+}
+
+.pill[data-tone="success"] {
+  background: color-mix(in srgb, var(--color-success) 18%, transparent);
+  color: var(--color-success-text);
+}
+
+.pill[data-tone="warning"] {
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  color: var(--color-warning-text);
+}
+
+/* A disclosure chevron driven by `data-expanded` rather than inline transform
+ * (the Devices tab's expand-to-show-addresses row, the monitor panel's
+ * collapse toggle). */
+.chevron[data-expanded="true"] {
+  transform: rotate(180deg);
+}
+
+.heartbeat-mark {
+  display: inline-flex;
+  margin-left: var(--space-2);
+  color: var(--color-danger-text);
+  vertical-align: middle;
+}
+
+/* The long-press context menu (§21.12, admin only) — positioned at the pointer via
+ * runtime `left`/`top` (never a literal length here; token discipline is about
+ * source-code values). */
+.stage-plan-context-menu {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  min-width: calc(var(--space-20) * 2);
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  border: var(--hairline) solid var(--border-overlay);
+  box-shadow: var(--shadow-overlay);
+}
+
+/* ── Admin Lighting configuration (§21.18) ───────────────────────────────── */
+
+/* The screen's own sub-tabs (Stage Plan, Fixtures, Bars, Groups, Colour
+ * presets, Fixture profiles) reuse `.tab-strip`/`.tab` (§21.6) but are ARIA
+ * tabs rather than nav links, so the active state keys off `aria-selected`
+ * instead of `aria-current`. */
+.tab[aria-selected="true"] {
+  color: var(--color-teal-300);
+  border-bottom-color: var(--color-teal-500);
+  background: var(--color-bg-surface);
+  font-weight: var(--weight-semibold);
+}
+
+.lighting-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-height: 0;
+}
+
+/* A table inside a panel may scroll even though the panel itself never does
+ * (CONVENTIONS "Interface", §21.9, B63). */
+.lighting-table-scroll {
+  overflow-y: auto;
+  min-height: 0;
+  border: var(--hairline) solid var(--border-elevated);
+  border-radius: var(--radius-md);
+}
+
+.lighting-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.lighting-table th,
+.lighting-table td {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: var(--hairline) solid var(--border-elevated);
+  color: var(--color-text-primary);
+}
+
+.lighting-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--color-bg-surface);
+  color: var(--color-text-secondary);
+  font-weight: var(--weight-medium);
+}
+
+.lighting-table tbody tr {
+  cursor: pointer;
+}
+
+.lighting-table tbody tr:hover {
+  background: var(--color-bg-overlay);
+}
+
+.lighting-table tbody tr:focus-within {
+  outline: var(--focus-ring-width) solid var(--color-teal-300);
+  outline-offset: calc(var(--focus-ring-offset) * -1);
+}
+
+.lighting-summary-conflict {
+  color: var(--color-danger-text);
+  font-weight: var(--weight-semibold);
+}
+
+/* Colour swatch (colour presets, fixture profile defaults, the fixture
+ * sheet) — `background` is always set at runtime from `colourToCss`, never a
+ * literal (token discipline). */
+.colour-swatch,
+.fixture-sheet-swatch {
+  display: inline-block;
+  width: var(--space-8);
+  height: var(--space-8);
+  border-radius: var(--radius-sm);
+  border: var(--hairline) solid var(--border-overlay);
+  flex: none;
+}
+
+/* A colour swatch used as a picker control (the page button editor's group
+ * palette, §21.9, §21.3) rather than a read-only indicator — its `background`
+ * is a `var(--group-*)` token reference, never a literal. */
+button.colour-swatch {
+  cursor: pointer;
+  padding: 0;
+}
+
+button.colour-swatch[data-selected] {
+  outline: var(--focus-ring-width) solid var(--color-text-primary);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* ── Admin → Pages editor (§21.9, §15.12) ────────────────────────────────
+ * Items sit in one horizontal flow, in `sort_order` (§21.9 "Layout"). */
+.page-item-canvas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.page-item-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: var(--hairline) solid var(--border-input);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-base);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.page-item-chip[data-selected] {
+  border-color: var(--color-teal-500);
+  background: var(--color-teal-900);
+}
+
+/* A panel's button grid: empty cells render as a dashed outline, so a
+ * partly-filled panel reads as deliberate rather than broken (§21.9). */
+.page-button-grid {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.page-button-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--touch-min);
+  padding: var(--space-2);
+  border: var(--hairline) solid var(--border-input);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.page-button-chip-empty {
+  border-style: dashed;
+  color: var(--color-text-muted);
+  justify-content: center;
+}
+
+/* ── Channel map (§21.18) ─────────────────────────────────────────────────
+ * One horizontally scrolling row of 512 cells — a patch bay reference
+ * display, not a set of primary touch targets, so cells are smaller than
+ * the 44 px minimum the rest of the interface holds to; each is still
+ * reachable and operable by keyboard through the roving tab stop. */
+.channel-map-grid {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: var(--space-1);
+  overflow-x: auto;
+  padding-block: var(--space-2);
+}
+
+.channel-map-cell {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-8);
+  height: var(--space-8);
+  border-radius: var(--radius-sm);
+  border: var(--hairline) solid var(--border-elevated);
+  background: var(--color-bg-surface);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.channel-map-cell:hover {
+  background: var(--color-bg-overlay);
+}
+
+.channel-map-cell:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-teal-300);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.channel-map-cell[data-state="occupied"] {
+  color: var(--color-text-primary);
+  border-color: var(--border-overlay);
+  background: var(--color-bg-overlay);
+}
+
+.channel-map-cell[data-state="conflict"] {
+  color: var(--color-text-inverse);
+  border-color: var(--color-danger);
+  background: var(--color-danger);
+}
+
+.channel-map-cell[data-fixture-index="0"] { background: var(--group-rose); color: var(--color-text-inverse); }
+.channel-map-cell[data-fixture-index="1"] { background: var(--group-salmon); color: var(--color-text-inverse); }
+.channel-map-cell[data-fixture-index="2"] { background: var(--group-tangerine); color: var(--color-text-inverse); }
+.channel-map-cell[data-fixture-index="3"] { background: var(--group-amber); color: var(--color-text-inverse); }
+.channel-map-cell[data-fixture-index="4"] { background: var(--group-lime); color: var(--color-text-inverse); }
+.channel-map-cell[data-fixture-index="5"] { background: var(--group-fern); color: var(--color-text-inverse); }
+.channel-map-cell[data-fixture-index="6"] { background: var(--group-ocean); color: var(--color-text-inverse); }
+.channel-map-cell[data-fixture-index="7"] { background: var(--group-azure); color: var(--color-text-inverse); }
+.channel-map-cell[data-fixture-index="8"] { background: var(--group-violet); color: var(--color-text-inverse); }
+.channel-map-cell[data-fixture-index="9"] { background: var(--group-orchid); color: var(--color-text-inverse); }
+.channel-map-cell[data-fixture-index="10"] { background: var(--group-silver); color: var(--color-text-inverse); }
+.channel-map-cell[data-fixture-index="11"] { background: var(--group-white); color: var(--color-text-inverse); }
+
+.profile-channel-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+/* -- Scenes (§21.10, §21.16, P2-T11) --------------------------------------- */
+
+.scene-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: var(--touch-primary);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+  border: var(--hairline) solid var(--border-elevated);
+  text-align: center;
+  cursor: pointer;
+  transition: background var(--duration-base) var(--ease-in-out);
+}
+
+.scene-card:hover:not(:disabled) {
+  background: var(--color-bg-overlay);
+}
+
+.scene-card:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-teal-300);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.scene-card:disabled {
+  cursor: not-allowed;
+  opacity: var(--disabled-opacity);
+}
+
+/* Critical: a permanent red outline, "distinguishable at rest" (§21.10). */
+.scene-card[data-critical="true"] {
+  box-shadow: 0 0 0 var(--focus-ring-width) var(--color-danger);
+}
+
+/* Executing takes precedence over the critical ring while it runs — the
+ * pulsing teal border of §21.11's fader ring, reused here for the same
+ * "a scene is driving this" meaning (§10.6). */
+.scene-card[data-state="executing"] {
+  box-shadow: 0 0 0 var(--focus-ring-width) var(--color-teal-500);
+  animation: led-pulse var(--duration-very-slow) var(--ease-in-out) infinite;
+}
+
+.scene-card[data-state="success"] {
+  animation: green-glow var(--duration-very-slow) var(--ease-out) both;
+}
+
+.scene-card[data-state="partial"] {
+  animation: amber-pulse var(--duration-very-slow) var(--ease-out) both;
+}
+
+.scene-card[data-state="failed"] {
+  animation: red-glow var(--duration-very-slow) var(--ease-out) both;
+}
+
+.scene-card-icon {
+  font-size: var(--text-2xl);
+  line-height: 1;
+}
+
+.scene-card-name {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.scene-card-meta {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.scene-card-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+}
+
+.scene-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.scene-list-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+  border: var(--hairline) solid var(--border-elevated);
+}
+
+.scene-list-row[aria-current="page"] {
+  border-color: var(--color-teal-500);
+}
+
+.scene-list-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: var(--weight-medium);
+}
+
+.domain-picker {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-2);
+}
+
+.domain-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  min-height: var(--touch-min);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+  border: var(--hairline) solid var(--border-elevated);
+  font-size: var(--text-sm);
+  text-align: center;
+  cursor: pointer;
+}
+
+.domain-tile[aria-pressed="true"] {
+  border-color: var(--color-teal-500);
+  background: var(--color-teal-900);
+}
+
+.domain-tile:disabled {
+  cursor: not-allowed;
+  opacity: var(--disabled-opacity);
+}
+
+.scene-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.scene-timeline-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+  border: var(--hairline) solid var(--border-elevated);
+}
+
+.scene-timeline-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.scene-timeline-delay {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+}
+
+.scene-action-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-elevated);
+}
+
+.scene-action-domain {
+  font-weight: var(--weight-medium);
+  min-width: calc(var(--space-20) * 1.5);
+}
+
+.scene-action-summary {
+  flex: 1;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+}
+
+.scene-action-actions {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.snapshot-summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-elevated);
+  font-size: var(--text-sm);
+}
+
+.snapshot-summary-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  max-height: calc(var(--space-20) * 2);
+  overflow-y: auto;
+}
+
+.scene-log-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.scene-log-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+  border: var(--hairline) solid var(--border-elevated);
+}
+
+.scene-log-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.scene-log-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+}
+
+/* ── Logs — Security and DEBUG toggling (§6.14, §4.10, §21.24) ───────────── */
+.security-log {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.security-log-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: flex-end;
+}
+
+.security-log-filters .field {
+  min-width: 10rem;
+}
+
+.security-log-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.security-log-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+  border: var(--hairline) solid var(--border-elevated);
+}
+
+.security-log-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.security-log-outcome {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-weight: 600;
+}
+
+.security-log-outcome[data-outcome="success"] {
+  color: var(--color-success-text);
+}
+
+.security-log-outcome[data-outcome="failure"] {
+  color: var(--color-danger-text);
+}
+
+.security-log-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+}
+
+.security-log-detail {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--color-bg-base);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  margin: 0;
+}
+
+.security-log-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.system-log {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.system-log-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: flex-end;
+}
+
+.system-log-filters .field {
+  min-width: 10rem;
+}
+
+.system-log-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.system-log-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+  border: var(--hairline) solid var(--border-elevated);
+}
+
+.system-log-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.system-log-level {
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.system-log-level[data-level="WARNING"] {
+  color: var(--color-warning-text);
+}
+
+.system-log-level[data-level="ERROR"],
+.system-log-level[data-level="CRITICAL"] {
+  color: var(--color-danger-text);
+}
+
+.system-log-level[data-level="INFO"] {
+  color: var(--color-info-text);
+}
+
+.system-log-logger {
+  color: var(--color-text-muted);
+}
+
+.system-log-message {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  margin: 0;
+  word-break: break-word;
+}
+
+.system-log-context {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--color-bg-base);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  margin: 0;
+}
+
+.system-log-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.debug-logging-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.debug-logging-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+  border: var(--hairline) solid var(--border-elevated);
+}
+
+/* ── Operator Video and Projector (§21.14, §7.5) ─────────────────────────── */
+.video-view,
+.projector-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-4);
+}
+
+.video-destination {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+  border: var(--hairline) solid var(--border-elevated);
+}
+
+/* §7.5 out-of-band control: someone changed routing at the matrix itself. */
+.video-diverged-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  border: var(--hairline) solid var(--color-warning);
+  color: var(--color-warning-text);
+  font-size: var(--text-sm);
+}
+
+.video-atomic-notice {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.video-source-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+/* --touch-primary tall or taller; teal fill and a selection ring mark the
+ * active source (§21.14). */
+.video-source-button {
+  flex: 1;
+  min-height: var(--touch-primary);
+  min-width: calc(var(--space-20) * 2);
+  padding: 0 var(--space-6);
+  border-radius: var(--radius-md);
+  border: var(--hairline) solid var(--border-input);
+  background: var(--color-bg-base);
+  color: var(--color-text-primary);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  transition: background var(--duration-base) var(--ease-in-out), border-color var(--duration-base) var(--ease-in-out);
+}
+
+.video-source-button:hover:not(:disabled) {
+  background: var(--color-bg-overlay);
+}
+
+.video-source-button:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-teal-300);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.video-source-button[aria-pressed="true"] {
+  border-color: var(--color-teal-500);
+  background: var(--color-teal-900);
+  color: var(--color-teal-300);
+  box-shadow: 0 0 0 var(--focus-ring-width) var(--color-teal-500);
+}
+
+/* Pending: pressed, not yet confirmed by the response or a frame (§21.14). */
+.video-source-button[data-pending="true"] {
+  animation: led-pulse var(--duration-very-slow) var(--ease-in-out) infinite;
+}
+
+.video-source-button:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: not-allowed;
+}
+
+.projector-state-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  color: var(--color-text-primary);
+}
+
+/* Six states, colour and icon together, never colour alone (§24.1, §7.4). */
+.projector-led {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-4);
+  height: var(--space-4);
+  border-radius: var(--radius-full);
+  flex: none;
+  color: var(--color-status-grey);
+}
+
+.projector-led svg {
+  width: var(--space-4);
+  height: var(--space-4);
+}
+
+.projector-led[data-state="off"],
+.projector-led[data-state="unknown"] {
+  color: var(--color-status-grey);
+}
+
+.projector-led[data-state="warming"],
+.projector-led[data-state="cooling"] {
+  color: var(--color-warning);
+}
+
+.projector-led[data-state="warming"] svg,
+.projector-led[data-state="cooling"] svg {
+  animation: btn-spin var(--duration-very-slow) linear infinite;
+}
+
+.projector-led[data-state="on"] {
+  color: var(--color-status-green);
+  background: radial-gradient(circle at 35% 35%, var(--color-text-primary), var(--color-status-green) 40%, var(--color-teal-900) 100%);
+  box-shadow: 0 0 var(--space-1) var(--focus-ring-width) color-mix(in srgb, var(--color-status-green) 80%, transparent);
+}
+
+.projector-led[data-state="error"],
+.projector-led[data-state="unreachable"] {
+  color: var(--color-status-red);
+}
+
+.projector-power-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.projector-input-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: calc(var(--space-20) * 3);
+}
+
+.projector-input-picker > span {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--color-text-secondary);
+}
+
+/* ── Mixer operator view (§21.13) ────────────────────────────────────────── */
+.mixer-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.mixer-metering-notice {
+  margin: 0;
+  padding: 0 var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--color-warning-text);
+}
+
+/* Row on tablet and up (the `tablet:` variant is applied in the component);
+ * stacked on a phone, where the outputs panel and Main follow the inputs
+ * panel rather than sitting beside it. */
+.mixer-body {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-4);
+  padding: 0 var(--space-4) var(--space-4);
+}
+
+.mixer-inputs-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  flex: 1;
+  min-width: 0;
+}
+
+.mixer-inputs-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+/* Always fully visible, never collapsed (§21.13); the row itself scrolls
+ * horizontally rather than any chip being hidden. */
+.mixer-page-chips {
+  display: flex;
+  gap: var(--space-2);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.mixer-page-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  /* §21.13 asks for a thirty-eight pixel minimum; the nearest token that
+   * still clears it without adding one (CONVENTIONS "Interface") is --space-10. */
+  min-height: var(--space-10);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+  border: var(--hairline) solid var(--border-input);
+  background: var(--color-bg-base);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+
+.mixer-page-chip[aria-selected="true"] {
+  border-color: var(--color-teal-500);
+  background: var(--color-teal-900);
+  color: var(--color-teal-300);
+}
+
+.mixer-outputs-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--touch-min);
+  padding: 0 var(--space-3);
+  margin-left: auto;
+  border-radius: var(--radius-md);
+  border: var(--hairline) solid var(--border-input);
+  background: var(--color-bg-base);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.mixer-outputs-toggle[aria-expanded="true"] {
+  border-color: var(--color-teal-500);
+  color: var(--color-teal-300);
+}
+
+/* Panels never scroll vertically (§21.9, B63): a fixed-size page of strips,
+ * laid out in a row that reflows narrower rather than overflowing. */
+.mixer-input-strips,
+.mixer-outputs-strips {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.mixer-no-inputs {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+/* The drawer (wide) / outputs page (narrow) — one toggled panel either way
+ * (§21.13); which arrangement it reads as is left to the tablet: breakpoint
+ * rather than two separate trees. Closed, it collapses to nothing rather
+ * than sliding fully off-screen, which is enough to prove the interaction
+ * without a transform animation this view does not need to own. */
+.mixer-outputs-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition:
+    max-width var(--duration-moderate) var(--ease-out),
+    opacity var(--duration-base) var(--ease-out);
+}
+
+.mixer-outputs-panel[data-open="true"] {
+  max-width: calc(var(--space-20) * 6);
+  opacity: 1;
+  padding-left: var(--space-4);
+  border-left: var(--hairline) solid var(--border-elevated);
+}
+
+.mixer-main-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: none;
+  padding-left: var(--space-4);
+  border-left: var(--hairline) solid var(--border-elevated);
+}
+
+.mixer-fader-pos-label {
+  margin: 0;
+  text-align: center;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.mixer-channel-strip {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  width: calc(var(--space-20) + var(--space-4));
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+}
+
+.mixer-strip-body {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-1);
+}
+
+/* Origin badge (§21.13, §7.3): teal mono text, top-right of the strip. */
+.mixer-origin-badge {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+  color: var(--color-teal-300);
+}
+
+.mixer-mute-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--touch-mute);
+  width: 100%;
+  border-radius: var(--radius-sm);
+  background: var(--color-mute-off);
+  /* text-secondary measures below 4.5:1 on this background (bg-overlay,
+   * §24.4's own prohibited combination) — text-primary clears it easily. */
+  color: var(--color-text-primary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.mixer-mute-button[aria-pressed="true"] {
+  background: var(--color-mute-active);
+  /* text-primary measures 3.4:1 on this background (danger red is not one
+   * of §24.4's background layers, so nothing had checked it) — text-inverse
+   * clears 4.5:1 with room to spare. */
+  color: var(--color-text-inverse);
+}
+
+.mixer-mute-button:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: not-allowed;
+}
+
+.mixer-pan {
+  width: 100%;
+  accent-color: var(--color-teal-500);
+}
+
+/* The meter (§21.13 "Metering"): a narrow bar per driver reference, visually
+ * distinct from the fader's own gradient so position and level are never
+ * confused — the fader fills from a flat colour, the meter from bands. */
+.mixer-meter {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-1);
+}
+
+.mixer-meter-bar {
+  display: flex;
+  width: var(--space-2);
+}
+
+.mixer-meter-track {
+  position: relative;
+  flex: 1;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.mixer-meter-cover {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: var(--color-fader-track);
+}
+
+.mixer-meter-peak {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: var(--hairline);
+  background: var(--color-text-primary);
+}
+
+/* ── Desk scene band (§21.13) ────────────────────────────────────────────── */
+.mixer-desk-scenes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-4) 0;
+}
+
+.mixer-desk-scenes-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.mixer-desk-scenes-last {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.mixer-scene-pill-row {
+  display: flex;
+  gap: var(--space-2);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.mixer-scene-pill {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  min-height: var(--touch-min);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-full);
+  border: var(--hairline) solid var(--border-input);
+  background: var(--color-bg-base);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+
+.mixer-scene-pill[data-active="true"] {
+  border-color: var(--color-teal-500);
+  color: var(--color-teal-300);
+}
+
+.mixer-scene-pill:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: not-allowed;
+}
+
+.mixer-scene-recall-reason {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+/* ── Pages — the everyday surface (§21.9) ────────────────────────────────── */
+.page-surface-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  /* Display scale (§21.9): everything grows together as one logical unit —
+   * strips, type, buttons — never a second layout path for a tall display. */
+  zoom: var(--page-display-scale, 1);
+}
+
+.page-tabs-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.page-display-scale {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+}
+
+.page-display-scale input[type="range"] {
+  accent-color: var(--color-teal-500);
+}
+
+.page-display-scale-value {
+  min-width: var(--space-8);
+  font-family: var(--font-mono);
+  color: var(--color-teal-300);
+  text-align: right;
+}
+
+/* One horizontal flow of strips, trays and panels, in `sort_order` (§21.9
+ * "Layout"). Mirrors `.lighting-scroller`/`.mixer-input-strips`: horizontal
+ * scroll-snap is the only overflow, and nothing here scrolls vertically.
+ * `align-items: stretch` (matching `docs/pages-device-sizes.html`'s own
+ * `.surface`) is what gives every item — strips, trays, panels — the row's
+ * shared height: a panel's own grid area is `flex: 1` inside it, so
+ * measuring that area is measuring exactly the space the row actually gave
+ * it, not a device-class guess (`PagePanel`). The gap is the Pages surface's
+ * own 14 px (§21.9), not the Mixer/Lighting views' `--space-4` — every
+ * panel's own width search assumes this exact gap between adjacent strips. */
+.page-surface-flow {
+  display: flex;
+  align-items: stretch;
+  gap: var(--pages-strip-gap);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  padding: var(--space-4);
+  scrollbar-width: thin;
+}
+
+.page-surface-flow > * {
+  scroll-snap-align: start;
+  flex: none;
+}
+
+/* §24.6's hirer overrides — 72 px minimum on every interactive element,
+ * against 44 px elsewhere — reached as a CSS scope over the same components
+ * an operator's page renders, rather than a forked hirer version of each one
+ * (§18 P5-T11). The button panel's own floor is a JS input instead, because
+ * its size/column search has to know the real number (`PagePanel`'s `hirer`
+ * prop, `panelLayout.ts`'s `HIRER_BUTTON_FLOOR`) — a button placed by that
+ * search already comes out at 72 px or more, so it needs no rule here. */
+.page-surface-hirer .fader-track-wrap {
+  width: var(--touch-hirer);
+}
+
+.page-surface-hirer .mixer-mute-button {
+  min-height: var(--touch-hirer);
+}
+
+.page-surface-hirer .page-group-tray-toggle {
+  min-height: var(--touch-hirer);
+  padding: 0 var(--space-4);
+}
+
+/* The install prompt's own action row (§21.8, §18 P5-T11). */
+.install-prompt-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* The Pages surface fixes its own strip footprint at 150 px (§21.9 "A 2-wide
+ * panel is 314 px — two 150 px strips plus the 14 px between them"; §21.21
+ * "A 150 px strip at 13.5 px"), distinct from the Mixer and Lighting views'
+ * own narrower strip (`--space-20 + --space-4`) — this selector reaches only
+ * a strip mounted inside the Pages flow, never those other views. */
+.page-surface-flow .mixer-channel-strip,
+.page-surface-flow .lighting-fixture-strip {
+  width: var(--pages-strip-width);
+}
+
+.page-surface-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-8);
+  color: var(--color-text-muted);
+}
+
+/* Group trays (§21.9 "Group trays"): the group's colour as a tint carried by
+ * `--accent-colour`, never status (§21.3). */
+.page-group-tray {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 0;
+  padding: var(--space-6) var(--space-3) var(--space-3);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--accent-colour, var(--color-bg-overlay)) 6%, var(--color-bg-surface));
+  border: var(--hairline) solid color-mix(in srgb, var(--accent-colour, var(--color-bg-overlay)) 30%, transparent);
+}
+
+.page-group-tray-name {
+  position: absolute;
+  top: var(--space-2);
+  left: var(--space-3);
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--accent-colour, var(--color-text-secondary));
+}
+
+/* The collapse slides by class change, never by measurement (§21.9): the
+ * expanded width is arithmetic — member count × (strip + gap) — carried in
+ * as `--page-tray-count`. Members stay mounted throughout; only this
+ * container's own width and opacity change, so the transition never
+ * restarts mid-flight. Members fade slightly faster than the width settles;
+ * reduced motion collapses every duration to `--duration-reduced` globally
+ * (base.css). */
+.page-group-tray-members {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--pages-strip-gap);
+  overflow: hidden;
+  width: 0;
+  opacity: 0;
+  transition:
+    width var(--duration-moderate) var(--ease-out),
+    opacity var(--duration-base) var(--ease-in-out);
+}
+
+/* Member count × (strip + gap) — the Pages surface's own footprint tokens,
+ * matching `panelLayout.ts`'s `STRIP_FOOTPRINT`/`STRIP_GAP` (§21.9). */
+.page-group-tray[data-expanded="true"] .page-group-tray-members {
+  width: calc(var(--page-tray-count, 0) * (var(--pages-strip-width) + var(--pages-strip-gap)));
+  opacity: 1;
+}
+
+.page-group-tray-master {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent-colour, var(--color-bg-overlay)) 16%, var(--color-bg-surface));
+  border: var(--hairline) solid color-mix(in srgb, var(--accent-colour, var(--color-bg-overlay)) 30%, transparent);
+}
+
+.page-group-tray-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  min-height: var(--space-6);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  border: var(--hairline) solid var(--border-overlay);
+  background: transparent;
+  color: var(--accent-colour, var(--color-text-secondary));
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+
+/* A master placed away from its members — not contiguous (§21.9) — renders
+ * as an ordinary strip in the group's colour with a member-count marker,
+ * never a tray. */
+.page-group-member-count {
+  margin: 0;
+  text-align: center;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+/* Button panel (§21.9 "Buttons are square, and never scroll" / "Size and
+ * columns are chosen together"). Width and the grid's column template are
+ * set inline per render from `computePanelLayout`'s own answer
+ * (`panelLayout.ts`) — nothing here guesses a size. */
+.page-panel {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  padding: var(--space-3) var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+  border: var(--hairline) solid var(--border-elevated);
+}
+
+.panel-title {
+  flex: none;
+  margin: 0 0 var(--space-3);
+  color: var(--color-text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  text-align: center;
+}
+
+/* `row-gap` is `--space-3`, matching `docs/pages-device-sizes.html`'s own
+ * vertical `GAP` between button rows; `column-gap` is set inline from the
+ * layout search, which decides per panel whether it aligns to the strip
+ * footprint or takes its natural width (§21.9). */
+.panel-grid {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  row-gap: var(--space-3);
+  justify-content: center;
+  align-content: space-evenly;
+}
+
+/* Square: the grid gives every column `layout.side` px, and `aspect-ratio`
+ * makes the row follow, so nothing here sets an explicit height (§21.9
+ * "Buttons are square"). The face itself stays dark in every state —
+ * filling it with colour would turn a panel of active buttons into
+ * coloured rectangles; the LED and the border glow carry the state instead. */
+.panel-button {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  aspect-ratio: 1;
+  padding: var(--space-3) var(--space-2) var(--space-2);
+  border-radius: var(--radius-md);
+  border: var(--hairline) solid var(--border-overlay);
+  border-top-color: var(--border-input);
+  background: linear-gradient(to bottom, var(--color-bg-overlay), var(--color-bg-elevated) 62%, var(--color-bg-surface));
+  color: var(--color-text-secondary);
+  font-weight: var(--weight-medium);
+  text-align: center;
+  box-shadow: var(--shadow-panel-button);
+  transition:
+    transform var(--duration-fast) var(--ease-out),
+    background var(--duration-base) var(--ease-out),
+    box-shadow var(--duration-base) var(--ease-out);
+}
+
+.panel-button:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: not-allowed;
+}
+
+/* Anchored to the top — never centred as a pair with the label (§21.9's own
+ * warning about that exact mistake). */
+.panel-button-led {
+  flex: none;
+  width: var(--space-6);
+  height: var(--space-1);
+  margin-bottom: var(--space-2);
+  border-radius: var(--radius-full);
+  background: radial-gradient(circle at 40% 40%, var(--color-text-disabled), var(--color-bg-elevated) 60%, var(--color-bg-base));
+}
+
+/* Centred in whatever space remains below the LED — the label is never part
+ * of a "LED + label" pair centred together (§21.9). Up to three lines. */
+.panel-button-label {
+  flex: 1;
+  display: -webkit-box;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 0;
+  overflow: hidden;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  font-size: var(--panel-button-font-size, var(--text-sm));
+}
+
+/* Latched (§21.9): drops two pixels, the face darkens to a recessed gradient, the
+ * inset shadow inverts, and the internal glow is deliberately absent — the
+ * ring and the LED carry the state, read across the room. The accent is the
+ * button's own group-palette identity colour (never a status colour,
+ * CONVENTIONS), applied only once lit. */
+.panel-button[data-lamp="on"] {
+  transform: translateY(var(--panel-button-latch-drop));
+  background: linear-gradient(to bottom, var(--color-bg-base), color-mix(in srgb, var(--panel-button-accent) 8%, var(--color-bg-surface)) 60%, var(--color-bg-surface));
+  border-color: color-mix(in srgb, var(--panel-button-accent) 45%, transparent);
+  color: var(--color-text-primary);
+  box-shadow:
+    0 0 0 var(--hairline) color-mix(in srgb, var(--panel-button-accent) 40%, transparent),
+    0 0 var(--space-4) var(--space-1) color-mix(in srgb, var(--panel-button-accent) 20%, transparent),
+    var(--shadow-panel-button-latched-inset);
+}
+
+.panel-button[data-lamp="on"] .panel-button-led {
+  background: radial-gradient(circle at 40% 40%, color-mix(in srgb, var(--panel-button-accent) 60%, white), var(--panel-button-accent) 55%);
+  box-shadow: 0 0 var(--led-glow-blur) var(--led-glow-spread) color-mix(in srgb, var(--panel-button-accent) 85%, transparent);
+}
+
+/* Transitioning (§21.9, §7.4): amber and pulsing — used by the projector
+ * while warming or cooling — overriding whatever the lamp's own accent
+ * would otherwise show, because this is a status, not an identity (CONVENTIONS
+ * "group palette colours are for identity only, never status"). */
+.panel-button[data-lamp="transitioning"] .panel-button-led {
+  background: radial-gradient(circle at 40% 40%, var(--color-warning-text), var(--color-warning) 55%);
+  animation: panel-led-amber-pulse var(--duration-very-slow) var(--ease-in-out) infinite;
+}
+
+/* A configured but unused grid position (§21.9): dashed, decorative only. */
+.panel-empty-cell {
+  aspect-ratio: 1;
+  border: var(--hairline) dashed var(--border-input);
+  border-radius: var(--radius-md);
+}
+
+/* Phone landscape (§21.9 "Phone landscape"): compact strip furniture, so the
+ * fader row keeps as much travel as the rail leaves it. The rail itself is
+ * `.nav-rail` (§21.6), shared with every operator route. */
+@media (max-height: theme(--viewport-short-height)) {
+  .page-surface-flow {
+    gap: var(--space-2);
+    padding: var(--space-2);
+  }
+
+  .page-surface-flow .fader-readout {
+    font-size: var(--text-xs);
+  }
+
+  .page-surface-flow .mixer-mute-button {
+    min-height: var(--space-6);
+    font-size: var(--text-xs);
+  }
+}
+
+/* ── Updates screen — upload, apply and reconnection (§21.24, §14) ───────── */
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-8) var(--space-4);
+  border: var(--hairline) dashed var(--border-input);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-base);
+  color: var(--color-text-muted);
+  text-align: center;
+  min-height: var(--space-20);
+}
+
+.dropzone[data-active="true"] {
+  border-color: var(--color-teal-400);
+  background: var(--color-bg-overlay);
+  color: var(--color-text-primary);
+}
+
+.dropzone[data-disabled="true"] {
+  opacity: var(--disabled-opacity);
+}
+
+.upload-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.upload-progress-bar {
+  height: var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-elevated);
+  overflow: hidden;
+}
+
+.upload-progress-fill {
+  height: 100%;
+  background: var(--color-teal-500);
+  transition: width var(--duration-base) linear;
+}
+
+/* The wait after a restart, a reboot, or an apply that restarts the
+ * application (§21.24, §21.27): named steps end when the request is sent,
+ * so what follows is a wait for the controller to answer again, not another
+ * named step to fabricate. */
+.reconnect-wait {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+}
+
+.reconnect-wait svg {
+  animation: btn-spin var(--duration-very-slow) linear infinite;
+  color: var(--color-teal-300);
+}
+
+/* Q17's four quiet-moment conditions — which hold now, which are blocking. */
+.condition-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.condition-row[data-met="true"] {
+  color: var(--color-text-muted);
+}
+
+.condition-row[data-met="false"] {
+  color: var(--color-text-primary);
+  font-weight: var(--weight-medium);
+}

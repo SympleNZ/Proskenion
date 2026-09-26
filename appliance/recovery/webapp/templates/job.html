@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Job — Proskenion recovery{% endblock %}
+{% block content %}
+{% if job is none %}
+<h2>No such job</h2>
+<p>It may have finished and been cleared, or the recovery environment was restarted.</p>
+{% else %}
+<h2>{{ job.title }}</h2>
+<p>State: <strong>{{ job.state }}</strong>{% if job.state == "running" %} — refresh this page for progress{% endif %}</p>
+{% if job.error %}<p class="error">{{ job.error }}</p>{% endif %}
+<h3>Log</h3>
+<ol>
+{% for line in job.log %}<li>{{ line }}</li>{% endfor %}
+</ol>
+{% if job.state == "running" %}
+<meta http-equiv="refresh" content="3">
+{% endif %}
+{% endif %}
+<p><a href="/">Back to overview</a></p>
+{% endblock %}

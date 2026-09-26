@@ -1,0 +1,25 @@
+# A Samba and an SFTP server, for proving proskenion.core.backup_destinations'
+# SMB and SFTP clients for real (Q19, contracts §2-§3). test_destinations.py
+# starts this itself (docker compose up -d) and tears it down afterwards;
+# nothing here is started by CI or by verify-in-docker.sh.
+
+services:
+  samba:
+    image: dperson/samba:latest
+    # -p: no Samba-side port mapping magic; -u user;pass; -s share;path;browsable;readonly;guest;users
+    command: >-
+      -p
+      -u "backupuser;backuppass"
+      -s "backups;/share;yes;no;no;backupuser"
+    tmpfs:
+      - /share
+    ports:
+      - "1445:445"
+
+  sftp:
+    image: atmoz/sftp:latest
+    volumes:
+      - ./sftp-authorized-keys:/home/backupuser/.ssh/keys:ro
+    command: "backupuser::1000:1000:backups"
+    ports:
+      - "2222:22"

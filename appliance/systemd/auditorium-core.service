@@ -1,0 +1,93 @@
+# auditorium-core.service — the main application (§4.11).
+#
+# Every directive §4.11 lists is here, in the order it lists them; the rest is
+# the sandbox. The application does not open /dev/watchdog: systemd pets the
+# hardware watchdog (§4.7, /etc/systemd/system.conf.d/watchdog.conf) and the
+# application's own liveness is sd_notify(WATCHDOG=1) every 10 s against the
+# WatchdogSec below.
+
+[Unit]
+Description=Proskenion auditorium controller
+RequiresMountsFor=/data /srv/appliance
+After=knxd.service auditorium-config-apply.service network-online.target
+Wants=network-online.target
+# §4.11 also says "if knxd fails to start within thirty seconds, the
+# application starts anyway" — Requires=knxd.service contradicts that: it
+# would take core down with a knxd that fails to *start* (a mistyped
+# /etc/knxd.conf), not just one that starts but cannot reach the gateway.
+# Wants=knxd.service instead: lighting over KNX is one subsystem, the mixer,
+# projector, HDMI matrix and DMX output do not depend on it, and a bad
+# knxd.conf must not darken the whole appliance. The thirty-second wait for
+# the knxd socket already lives in the application, which marks the KNX
+# domain unavailable and carries on regardless of which way knxd failed.
+Wants=knxd.service
+# §14.5 detection: three failed starts inside three minutes and systemd gives
+# up, at which point OnFailure= fires the automatic rollback.
+StartLimitBurst=3
+StartLimitIntervalSec=180
+OnFailure=auditorium-update-rollback.service
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=auditorium
+Group=auditorium
+# dialout: /dev/hdmi-matrix and /dev/dmx0 are group dialout (§4.12)
+SupplementaryGroups=dialout
+WorkingDirectory=/opt/auditorium
+# Q11, B54: the interpreter moves with the OS, and an environment built
+# against the previous one will not load under the new one. This repoints
+# /data/app/current/venv at the environment for the interpreter that just
+# booted, rebuilding it from the package's retained wheels when it is not
+# there. Unprivileged — /data/app is the application's own tree — and a
+# no-op on every start where nothing changed.
+ExecStartPre=/usr/local/bin/auditorium-venv-repoint
+# The interpreter with -m, never the `proskenion` console script: pip writes a
+# script's #! line as the absolute path of the environment it installed into,
+# and every environment here is built under a staging name and renamed into
+# place (venv-repoint, proskenion.core.update), so the script names an
+# interpreter that no longer exists. bin/python is a symlink to the system
+# interpreter and finds its environment beside itself wherever that has moved
+# to — the same reason every tool in /usr/local/bin runs `venv/bin/python -m`.
+ExecStart=/opt/auditorium/venv/bin/python -m proskenion.main --config /opt/auditorium/config.toml
+Restart=on-failure
+RestartSec=5
+# §4.7: a dedicated asyncio task notifies every 10 s; a stalled loop is
+# restarted after 30 s. Suspended for 60 s after an update — see
+# auditorium-core.service.d/post-update.conf.example (§14.5).
+WatchdogSec=30s
+TimeoutStopSec=20
+Environment=PYTHONUNBUFFERED=1
+Environment=TZ=Pacific/Auckland
+UMask=0027
+
+# Sandbox. The root is read-only anyway (§4.3); this makes it explicit and
+# keeps the application to the writable partitions.
+#
+# /srv/local holds archives and captured images and /mnt/backup is the USB
+# stick (§2.3, §2.4, Q3/Q4); the nightly backup job and "Back up now" both
+# write there. Both carry the "-" prefix because both can legitimately be
+# absent — /srv/local is mounted nofail and the stick is removable — and a
+# missing directory must degrade the backup, which already handles absent
+# media (§13.4), rather than refuse to start the appliance.
+#
+# NoNewPrivileges stays: nothing the application does is privileged. Restarts,
+# reboots, updates and slot writes go through auditorium-helper.path
+# (contracts §2), which is the only thing here that runs as root.
+ProtectSystem=strict
+ReadWritePaths=/data /srv/appliance -/srv/local -/mnt/backup
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+# No PrivateDevices=: the application needs the serial symlinks under /dev.
+
+# The journal gets start/stop events only (§4.10); the application logs to /data/logs.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=auditorium-core
+
+[Install]
+WantedBy=multi-user.target

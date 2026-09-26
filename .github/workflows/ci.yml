@@ -1,0 +1,213 @@
+# Continuous integration (spec §22.8).
+#
+# §22.8's table, exactly:
+#
+#   | Every push, any branch | Lint, type-check, backend and frontend unit tests |
+#   | Pull request to main   | The above, plus integration tests                 |
+#   | Tag matching v*        | The above, plus end-to-end tests, then build …    |
+#
+# Two things are deliberately absent.
+#
+# Hardware-in-the-loop (§22.6) is excluded: it needs the bench rig — a CQ-20B,
+# an LKV422, a DMX node and the KNX gateway — and is run by hand before a
+# package is released. `uv run pytest` cannot reach them, and `tests/conftest.py`
+# skips anything marked `hil` unless `--run-hil` is passed, which nothing here
+# passes.
+#
+# Signing is not here either, and must not be added (§22.8, §14.1). Putting the
+# package signing key into a hosted secret store would place it somewhere a
+# repository compromise could reach, and losing or leaking that key is worse
+# than the convenience is worth: it is the trust anchor the appliance verifies
+# every update against (§6.11). CI produces the unsigned artefact; signing is a
+# deliberate step on the developer's own machine.
+#
+# The repository has no remote yet (§20.3: symplenz, private initially), so
+# this file has been written and reviewed but never executed. It is here
+# because §22.8 asks that enabling CI be a configuration file rather than a
+# refactor — that claim is what this file tests.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+# A new push to the same branch cancels the previous run; a tag build is never
+# cancelled, because its artefact is the thing being released.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+
+env:
+  # §5.1: Python 3.13, nothing newer than Debian 13 ships.
+  PYTHON_VERSION: "3.13"
+  # The appliance never runs Node; this is the developer-machine toolchain.
+  NODE_VERSION: "24"
+
+jobs:
+  # -- every push, any branch ---------------------------------------------------
+  checks:
+    name: Lint, type-check and unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+
+      - name: Install the Python environment
+        run: uv sync
+
+      - name: Ruff
+        run: uv run ruff check .
+
+      - name: mypy (strict)
+        run: uv run mypy
+
+      - name: Backend unit tests
+        # testpaths in pyproject.toml is tests/unit + tests/integration; the
+        # unit suite alone is what every push runs.
+        run: uv run pytest tests/unit
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install the frontend toolchain
+        working-directory: web
+        # postinstall also installs tools/lint-toolchain — the pinned
+        # TypeScript 6.x that ESLint needs until typescript-eslint supports the
+        # native compiler (§22.8, §5.1).
+        run: npm ci
+
+      - name: Frontend build and type-check
+        working-directory: web
+        run: |
+          npm run build
+          npm run typecheck
+
+      - name: Frontend lint
+        working-directory: web
+        run: npm run lint
+
+      - name: Frontend unit tests
+        working-directory: web
+        # Vitest only: the end-to-end suite is a separate script, because §22.5
+        # runs it before a release rather than on every commit.
+        run: npm test
+
+  # -- pull request to main, and every tag --------------------------------------
+  integration:
+    name: Integration tests
+    needs: checks
+    if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+
+      - name: Install the Python environment
+        run: uv sync
+
+      - name: Integration tests
+        # §22.4: a real FastAPI client over an in-memory database with every
+        # migration applied, and stub protocol backends.
+        run: uv run pytest tests/integration
+
+  # -- tag matching v* ----------------------------------------------------------
+  e2e:
+    name: End-to-end tests
+    needs: integration
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+
+      - name: Install the Python environment
+        run: uv sync
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install the frontend toolchain
+        working-directory: web
+        run: npm ci
+
+      - name: Install the browser
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+
+      - name: Provide /data
+        # §10.4 step 6 writes the certificate under the platform layer's data
+        # directory, which is /data and has no configuration key (§5.4). The
+        # appliance mounts it; a runner has to be given one, or the wizard
+        # cannot reach step 7.
+        run: sudo install -d -m 0755 -o "$USER" /data
+
+      - name: End-to-end tests
+        working-directory: web
+        # Builds the frontend once, then starts the real application per test
+        # over a database that does not exist yet (§22.5).
+        run: npm run test:e2e
+
+      - name: Keep the failures
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: tests/e2e/.artifacts
+          retention-days: 7
+
+  # -- tag matching v*: the unsigned artefact -----------------------------------
+  package:
+    name: Build the package (unsigned)
+    needs: e2e
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build the package
+        # §19.2's build_package.sh: the frontend, the application's wheel and
+        # every locked dependency as an aarch64 CPython 3.13 wheel, packed as
+        # §14.1's .aupkg. The tag names the version, so a v1.3.0 tag builds
+        # auditorium_v1.3.0.aupkg whatever pyproject.toml says. Unsigned:
+        # signing stays on the developer's machine (§22.8, §14.1).
+        run: ./build_package.sh --unsigned --version "${GITHUB_REF_NAME}"
+
+      - name: Keep the unsigned package
+        uses: actions/upload-artifact@v4
+        with:
+          name: auditorium-${{ github.ref_name }}-unsigned
+          path: dist/auditorium_${{ github.ref_name }}.aupkg
+          if-no-files-found: error

@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+"""auditorium-emergency — emergency mode when /data is unavailable, an update
+cannot recover, or /data is nearly full (§4.6, §16.7, §14.5, Q12).
+
+Thin CLI: everything this does lives in auditorium_emergency.py
+(/usr/local/lib/auditorium on the built image), which is deliberately
+importable on its own — plain standard library, nothing from proskenion —
+so it is unit-tested without a systemd, an nginx or a real /data.
+
+Three modes, matching the three units that run this file:
+
+  auditorium-emergency --clear-stale   auditorium-emergency-cleanup.service's
+                                   ExecStart, unconditional and first in boot
+                                   order: remove a reason file left by a
+                                   previous, now-resolved entry, so exiting
+                                   emergency mode by rebooting (§4.6) is
+                                   actually automatic rather than gated on a
+                                   file nothing ever removes.
+
+  auditorium-emergency --detect   auditorium-emergency-detect.service's
+                                   ExecStart: decide data_unavailable or
+                                   data_readonly and write the reason file.
+                                   Runs only when that unit's own
+                                   ConditionPathIsReadWrite=!/data has passed.
+
+  auditorium-emergency [--port N] auditorium-emergency.service's ExecStart:
+                                   read the reason file (falling back to
+                                   detecting it live if one is somehow
+                                   missing), switch nginx to emergency.conf,
+                                   send the one alert this entry gets, and
+                                   serve /health and the page until the
+                                   machine reboots — exit is automatic (§4.6),
+                                   there is no "clear emergency mode" step.
+
+migration_failed and disk_full never reach this file directly: they are
+written by auditorium-update-rollback, which starts
+auditorium-emergency.service once the reason is already on disk.
+"""
+
+from __future__ import annotations
+
+import sys
+
+sys.path.insert(0, "/usr/local/lib/auditorium")
+
+import auditorium_emergency  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(auditorium_emergency.main(sys.argv[1:]))

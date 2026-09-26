@@ -1,0 +1,561 @@
+#!/usr/bin/python3
+"""auditorium-update-rollback — automatic recovery from a failed update (§14.5).
+
+Run by auditorium-update-rollback.service, which auditorium-core.service names
+in OnFailure=. systemd fires it once it has given up restarting core
+(Restart=on-failure, StartLimitBurst=3, StartLimitIntervalSec=180: three
+failed starts inside three minutes). It runs unattended — the admin may not
+be there after pressing apply — so every branch is conservative and logged.
+
+What it does, in the order §14.3 requires (symlink first, snapshot second):
+
+  1. Refuse to act unless /data and /srv/appliance are writable mounts. If
+     they are not, this is emergency mode (§4.6), not a bad update.
+  1b. Refuse to act if /data has less than 100 MB free (§11.2, §14.5, Q12).
+     Rolling back the application version would not free any space, so this
+     goes straight to emergency mode — the same explicit hand-over
+     enter_emergency() uses below for "cannot recover", just a different
+     reason and a different, already-understood cause — rather than attempting
+     the version comparison below.
+  2. Read /srv/appliance/boot-state.json. If an OS slot is on trial and it is
+     the slot this kernel booted, the OS is the suspect and not the
+     application: reboot into the previous slot instead of rolling anything
+     back (§14.4, Q11). The two are never both attempted for one failure.
+     Otherwise compare the version /data/app/current
+     points at with healthy.version (the last version that ran healthily for
+     30 s). If they are the same, the running version has worked before and
+     this failure is not an update — leave everything alone and exit 0.
+  3. Repoint /data/app/current at the previous version atomically. This is
+     the §14.2 pattern — `ln -sfn v1.2.0 /data/app/.tmp && mv -T /data/app/.tmp
+     /data/app/current` — done with os.symlink() and os.replace(), which is
+     rename(2), so there is never an instant when current does not resolve.
+  4. Restore the pre-update database snapshot over /data/auditorium.db and
+     remove the -wal/-shm sidecars. If no snapshot is recorded, the code is
+     still rolled back; §15.2's schema-ahead guard then refuses to start the
+     old code on a newer schema, which is loud rather than silent.
+  5. Record a "rollback" object in boot-state.json (failed version, restored
+     version, snapshot, reason from the journal) and append an
+     update_auto_rollback event to /data/logs/appliance-events.jsonl in the
+     §4.10 line format. The application reads the record at its next start,
+     sends the high-priority email and shows the banner — email is the
+     application's job, not this script's.
+  6. Reset the failed state and start auditorium-core.service.
+
+boot-state.json (contracts §1 — one schema, three writers; build.sh writes
+the initial file):
+
+  {
+    "active_slot": "a", "last_known_good": "a", "staged": null,   // OS slots (§14.4)
+    "slots": {"a": "<partuuid>", "b": "<partuuid>"},
+    "started":  {"version": "v1.3.0", "at": "…"},  // app: at every start
+    "healthy":  {"version": "v1.2.0", "at": "…"},  // app: after 30 healthy seconds
+    "update":   {"from": "v1.2.0", "to": "v1.3.0", // helper: before the swap
+                 "snapshot": "…", "at": "…"},
+    "rollback": { … }                              // this script
+  }
+
+Both versions are directory names under /data/app, so the comparison in step 2
+is between two names of the same kind. A marker carrying the running code's
+__version__ instead — "0.1.0" against a directory called "v1.3.0" — could
+never match, and the third failed start of a version that had been healthy for
+months would have been treated as a failed update and rolled back.
+
+The read-merge-write discipline and the atomic write live in
+auditorium_bootstate, shared with auditorium-helper, so none of the three
+writers drops a key it does not own.
+
+Options:
+  --dry-run   print the plan; change nothing
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, "/usr/local/lib/auditorium")
+
+import auditorium_bootstate as bootstate  # noqa: E402
+import auditorium_emergency_reason as emergency_reason  # noqa: E402
+
+APP_DIR = Path("/data/app")
+CURRENT = APP_DIR / "current"
+TMP_LINK = APP_DIR / ".tmp"
+DB = Path("/data/auditorium.db")
+SNAPSHOTS = Path("/data/backups/snapshots")
+BOOT_STATE = Path("/srv/appliance/boot-state.json")
+EVENTS = Path("/data/logs/appliance-events.jsonl")
+#: Where the running kernel's command line is read from. An option overrides
+#: it so the trial decision can be exercised with --dry-run off the appliance;
+#: the unit never passes one, and nothing this script does with it is a
+#: privilege decision — it chooses between two recovery actions, both of which
+#: this script is already entitled to take.
+CMDLINE = Path("/proc/cmdline")
+UNIT = "auditorium-core.service"
+EMERGENCY_UNIT = "auditorium-emergency.service"
+APP_UID = 900  # the auditorium user (fixed in build.sh)
+
+#: §11.2's red threshold, §14.5's floor — the same value
+#: proskenion.core.lifecycle.MIN_FREE_BYTES refuses to start below.
+MIN_FREE_BYTES = 100 * 1024 * 1024
+
+
+def free_bytes(path: Path = Path("/data")) -> int:
+    return shutil.disk_usage(path).free
+
+
+def log(msg: str) -> None:
+    print(f"update-rollback: {msg}", flush=True)
+
+
+def now() -> str:
+    return dt.datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def writable_mount(path: Path) -> bool:
+    return os.path.ismount(path) and os.access(path, os.W_OK)
+
+
+def read_state() -> dict:
+    try:
+        return bootstate.read(BOOT_STATE)
+    except (OSError, bootstate.BootStateError) as exc:
+        log(f"cannot read {BOOT_STATE}: {exc}")
+        return {}
+
+
+def record_rollback(record: dict, dry_run: bool) -> None:
+    """Merge the rollback record in, preserving every other writer's keys.
+
+    The application's start marker may be written at any moment — the service
+    is being restarted at the end of this very run — so this is a locked
+    read-merge-write, not a rewrite of the document we read at the top.
+    """
+    if dry_run:
+        log(f"would record rollback in {BOOT_STATE}: {json.dumps(record)}")
+        return
+    bootstate.merge({"rollback": record}, path=BOOT_STATE)
+
+
+def healthy_version(state: dict) -> str | None:
+    return (state.get("healthy") or {}).get("version")
+
+
+def current_version() -> str | None:
+    return bootstate.current_version(APP_DIR)
+
+
+def version_key(name: str) -> tuple[int, int, int] | None:
+    """A version directory name as three numbers, or None if it is not one."""
+    if not bootstate.VERSION_RE.match(name):
+        return None
+    major, minor, patch = name[1:].split(".")
+    return int(major), int(minor), int(patch)
+
+
+def installed_versions() -> list[tuple[tuple[int, int, int], str]]:
+    """Real version directories under /data/app, highest version first.
+
+    is_dir() follows symlinks, so `current` itself looks like a version
+    directory here. Repointing current at current leaves a symlink to itself,
+    which nothing on the appliance can resolve and no unattended path can
+    undo — so a version has to be a real directory.
+
+    Ordered by the version each directory is named for, never by its
+    modification time: a rollback, a restore or a filesystem check moves
+    timestamps for reasons that have nothing to do with which release a
+    directory holds.
+    """
+    found = []
+    for path in APP_DIR.iterdir():
+        if not path.is_dir() or path.is_symlink() or path.name.startswith("."):
+            continue
+        key = version_key(path.name)
+        if key is not None:
+            found.append((key, path.name))
+    return sorted(found, reverse=True)
+
+
+def installed(name: object) -> bool:
+    return bool(name) and (APP_DIR / str(name)).is_dir() and not (APP_DIR / str(name)).is_symlink()
+
+
+def choose_previous(state: dict, current: str) -> str | None:
+    """The version to go back to. Back, never forward.
+
+    Three sources, most trustworthy first: the recorded `update.from`, which
+    is what the running version replaced; the last version that ran healthily;
+    then the highest installed version below the running one.
+
+    Every one of them is checked to be *below* the running version, and there
+    is no "newest other directory" fallback, because after an apply that was
+    interrupted between extracting and swapping there is a newer,
+    never-started directory sitting beside the running one. Rolling "back"
+    onto the version that has never started is the worst thing this script
+    could do at three in the morning. With nothing below the running version
+    it refuses and hands over to emergency mode rather than guess (§14.5).
+    """
+    here = version_key(current)
+
+    def below(candidate: object) -> bool:
+        """Whether `candidate` is installed, is not the running version, and is older.
+
+        A version directory that does not parse — a development checkout, a
+        hand-made name — cannot be ordered, so it is only ever accepted as the
+        explicitly recorded predecessor, never found by the scan below.
+        """
+        if not installed(candidate) or candidate == current:
+            return False
+        key = version_key(str(candidate))
+        return here is None or key is None or key < here
+
+    recorded = (state.get("update") or {}).get("from")
+    if below(recorded):
+        return str(recorded)
+    healthy = healthy_version(state)
+    if below(healthy):
+        log(f"no usable update record; falling back to the last healthy version {healthy}")
+        return str(healthy)
+    if here is None:
+        log(f"the running version {current} is not a vX.Y.Z directory; nothing to order it against")
+        return None
+    for key, name in installed_versions():
+        if key < here:
+            log(f"no recorded predecessor; the highest version below {current} is {name}")
+            return name
+    return None
+
+
+def choose_snapshot(state: dict) -> Path | None:
+    recorded = (state.get("update") or {}).get("snapshot")
+    if recorded and Path(recorded).is_file():
+        return Path(recorded)
+    if SNAPSHOTS.is_dir():
+        found = sorted(SNAPSHOTS.glob("pre-update*"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if found:
+            log(f"no snapshot recorded; using newest pre-update snapshot {found[0].name}")
+            return found[0]
+    return None
+
+
+def failure_reason() -> dict:
+    """Exit status and the tail of the journal — the 'reason from the service logs' of §14.5."""
+    reason: dict = {}
+    try:
+        show = subprocess.run(
+            ["systemctl", "show", "-p", "Result,ExecMainStatus,ExecMainCode,NRestarts", UNIT],
+            capture_output=True, text=True, timeout=10,
+        )
+        for line in show.stdout.splitlines():
+            key, _, value = line.partition("=")
+            reason[key] = value
+    except (OSError, subprocess.SubprocessError) as exc:
+        reason["systemctl_error"] = str(exc)
+    try:
+        journal = subprocess.run(
+            ["journalctl", "-u", UNIT, "-n", "40", "--no-pager", "-o", "cat"],
+            capture_output=True, text=True, timeout=10,
+        )
+        reason["journal_tail"] = journal.stdout.strip().splitlines()[-40:]
+    except (OSError, subprocess.SubprocessError) as exc:
+        reason["journal_error"] = str(exc)
+    # Exit code 2 is a migration failure by contract (§14.2)
+    if reason.get("ExecMainStatus") == "2":
+        reason["classified"] = "migration_failure"
+    return reason
+
+
+def repoint(previous: str, dry_run: bool) -> None:
+    log(f"repointing {CURRENT} -> {previous} (symlink + rename, §14.2)")
+    if dry_run:
+        return
+    if TMP_LINK.is_symlink() or TMP_LINK.exists():
+        TMP_LINK.unlink()
+    os.symlink(previous, TMP_LINK)
+    os.replace(TMP_LINK, CURRENT)  # rename(2): atomic, current always resolves
+
+
+def restore_snapshot(snapshot: Path, dry_run: bool) -> None:
+    log(f"restoring database snapshot {snapshot} -> {DB}")
+    if dry_run:
+        return
+    tmp = DB.with_name(DB.name + ".rollback-tmp")
+    shutil.copyfile(snapshot, tmp)
+    with open(tmp, "rb") as fh:
+        os.fsync(fh.fileno())
+    os.chown(tmp, APP_UID, APP_UID)
+    os.chmod(tmp, 0o640)
+    os.replace(tmp, DB)
+    for sidecar in (DB.with_name(DB.name + "-wal"), DB.with_name(DB.name + "-shm")):
+        if sidecar.exists():
+            sidecar.unlink()
+
+
+def append_event(event: dict, dry_run: bool) -> None:
+    if dry_run:
+        log(f"would append to {EVENTS}: {json.dumps(event)}")
+        return
+    EVENTS.parent.mkdir(parents=True, exist_ok=True)
+    with open(EVENTS, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(event) + "\n")
+    try:
+        os.chown(EVENTS, APP_UID, APP_UID)
+    except OSError:
+        pass
+
+
+def restart_core(dry_run: bool) -> None:
+    log(f"starting {UNIT}")
+    if dry_run:
+        return
+    subprocess.run(["systemctl", "reset-failed", UNIT], check=False)
+    subprocess.run(["systemctl", "start", "--no-block", UNIT], check=False)
+
+
+def live_trial(state: dict, cmdline_path: Path | None = None) -> dict | None:
+    """The OS trial this boot is part of, or None (§14.4, Q11).
+
+    A trial is "live" only while the slot being tried is the slot that is
+    actually running. Staged-but-not-yet-booted is not a trial this process is
+    inside, and a record left by a trial that has already fallen back names a
+    slot that is not the one underneath us.
+    """
+    trial = state.get("trial")
+    if not isinstance(trial, dict):
+        return None
+    slot = trial.get("slot")
+    if slot not in ("a", "b"):
+        return None
+    return trial if running_slot(state, cmdline_path) == slot else None
+
+
+def running_slot(state: dict, cmdline_path: Path | None = None) -> str | None:
+    """The root slot this kernel booted, from ``root=`` and the slot table.
+
+    The kernel command line rather than ``active_slot``: during a trial the
+    record still names the previous slot, which is exactly the case this has
+    to tell apart.
+    """
+    table = state.get("slots")
+    if not isinstance(table, dict):
+        return None
+    try:
+        cmdline = (cmdline_path or CMDLINE).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for token in cmdline.split():
+        if not token.startswith("root=PARTUUID="):
+            continue
+        wanted = token.split("=", 2)[2].lower()
+        for letter, partuuid in table.items():
+            if isinstance(partuuid, str) and partuuid.lower() == wanted:
+                return str(letter)
+    return None
+
+
+def reboot_to_previous_slot(trial: dict, dry_run: bool) -> None:
+    """§14.4's answer when the application fails under a slot on trial.
+
+    §14.5's automatic recovery repoints the application and restores a
+    database snapshot, which assumes the OS underneath is sound. During an OS
+    trial it is not yet known to be — the OS is the thing that just changed —
+    so the response is the other mechanism entirely: reboot. The slot has not
+    been confirmed, so ``config.txt`` still selects the previous one and an
+    ordinary reboot lands there, with the application that was running under
+    it. The two are never both attempted for the same failure.
+
+    The trial record is deliberately left in place. The next boot is on the
+    previous slot, where the application finds a trial naming a slot that is
+    not running and reports the upgrade as rolled back — which is the only
+    place that can send the email and raise the banner.
+    """
+    slot = trial.get("slot")
+    log(
+        f"slot {slot} is on trial and the application will not start: rebooting into the "
+        "previous slot rather than rolling the application back (§14.4, Q11)"
+    )
+    append_event(
+        {
+            "timestamp": now(),
+            "level": "ERROR",
+            "logger": "appliance.update",
+            "message": "os_trial_reboot",
+            "trial_slot": slot,
+            "trial_version": trial.get("version"),
+            "reason": "the application did not start under the slot on trial",
+        },
+        dry_run,
+    )
+    if dry_run:
+        log("would reboot into the previous slot")
+        return
+    subprocess.run(["systemctl", "reboot"], check=False)
+
+
+def enter_emergency(
+    current: str | None, detail: str, dry_run: bool, *, reason: str = "migration_failed"
+) -> None:
+    """Hand over to the emergency responder rather than guess (§14.5, Q12).
+
+    Three callers, three reasons, the same explicit hand-over:
+
+    * `not_installed` — `current` does not resolve to a version directory
+      *and* nothing was ever installed: there is no application at all for
+      this script to recover, so there is nothing to compare a failed start
+      against. Distinct from `migration_failed` (below) precisely so a
+      freshly built appliance that has never had a package installed is not
+      reported as a migration that failed — it never attempted one.
+    * the default, `migration_failed` — §14.5's "the rollback unit itself
+      cannot recover": an application *is* installed, the running version has
+      never been healthy, and there is no older version to go back to.
+      Guessing here means pointing the appliance at a version that has never
+      started, in a hall with nobody in it, so the script stops and says so
+      in the one place that survives it.
+    * `disk_full` — checked before any of that reasoning even applies (main()
+      step 1b): rolling back the application version frees no space, so there
+      is nothing this script's usual job can do.
+
+    All three are members of §16.7's closed `reason` set, and all three are
+    what the emergency responder answers /health with — auditorium_emergency_
+    reason's file is what tells it which, written here before the responder
+    starts so it never has to guess either. The event line is written first,
+    because it is the record that is still there whatever the responder does.
+    """
+    log(f"cannot recover: {detail} — entering emergency mode ({reason}, §14.5)")
+    append_event(
+        {
+            "timestamp": now(),
+            "level": "CRITICAL",
+            "logger": "appliance.update",
+            "message": "emergency_mode",
+            "reason": reason,
+            "failed_version": current,
+            "detail": detail,
+        },
+        dry_run,
+    )
+    if dry_run:
+        log(f"would write the emergency reason and start {EMERGENCY_UNIT}")
+        return
+    # /srv/appliance is already known writable at this point (main()'s first
+    # check), so this write is expected to succeed; if it somehow does not,
+    # the responder still falls back to detecting data_unavailable/
+    # data_readonly live rather than refusing to serve /health at all.
+    try:
+        emergency_reason.write(reason, detail)
+    except (OSError, ValueError) as exc:
+        log(f"could not write the emergency reason file: {exc}")
+    subprocess.run(["systemctl", "start", "--no-block", EMERGENCY_UNIT], check=False)
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(description="Roll back a failed application update (§14.5)")
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--cmdline", type=Path, default=CMDLINE, help=argparse.SUPPRESS)
+    args = ap.parse_args(argv)
+    dry = args.dry_run
+
+    # 1. Not an update failure if the writable partitions are missing (§4.6).
+    for mount in (Path("/data"), Path("/srv/appliance")):
+        if not writable_mount(mount):
+            log(f"{mount} is not a writable mount — emergency mode, not a failed update; nothing to roll back")
+            return 0
+
+    # 1b. Not an update failure if /data is nearly full either (§11.2, §14.5,
+    # Q12) — os.access(W_OK) above only checks permission bits, so a full
+    # filesystem passes it. Checked before touching boot-state.json: a
+    # version comparison and a symlink swap are both writes this appliance
+    # should not be attempting with less than 100 MB free.
+    free = free_bytes(Path("/data"))
+    if free < MIN_FREE_BYTES:
+        enter_emergency(
+            current_version(),
+            f"{free} bytes free on /data, below the {MIN_FREE_BYTES} byte floor",
+            dry,
+            reason="disk_full",
+        )
+        return 1
+
+    state = read_state()
+
+    # 2a. An OS slot on trial changes what a failed start means (§14.4, Q11).
+    #     Checked before anything else about the application, because the
+    #     application is not the suspect: the OS underneath it is the thing
+    #     that changed, and repointing a symlink would leave the machine on
+    #     the new OS with the old application and no way back.
+    trial = live_trial(state, args.cmdline)
+    if trial is not None:
+        reboot_to_previous_slot(trial, dry)
+        return 0
+
+    current = current_version()
+    healthy = healthy_version(state)
+    log(f"current={current} healthy={healthy}")
+
+    if current is None:
+        enter_emergency(
+            None,
+            f"no application is installed at {CURRENT} yet; install a signed package "
+            "(docs/hardware/setup.md §8)",
+            dry,
+            reason="not_installed",
+        )
+        return 1
+    if healthy == current:
+        # 2. The running version has been healthy before: a different fault (§14.5).
+        log("current version was previously healthy; this is not an update failure — no rollback")
+        return 0
+
+    previous = choose_previous(state, current)
+    if previous is None:
+        enter_emergency(current, f"no version below {current} is installed", dry)
+        return 1
+
+    reason = failure_reason()
+    snapshot = choose_snapshot(state)
+
+    # 3. then 4. — order is load-bearing (§14.3).
+    repoint(previous, dry)
+    if snapshot is not None:
+        restore_snapshot(snapshot, dry)
+    else:
+        log("no pre-update snapshot found; code rolled back, database left as is (schema-ahead guard will report)")
+
+    # 5. Record it for the application (email + banner are its job).
+    record = {
+        "at": now(),
+        "failed_version": current,
+        "restored_version": previous,
+        "snapshot": str(snapshot) if snapshot else None,
+        "reason": reason,
+    }
+    record_rollback(record, dry)
+    append_event(
+        {
+            "timestamp": record["at"],
+            "level": "ERROR",
+            "logger": "appliance.update",
+            "message": "update_auto_rollback",
+            "failed_version": current,
+            "restored_version": previous,
+            "snapshot": record["snapshot"],
+            "exit_status": reason.get("ExecMainStatus"),
+            "classified": reason.get("classified"),
+        },
+        dry,
+    )
+    log(f"update_auto_rollback: {current} -> {previous} (exit status {reason.get('ExecMainStatus')})")
+
+    # 6.
+    restart_core(dry)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

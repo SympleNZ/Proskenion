@@ -1,0 +1,20 @@
+# auditorium-first-boot.service — runs once, while /srv/appliance/first-boot.marker
+# exists (§2.3). Generates the device secret, the SSH host keys (persisted on
+# /srv/appliance because the root is read-only) and the self-signed fallback
+# certificate, then removes the marker. See appliance/image/first-boot.sh.
+
+[Unit]
+Description=Proskenion first-boot initialisation
+ConditionPathExists=/srv/appliance/first-boot.marker
+RequiresMountsFor=/srv/appliance /data
+After=local-fs.target
+Before=ssh.service nginx.service auditorium-config-apply.service auditorium-core.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/auditorium-first-boot
+SyslogIdentifier=auditorium-first-boot
+
+[Install]
+WantedBy=multi-user.target

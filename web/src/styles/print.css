@@ -1,0 +1,57 @@
+/*
+ * Print overrides (spec §21.1): light background, text labels. Printing is
+ * the one place the dark theme does not apply — a scene list or a KNX
+ * library printed for the wall should not be a black page. The named system
+ * colours here are the only non-token colours in the stylesheets.
+ */
+@media print {
+  :root {
+    --color-bg-base: white;
+    --color-bg-surface: white;
+    --color-bg-elevated: white;
+    --color-bg-overlay: white;
+    --color-text-primary: black;
+    --color-text-secondary: black;
+    --color-text-muted: black;
+    --color-text-inverse: white;
+    --border-elevated: black;
+    --border-overlay: black;
+    --border-input: black;
+    --shadow-overlay: none;
+  }
+
+  html,
+  body {
+    background: white;
+    color: black;
+  }
+
+  /* Chrome that means nothing on paper */
+  .status-bar,
+  .app-nav,
+  .admin-sidebar,
+  .banner,
+  [data-sonner-toaster],
+  button {
+    display: none !important;
+  }
+
+  /* Status is colour and icon on screen; on paper it is the text label */
+  .status-dot::after {
+    content: attr(data-label);
+    font-family: var(--font-body);
+    margin-left: var(--space-1);
+  }
+
+  a::after {
+    content: " (" attr(href) ")";
+    font-family: var(--font-mono);
+  }
+
+  * {
+    box-shadow: none !important;
+    text-shadow: none !important;
+    animation: none !important;
+    transition: none !important;
+  }
+}

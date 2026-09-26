@@ -1,0 +1,9 @@
+# The appliance is Linux. Everything is LF in the repository regardless of the
+# developer's platform; CRLF in a shell script or systemd unit breaks it silently.
+* text=auto eol=lf
+
+*.png  binary
+*.jpg  binary
+*.woff2 binary
+*.pdf  binary
+*.aupkg binary

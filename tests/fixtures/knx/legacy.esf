@@ -1,0 +1,4 @@
+This is a placeholder for an ETS 3/4 .esf export. The real format is a
+proprietary binary/text hybrid; the importer refuses any upload with this
+extension outright, before attempting to parse the content, so the content
+here does not need to be a real .esf file for the refusal test.

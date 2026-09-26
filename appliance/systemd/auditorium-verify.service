@@ -1,0 +1,16 @@
+# auditorium-verify.service — started by auditorium-verify.timer (§13.4).
+# Runs as `auditorium`, the same as auditorium-backup.service: verifying an
+# archive needs no privilege the application does not already have.
+
+[Unit]
+Description=Monthly backup integrity verification
+RequiresMountsFor=/data /srv/appliance
+
+[Service]
+Type=oneshot
+User=auditorium
+Group=auditorium
+ExecStart=/usr/local/bin/auditorium-verify
+SyslogIdentifier=auditorium-verify
+Environment=PYTHONUNBUFFERED=1
+Environment=TZ=Pacific/Auckland

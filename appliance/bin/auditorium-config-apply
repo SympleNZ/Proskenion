@@ -1,0 +1,906 @@
+#!/usr/bin/python3
+"""auditorium-config-apply — apply /data/config/system.json at boot (§4.3).
+
+Run by auditorium-config-apply.service before knxd, nginx, sshd and the
+application. Applies the settings the kernel and system daemons read from
+fixed places on the read-only root:
+
+  hostname   /etc/hostname, /etc/hosts, the kernel hostname
+  timezone   /etc/localtime, /etc/timezone       (default Pacific/Auckland)
+  address    the NetworkManager connection profile for this appliance's own
+             address (§3.1, contracts §4/§5) — applied live with nmcli;
+             unmanaged (left exactly as it is) when network.address/gateway
+             is absent or invalid, never guessed
+  firewall   /etc/nftables.conf rendered from the device address table and
+             loaded with nft -f                   (§3.3 inbound, §3.4 outbound)
+
+Writes land on the RAM overlay and are re-applied every boot, which is the
+point: the file on /data is the source of truth, the root never drifts.
+
+Why Python rather than bash: the input is JSON with nested structure, and
+every address in it ends up in a firewall ruleset, so it must be validated
+first. The standard library has json and ipaddress; python3 is on the image
+(§4.2). Nothing outside the standard library is used.
+
+Idempotent: each setting is compared before it is written, and the ruleset is
+checked with `nft -c` before it is loaded. Safe with the file absent: the
+§3.1/§3.3 defaults apply and the journal says so. A malformed file also falls
+back to the defaults but exits 1 so the failure is visible in the unit state.
+
+system.json — every key optional:
+
+  {
+    "hostname": "auditorium",
+    "timezone": "Pacific/Auckland",
+    "management_address": "10.2.30.10",          // the one address allowed to SSH (§3.3)
+    "admin_networks": ["10.46.0.0/23"],          // may also reach tcp 80/443 (beyond §3.3)
+    "network": {
+      "vlan": "10.2.30.0/24",                    // §3.1
+      "address": "10.2.30.251/24",               // this appliance's own address (contracts §4);
+                                                  // absent/invalid = addressing left unmanaged
+      "gateway": "10.2.30.1",                    // required together with "address"
+      "dns": ["10.2.30.1"],
+      "artnet_inbound": true,                    // udp 6454 from the VLAN (§3.3)
+      "control_surface_address": "10.2.30.100",  // udp 5004-5005 from here (§3.3, §7.6)
+      "smtp_relay": {"host": "relay.n4l.co.nz", "port": 25},  // §11.4 email alerts; resolved below
+      "backup_destination": {"address": "10.2.1.5", "protocol": "smb"}   // smb (445) or sftp (22);
+                                                  // a hostname is resolved the same way as
+                                                  // smtp_relay, below
+    },
+    "devices": [                                 // one entry per device (§3.1, §3.4)
+      {"name": "projector", "address": "10.2.30.249", "ports": ["tcp/4352"]},
+      // "ports": outbound, this device's own listening ports (§3.4). A port
+      // spec may be "tcp/N", "udp/LO-HI", or "udp/any" for a device whose
+      // port is not fixed — the CQ-20B's native metering UDP port is
+      // negotiated per connection (cq20b-native.md §2), so it cannot be
+      // pinned; "any" is restricted to a single trusted device address.
+      // "listen_ports": inbound (§3.3) — a port *we* listen on that this
+      // device is allowed to reach, e.g. the mixer sending meters back to
+      // this appliance's own fixed UDP port (native.py's
+      // DEFAULT_LOCAL_UDP_PORT). Optional; most devices need none.
+      {
+        "name": "mixer", "address": "10.2.30.248",
+        "ports": ["tcp/51325", "tcp/51326", "udp/any"],
+        "listen_ports": ["udp/51327"]
+      }
+    ]
+  }
+
+network.smtp_relay (§11.4, phase-6 plan Q1, phase-6 contracts §4)
+-------------------------------------------------------------------
+The relay is a host and a port, never a hard-coded address: the school's
+relay is reachable only from its own network and the address behind
+"relay.n4l.co.nz" is not this project's to pin. The host is resolved with
+the standard library's ``socket.getaddrinfo`` (IPv4 only — the rest of this
+ruleset is IPv4-only too, §3.1) and one outbound rule is written per
+resolved address, on the configured port. Resolution runs on every apply —
+at boot, and whenever the admin UI re-runs this script after a save — and
+again nightly from ``auditorium-config-apply.timer``, which re-triggers the
+same oneshot service, so an address change at the relay's end is picked up
+without anyone touching system.json. The addresses last resolved are cached
+next to system.json (``.smtp-relay-cache.json``) and reused, with a
+warning, when a resolution attempt fails — a relay that is briefly
+unreachable must not leave email unable to send until someone notices, and
+a relay that has *never* resolved leaves no rule at all: port 25 is never
+opened to every address, configured or not.
+
+network.backup_destination (§3.4, carry-forward 4 from phase-6)
+-------------------------------------------------------------------
+``address`` is named for the common case but accepts a hostname too — the
+Backup screen's field has never restricted it (Q22), and a NAS is at least as
+likely to be named as pinned. It is resolved exactly like
+``network.smtp_relay`` above: ``socket.getaddrinfo``, one outbound rule per
+resolved address on the protocol's port (445 for smb, 22 for sftp), re-run on
+every apply and nightly, cached next to system.json
+(``.backup-destination-cache.json``) and reused on a transient resolution
+failure. A destination that has never resolved gets no rule, the same as an
+unresolved relay: this port is never opened to every address. A literal IP
+address resolves to itself (``socket.getaddrinfo`` accepts one), so nothing
+about the common case changes.
+
+Options:
+  --config PATH   read this file instead of /data/config/system.json
+  --render        print the nftables ruleset and exit; nothing is applied
+                  (appliance/etc/nftables.conf.default is produced this way)
+  --render-network  print the NetworkManager connection profile and exit
+                  (nothing, if addressing is unmanaged); nothing is applied
+  --dry-run       report what would change without writing or loading anything
+"""
+
+from __future__ import annotations
+
+import argparse
+import ipaddress
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+import tempfile
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+
+CONFIG_PATH = Path("/data/config/system.json")
+NFT_PATH = Path("/etc/nftables.conf")
+ZONEINFO = Path("/usr/share/zoneinfo")
+
+DEFAULT_HOSTNAME = "auditorium"
+DEFAULT_TIMEZONE = "Pacific/Auckland"
+DEFAULT_VLAN = "10.2.30.0/24"
+DEFAULT_CONTROL_SURFACE = "10.2.30.100"
+# The mixer's UDP meter port from native.py's DEFAULT_LOCAL_UDP_PORT
+# (proskenion/core/mixer/native.py) — kept in step by hand, since this
+# script is stand-alone, stdlib-only, and does not import the application.
+DEFAULT_MIXER_LISTEN_PORT = 51327
+
+# §3.1 address table. Used only when system.json has no "devices" key at all,
+# so a fresh image has a working outbound ruleset before the admin UI runs.
+DEFAULT_DEVICES = [
+    {"name": "knx_gateway", "address": "10.2.30.252", "ports": ["udp/3671"]},
+    {"name": "projector", "address": "10.2.30.249", "ports": ["tcp/4352"]},
+    {
+        "name": "mixer",
+        "address": "10.2.30.248",
+        # tcp/51325 MIDI control (cq20b.md), tcp/51326 native metering
+        # control (cq20b-native.md §2). The meter UDP port is negotiated per
+        # connection, not fixed (cq20b-native.md §2, §9 — observed 51324 on
+        # the bench), so outbound UDP is allowed to the mixer's address on
+        # any port: a single trusted device, and a firmware update could
+        # move the port without notice.
+        "ports": ["tcp/51325", "tcp/51326", "udp/any"],
+        # Meters arrive on our own fixed local port (native.py's
+        # DEFAULT_LOCAL_UDP_PORT) — the mixer must be allowed to reach it.
+        "listen_ports": [f"udp/{DEFAULT_MIXER_LISTEN_PORT}"],
+    },
+    # udp/6454 Art-Net; udp/5568 sACN (E1.31), the node's other backend
+    # (§7.2.5) — the sacn driver sends to the node on it.
+    {"name": "dmx_node", "address": "10.2.30.245", "ports": ["udp/6454", "udp/5568"]},
+    {"name": "control_surface", "address": "10.2.30.100", "ports": ["udp/5004-5005"]},
+]
+
+HOSTNAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
+# A port spec is "tcp/N", "udp/LO-HI", or "udp/any" — "any" for a device
+# whose port cannot be pinned (see the mixer entry above).
+PORT_RE = re.compile(r"^(tcp|udp)/(any|\d{1,5})(?:-(\d{1,5}))?$")
+
+
+def log(msg: str) -> None:
+    print(f"config-apply: {msg}", file=sys.stderr, flush=True)
+
+
+def warn(msg: str) -> None:
+    print(f"config-apply: WARNING: {msg}", file=sys.stderr, flush=True)
+
+
+# ---------------------------------------------------------------------------
+# Validated configuration
+# ---------------------------------------------------------------------------
+@dataclass
+class Device:
+    name: str
+    address: str
+    ports: list[tuple[str, str]]  # (proto, "port"/"lo-hi"/"any") — outbound (§3.4)
+    listen_ports: list[tuple[str, str]] = field(default_factory=list)  # inbound (§3.3)
+
+
+@dataclass(frozen=True)
+class NetworkAddress:
+    """This appliance's own address (§3.1, P6-T12), as system.json's
+    ``network.address``/``gateway``/``dns`` describe it — never guessed:
+    see :func:`_parse_network_address`."""
+
+    cidr: str  # "10.2.30.251/24"
+    gateway: str
+    dns: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Config:
+    hostname: str = DEFAULT_HOSTNAME
+    timezone: str = DEFAULT_TIMEZONE
+    management_address: str | None = None
+    #: Networks outside the VLAN that may also reach the web interface (tcp
+    #: 80, 443) — administrators' own workstations. A departure from §3.3,
+    #: which admits the web interface from the VLAN only, made at the site's
+    #: request (24 September 2026): the office and desktop subnets the
+    #: appliance is administered from. Empty means §3.3 exactly.
+    admin_networks: list[str] = field(default_factory=list)
+    vlan: str = DEFAULT_VLAN
+    artnet_inbound: bool = True
+    control_surface_address: str | None = DEFAULT_CONTROL_SURFACE
+    smtp_relay_host: str | None = None
+    smtp_relay_port: int | None = None
+    smtp_relay_addresses: list[str] = field(default_factory=list)
+    backup_host: str | None = None
+    backup_protocol: str | None = None
+    backup_addresses: list[str] = field(default_factory=list)
+    devices: list[Device] = field(default_factory=list)
+    #: ``None`` means "leave the current addressing alone" — see
+    #: :func:`_parse_network_address`. There is no sensible built-in default
+    #: for this appliance's own address the way there is for the VLAN or the
+    #: §3.1 device table: it differs at every school, and guessing one is
+    #: exactly the "site visit" risk this task exists to avoid.
+    network_address: NetworkAddress | None = None
+
+
+def _ip(value: object, what: str) -> str | None:
+    if value is None:
+        return None
+    try:
+        return str(ipaddress.ip_address(str(value)))
+    except ValueError:
+        warn(f"{what}: not an IP address, ignored: {value!r}")
+        return None
+
+
+def _net(value: object, what: str, default: str) -> str:
+    try:
+        return str(ipaddress.ip_network(str(value), strict=False))
+    except ValueError:
+        warn(f"{what}: not a network, using {default}: {value!r}")
+        return default
+
+
+def _admin_networks(value: object) -> list[str]:
+    """``admin_networks``: a list of IPv4 networks, each normalised.
+
+    An entry that is not an IPv4 network is dropped with a warning rather than
+    failing the whole apply — the same treatment as an invalid DNS entry. A
+    typo here must not cost the appliance its firewall. Duplicates collapse.
+    """
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        warn(f"admin_networks must be a list of networks, ignored: {value!r}")
+        return []
+    networks: list[str] = []
+    for entry in value:
+        try:
+            network = ipaddress.ip_network(str(entry), strict=False)
+        except ValueError:
+            warn(f"admin_networks: not a network, dropped: {entry!r}")
+            continue
+        if network.version != 4:
+            warn(f"admin_networks: only IPv4 is filtered here, dropped: {entry!r}")
+            continue
+        if str(network) not in networks:
+            networks.append(str(network))
+    return networks
+
+
+def _parse_network_address(
+    address: object, gateway: object, dns: object
+) -> NetworkAddress | None:
+    """``network.address``/``gateway``/``dns`` (contracts §4, P6-T12), or
+    ``None`` when unset or invalid — in which case this appliance's current
+    addressing is left exactly as it is (see :class:`Config`'s
+    ``network_address`` field). §21.24's Network card validates all of this
+    itself before it ever reaches here; this is defence in depth, and it
+    never guesses a corrected value — only "apply this" or "leave it".
+    """
+    if address is None and gateway is None:
+        return None
+    try:
+        interface = ipaddress.ip_interface(str(address))
+    except ValueError:
+        warn(f"network.address invalid, addressing left unmanaged: {address!r}")
+        return None
+    if interface.version != 4:
+        warn("network.address must be IPv4 (§3.1), addressing left unmanaged")
+        return None
+    gateway_ip = _ip(gateway, "network.gateway")
+    if gateway_ip is None:
+        warn("network.gateway missing or invalid, addressing left unmanaged")
+        return None
+    if ipaddress.ip_address(gateway_ip) not in interface.network:
+        warn(
+            f"network.gateway {gateway_ip} is not on {interface.network}, "
+            "addressing left unmanaged"
+        )
+        return None
+    dns_values = dns if isinstance(dns, list) else ([dns] if isinstance(dns, str) else [])
+    dns_clean: list[str] = []
+    for entry in dns_values:
+        resolved = _ip(entry, "network.dns")
+        if resolved:
+            dns_clean.append(resolved)
+    return NetworkAddress(cidr=str(interface), gateway=gateway_ip, dns=dns_clean)
+
+
+# ---------------------------------------------------------------------------
+# network.smtp_relay: resolve a host to one or more addresses, and cache the
+# last resolution so a transient DNS failure does not close port 25 (see the
+# module docstring's "network.smtp_relay" section).
+# ---------------------------------------------------------------------------
+
+Resolver = Callable[[str, int], list[str]]
+
+
+def _default_resolve(host: str, port: int) -> list[str]:
+    """IPv4 addresses ``host`` resolves to on ``port``. Raises OSError on failure."""
+    infos = socket.getaddrinfo(host, port, family=socket.AF_INET, type=socket.SOCK_STREAM)
+    return sorted({str(info[4][0]) for info in infos})
+
+
+def _smtp_cache_path(config_path: Path) -> Path:
+    return config_path.parent / ".smtp-relay-cache.json"
+
+
+def _cached_addresses(cache_path: Path, host: str, port: int) -> list[str]:
+    try:
+        cached = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(cached, dict) or cached.get("host") != host or cached.get("port") != port:
+        return []
+    addresses = cached.get("addresses")
+    return [str(a) for a in addresses] if isinstance(addresses, list) else []
+
+
+def _write_smtp_cache(cache_path: Path, host: str, port: int, addresses: list[str]) -> None:
+    payload = json.dumps({"host": host, "port": port, "addresses": addresses})
+    try:
+        write_if_changed(cache_path, payload, dry_run=False, mode=0o644)
+    except OSError as exc:
+        warn(f"could not cache resolved addresses for {host}: {exc}")
+
+
+def _resolve_smtp_relay(
+    net: dict, config_path: Path, resolve: Resolver
+) -> tuple[str | None, int | None, list[str]]:
+    """``(host, port, addresses)`` from ``network.smtp_relay`` — see the module
+    docstring. ``(None, None, [])`` when unset or invalid; ``(host, port, [])``
+    when set but nothing is known to resolve it to, which renders no rule."""
+    relay = net.get("smtp_relay")
+    if relay is None:
+        return None, None, []
+    if not isinstance(relay, dict):
+        warn("network.smtp_relay must be an object with host and port, ignored")
+        return None, None, []
+    host = relay.get("host")
+    port = relay.get("port")
+    if not isinstance(host, str) or not host.strip():
+        warn("network.smtp_relay.host missing or invalid, ignored")
+        return None, None, []
+    host = host.strip()
+    if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+        warn(f"network.smtp_relay.port invalid, ignored: {port!r}")
+        return None, None, []
+    cache_path = _smtp_cache_path(config_path)
+    addresses = _resolve_and_cache(
+        "network.smtp_relay", host, port, cache_path, resolve
+    )
+    return host, port, addresses
+
+
+def _resolve_and_cache(
+    what: str, host: str, port: int, cache_path: Path, resolve: Resolver
+) -> list[str]:
+    """The shared body of :func:`_resolve_smtp_relay` and
+    :func:`_resolve_backup_destination`: resolve ``host``/``port``, cache the
+    result next to ``system.json``, and fall back to the cache — with a
+    warning — on a resolution failure. ``what`` names the setting for the log
+    (e.g. ``"network.smtp_relay"``)."""
+    try:
+        addresses = resolve(host, port)
+        if not addresses:
+            raise OSError("no addresses returned")
+    except OSError as exc:
+        warn(f"{what}: could not resolve {host}: {exc}")
+        addresses = _cached_addresses(cache_path, host, port)
+        if addresses:
+            warn(f"{what}: using last known addresses for {host}: "
+                 f"{', '.join(addresses)}")
+        else:
+            warn(f"{what}: no addresses known for {host}; "
+                 f"no outbound rule (port {port} stays closed)")
+        return addresses
+    _write_smtp_cache(cache_path, host, port, addresses)
+    return addresses
+
+
+def _backup_cache_path(config_path: Path) -> Path:
+    return config_path.parent / ".backup-destination-cache.json"
+
+
+def _resolve_backup_destination(
+    net: dict, config_path: Path, resolve: Resolver
+) -> tuple[str | None, str | None, list[str]]:
+    """``(host, protocol, addresses)`` from ``network.backup_destination`` —
+    see the module docstring's "network.backup_destination" section.
+    ``(None, None, [])`` when unset or invalid; ``(host, protocol, [])`` when
+    set but nothing is known to resolve it to, which renders no rule."""
+    backup = net.get("backup_destination")
+    if backup is None:
+        return None, None, []
+    if not isinstance(backup, dict):
+        warn("network.backup_destination must be an object with address and protocol, ignored")
+        return None, None, []
+    host = backup.get("address")
+    if not isinstance(host, str) or not host.strip():
+        warn("network.backup_destination.address missing or invalid, ignored")
+        return None, None, []
+    host = host.strip()
+    proto = str(backup.get("protocol", "smb")).lower()
+    if proto not in ("smb", "sftp"):
+        warn(f"network.backup_destination.protocol must be smb or sftp, ignored: {proto!r}")
+        return None, None, []
+    port = 445 if proto == "smb" else 22
+    cache_path = _backup_cache_path(config_path)
+    addresses = _resolve_and_cache(
+        "network.backup_destination", host, port, cache_path, resolve
+    )
+    return host, proto, addresses
+
+
+def _ports(values: object, what: str) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    if not isinstance(values, list):
+        warn(f"{what}: ports must be a list, ignored")
+        return out
+    for spec in values:
+        m = PORT_RE.match(str(spec))
+        if not m:
+            warn(f"{what}: bad port spec, ignored: {spec!r} (want tcp/NNN, udp/LO-HI or udp/any)")
+            continue
+        proto, first, hi = m.group(1), m.group(2), m.group(3)
+        if first == "any":
+            if hi:
+                warn(f"{what}: 'any' cannot have a range, ignored: {spec!r}")
+                continue
+            out.append((proto, "any"))
+            continue
+        lo = int(first)
+        if not 1 <= lo <= 65535 or (hi and not lo <= int(hi) <= 65535):
+            warn(f"{what}: port out of range, ignored: {spec!r}")
+            continue
+        out.append((proto, f"{lo}-{hi}" if hi else str(lo)))
+    return out
+
+
+def parse(raw: dict, *, config_path: Path = CONFIG_PATH, resolve: Resolver = _default_resolve) -> Config:
+    cfg = Config()
+
+    hostname = str(raw.get("hostname", DEFAULT_HOSTNAME)).lower()
+    if HOSTNAME_RE.match(hostname):
+        cfg.hostname = hostname
+    else:
+        warn(f"hostname invalid, using {DEFAULT_HOSTNAME}: {hostname!r}")
+
+    tz = str(raw.get("timezone", DEFAULT_TIMEZONE))
+    if "/" in tz and ".." not in tz and (ZONEINFO / tz).exists():
+        cfg.timezone = tz
+    elif tz != DEFAULT_TIMEZONE:
+        warn(f"timezone unknown, using {DEFAULT_TIMEZONE}: {tz!r}")
+
+    cfg.management_address = _ip(raw.get("management_address"), "management_address")
+    cfg.admin_networks = _admin_networks(raw.get("admin_networks"))
+
+    net = raw.get("network") or {}
+    if not isinstance(net, dict):
+        warn("network must be an object, ignored")
+        net = {}
+    cfg.vlan = _net(net.get("vlan", DEFAULT_VLAN), "network.vlan", DEFAULT_VLAN)
+    cfg.artnet_inbound = bool(net.get("artnet_inbound", True))
+    cfg.control_surface_address = _ip(net.get("control_surface_address", DEFAULT_CONTROL_SURFACE), "network.control_surface_address")
+    cfg.smtp_relay_host, cfg.smtp_relay_port, cfg.smtp_relay_addresses = _resolve_smtp_relay(
+        net, config_path, resolve
+    )
+    cfg.backup_host, cfg.backup_protocol, cfg.backup_addresses = _resolve_backup_destination(
+        net, config_path, resolve
+    )
+
+    cfg.network_address = _parse_network_address(
+        net.get("address"), net.get("gateway"), net.get("dns")
+    )
+
+    devices = raw.get("devices", DEFAULT_DEVICES)
+    if not isinstance(devices, list):
+        warn("devices must be a list, using the §3.1 defaults")
+        devices = DEFAULT_DEVICES
+    for i, entry in enumerate(devices):
+        if not isinstance(entry, dict):
+            warn(f"devices[{i}]: not an object, ignored")
+            continue
+        name = re.sub(r"[^A-Za-z0-9_-]", "_", str(entry.get("name", f"device{i}")))[:32]
+        address = _ip(entry.get("address"), f"devices[{i}] {name}")
+        if not address:
+            continue
+        ports = _ports(entry.get("ports", []), f"devices[{i}] {name}")
+        listen_ports = _ports(entry.get("listen_ports", []), f"devices[{i}] {name} listen_ports")
+        if not ports and not listen_ports:
+            warn(f"devices[{i}] {name}: no valid ports or listen_ports, no rule")
+            continue
+        if not ports:
+            warn(f"devices[{i}] {name}: no valid ports, no outbound rule")
+        cfg.devices.append(Device(name, address, ports, listen_ports))
+    return cfg
+
+
+def _default_devices() -> list[Device]:
+    return [
+        Device(d["name"], d["address"], _ports(d["ports"], d["name"]), _ports(d.get("listen_ports", []), d["name"]))
+        for d in DEFAULT_DEVICES
+    ]
+
+
+def load(path: Path) -> tuple[Config, bool]:
+    """Return (config, ok). ok is False only for a present-but-malformed file."""
+    if not path.exists():
+        log(f"{path} absent — applying defaults (§3.1 addresses, SSH from the whole VLAN)")
+        return Config(devices=_default_devices()), True
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError("top level is not an object")
+    except (ValueError, OSError) as exc:
+        warn(f"{path} unreadable ({exc}) — applying defaults")
+        return Config(devices=_default_devices()), False
+    return parse(raw, config_path=path), True
+
+
+# ---------------------------------------------------------------------------
+# nftables ruleset (§3.3, §3.4)
+# ---------------------------------------------------------------------------
+def _port_match(proto: str, ports: str) -> str:
+    """The ``proto dport ...`` fragment of a rule. nft's grammar requires a
+    field — ``dport``, ``sport``, ``length`` or ``checksum`` — after a bare
+    transport-protocol match; ``udp accept`` alone is a syntax error (learned
+    the hard way against a real ``nft -c``, appliance/tests/verify-in-docker.sh).
+    "Any port" (see the mixer's ``udp/any`` in ``DEFAULT_DEVICES``) is
+    therefore the full range, not an omitted ``dport`` clause.
+    """
+    return f"{proto} dport {'1-65535' if ports == 'any' else ports}"
+
+
+def render_nft(cfg: Config) -> str:
+    vlan = ipaddress.ip_network(cfg.vlan)
+    lines: list[str] = []
+    add = lines.append
+
+    add("#!/usr/sbin/nft -f")
+    add("# /etc/nftables.conf — GENERATED by auditorium-config-apply from")
+    add("# /data/config/system.json. Edits here are lost at the next boot (§4.3).")
+    add("# Inbound per §3.3, outbound per §3.4. Default drop both ways.")
+    add("")
+    add("flush ruleset")
+    add("")
+    add("table inet auditorium {")
+    add("    chain input {")
+    add("        type filter hook input priority filter; policy drop;")
+    add('        iif "lo" accept')
+    add("        ct state established,related accept")
+    add("        ct state invalid drop")
+    add("        # Neighbour discovery only; IPv6 is otherwise unused (§3.1)")
+    add("        meta nfproto ipv6 icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert } accept")
+    add("        # Ping from the VLAN — operational, not in §3.3; errors arrive via ct related")
+    add(f"        ip saddr {vlan} icmp type echo-request accept")
+    add("        # §3.3 web interface and health endpoint")
+    add(f"        ip saddr {vlan} tcp dport {{ 80, 443 }} accept")
+    if cfg.admin_networks:
+        add("        # Administrators' networks outside the VLAN (system.json admin_networks;")
+        add("        # a site-requested departure from §3.3, 24 September 2026)")
+        add(f"        ip saddr {{ {', '.join(cfg.admin_networks)} }} tcp dport {{ 80, 443 }} accept")
+    if cfg.management_address:
+        add("        # §3.3 SSH, key-only, management address only")
+        add(f"        ip saddr {cfg.management_address} tcp dport 22 accept")
+    else:
+        add("        # §3.3 SSH — management_address NOT SET in system.json; whole VLAN accepted until it is")
+        add(f"        ip saddr {vlan} tcp dport 22 accept")
+    if cfg.artnet_inbound:
+        add("        # §3.3 Art-Net inbound: ArtPollReply for health, ArtDmx from a visiting desk")
+        add(f"        ip saddr {vlan} udp dport 6454 accept")
+    if cfg.control_surface_address:
+        add("        # §3.3 RTP-MIDI from the control surface (§7.6)")
+        add(f"        ip saddr {cfg.control_surface_address} udp dport 5004-5005 accept")
+    add("        # Device address table (§3.1) — a device reaching a fixed port we")
+    add("        # listen on, independent of ct state (needed because the mixer's own")
+    add("        # meter port is negotiated, so no outbound packet of ours necessarily")
+    add("        # precedes its meters — see cq20b-native.md's firewall notes)")
+    for dev in cfg.devices:
+        for proto, ports in dev.listen_ports:
+            add(f"        ip saddr {dev.address} {_port_match(proto, ports)} accept  # {dev.name}")
+    add("    }")
+    add("")
+    add("    chain forward {")
+    add("        type filter hook forward priority filter; policy drop;")
+    add("    }")
+    add("")
+    add("    chain output {")
+    add("        type filter hook output priority filter; policy drop;")
+    add('        oif "lo" accept')
+    add("        ct state established,related accept")
+    add("        ct state invalid drop")
+    add("        meta nfproto ipv6 icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert } accept")
+    add("        icmp type { echo-request, destination-unreachable, time-exceeded } accept")
+    add("        # DNS")
+    add("        udp dport 53 accept")
+    add("        tcp dport 53 accept")
+    add("        # §3.4 NTP (pool addresses change; cannot be pinned)")
+    add("        udp dport 123 accept")
+    add("        # §3.4 Let's Encrypt ACME and the Cloudflare API for DNS-01 — anycast, cannot be")
+    add("        # pinned by address; the school firewall applies the §3.4 table at the VLAN edge")
+    add("        tcp dport 443 accept")
+    if cfg.smtp_relay_addresses:
+        add(
+            f"        # §11.4 email alerts via {cfg.smtp_relay_host}:{cfg.smtp_relay_port}, "
+            "resolved at apply time"
+        )
+        for address in cfg.smtp_relay_addresses:
+            add(f"        ip daddr {address} tcp dport {cfg.smtp_relay_port} accept")
+    elif cfg.smtp_relay_host:
+        add(
+            f"        # §11.4 email alerts — {cfg.smtp_relay_host} did not resolve and no "
+            "addresses are cached; no rule (port stays closed, never opened to all)"
+        )
+    else:
+        add("        # §11.4 email alerts — network.smtp_relay not set; no rule")
+    if cfg.backup_addresses and cfg.backup_protocol:
+        port = 445 if cfg.backup_protocol == "smb" else 22
+        add(
+            f"        # §3.4 network backup ({cfg.backup_protocol}) via {cfg.backup_host}, "
+            "resolved at apply time"
+        )
+        for address in cfg.backup_addresses:
+            add(f"        ip daddr {address} tcp dport {port} accept")
+    elif cfg.backup_host and cfg.backup_protocol:
+        port = 445 if cfg.backup_protocol == "smb" else 22
+        add(
+            f"        # §3.4 network backup — {cfg.backup_host} did not resolve and no "
+            "addresses are cached; no rule (port stays closed, never opened to all)"
+        )
+    else:
+        add("        # §3.4 network backup — backup_destination not set; no rule")
+    add("        # Device address table (§3.1) — one rule per device port")
+    for dev in cfg.devices:
+        for proto, ports in dev.ports:
+            comment = f"  # {dev.name}"
+            if ports == "any":
+                comment += ": every port — a single trusted device whose port can move (e.g. a firmware update)"
+            add(f"        ip daddr {dev.address} {_port_match(proto, ports)} accept{comment}")
+    if cfg.artnet_inbound:
+        add("        # Art-Net broadcast discovery on the VLAN (§3.1)")
+        add(f"        ip daddr {vlan.broadcast_address} udp dport 6454 accept")
+    add("        # Anything else is dropped; log a little so §3.4's months-later failures are findable")
+    add('        limit rate 6/minute log prefix "auditorium out-drop: "')
+    add("    }")
+    add("}")
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Appliers — each one compares first and reports "unchanged" when idle
+# ---------------------------------------------------------------------------
+def write_if_changed(path: Path, content: str, dry_run: bool, mode: int = 0o644) -> bool:
+    try:
+        if path.read_text(encoding="utf-8") == content:
+            log(f"{path} unchanged")
+            return False
+    except OSError:
+        pass
+    log(f"{'would write' if dry_run else 'writing'} {path}")
+    if dry_run:
+        return True
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.")
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(content)
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+    return True
+
+
+def apply_hostname(cfg: Config, dry_run: bool) -> None:
+    write_if_changed(Path("/etc/hostname"), cfg.hostname + "\n", dry_run)
+    hosts = Path("/etc/hosts")
+    try:
+        current = hosts.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        current = ["127.0.0.1\tlocalhost"]
+    new: list[str] = []
+    replaced = False
+    for line in current:
+        if line.startswith("127.0.1.1"):
+            fqdn = [t for t in line.split()[1:] if "." in t]
+            new.append("\t".join(["127.0.1.1", " ".join([cfg.hostname] + fqdn)]))
+            replaced = True
+        else:
+            new.append(line)
+    if not replaced:
+        new.append(f"127.0.1.1\t{cfg.hostname}")
+    write_if_changed(hosts, "\n".join(new) + "\n", dry_run)
+
+    kernel = Path("/proc/sys/kernel/hostname")
+    try:
+        live = kernel.read_text().strip()
+    except OSError:
+        live = ""
+    if live == cfg.hostname:
+        log("kernel hostname unchanged")
+    elif dry_run:
+        log(f"would set kernel hostname {live!r} -> {cfg.hostname!r}")
+    else:
+        kernel.write_text(cfg.hostname + "\n")
+        log(f"kernel hostname set to {cfg.hostname}")
+
+
+def apply_timezone(cfg: Config, dry_run: bool) -> None:
+    target = ZONEINFO / cfg.timezone
+    link = Path("/etc/localtime")
+    try:
+        same = os.readlink(link) == str(target)
+    except OSError:
+        same = False
+    if same:
+        log(f"timezone unchanged ({cfg.timezone})")
+    elif dry_run:
+        log(f"would point /etc/localtime at {target}")
+    else:
+        tmp = link.with_name(".localtime.tmp")
+        if tmp.is_symlink() or tmp.exists():
+            tmp.unlink()
+        os.symlink(target, tmp)
+        os.replace(tmp, link)
+        log(f"timezone set to {cfg.timezone}")
+    write_if_changed(Path("/etc/timezone"), cfg.timezone + "\n", dry_run)
+
+
+def apply_firewall(cfg: Config, dry_run: bool) -> bool:
+    ruleset = render_nft(cfg)
+    if dry_run:
+        write_if_changed(NFT_PATH, ruleset, dry_run=True, mode=0o640)
+        return True
+    fd, tmp = tempfile.mkstemp(dir=str(NFT_PATH.parent), prefix=".nftables.conf.")
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(ruleset)
+    os.chmod(tmp, 0o640)
+    check = subprocess.run(["nft", "-c", "-f", tmp], capture_output=True, text=True)
+    if check.returncode != 0:
+        os.unlink(tmp)
+        warn(f"nft rejected the rendered ruleset; current rules kept:\n{check.stderr.strip()}")
+        return False
+    changed = write_if_changed(NFT_PATH, ruleset, dry_run=False, mode=0o640)
+    os.unlink(tmp)
+    # Load even if the file is unchanged: the file may match while the live
+    # ruleset does not (first boot, a manual nft flush).
+    load = subprocess.run(["nft", "-f", str(NFT_PATH)], capture_output=True, text=True)
+    if load.returncode != 0:
+        warn(f"nft -f failed:\n{load.stderr.strip()}")
+        return False
+    log("firewall ruleset loaded" + ("" if changed else " (unchanged)"))
+    return True
+
+
+# ---------------------------------------------------------------------------
+# This appliance's own address (§3.1, P6-T12). NetworkManager is what
+# Raspberry Pi OS ships; appliance/image/build.sh used to bake this exact
+# file in directly (a NetworkManager connection profile is not "config" the
+# way hostname or the firewall are), which is the gap this closes: the
+# address is now configuration, applied here like everything else in
+# system.json, not something only a re-image can change.
+# ---------------------------------------------------------------------------
+NM_CONNECTION_PATH = Path("/etc/NetworkManager/system-connections/auditorium.nmconnection")
+NM_CONNECTION_ID = "auditorium"
+
+
+def render_nm_connection(addr: NetworkAddress) -> str:
+    lines = [
+        "[connection]",
+        f"id={NM_CONNECTION_ID}",
+        "type=ethernet",
+        "autoconnect=true",
+        "",
+        "[ipv4]",
+        "method=manual",
+        f"address1={addr.cidr},{addr.gateway}",
+    ]
+    if addr.dns:
+        lines.append(f"dns={';'.join(addr.dns)};")
+    lines += ["", "[ipv6]", "method=disabled"]
+    return "\n".join(lines) + "\n"
+
+
+def network_manager_running() -> bool:
+    """Whether NetworkManager is up to be asked to reload a profile.
+
+    False at boot (this unit runs before it) and True afterwards, when an
+    address is changed live (§10.8). Only "active" counts: an "activating"
+    NetworkManager has not finished reading its profiles, and is about to.
+    """
+    try:
+        result = subprocess.run(
+            ["systemctl", "is-active", "--quiet", "NetworkManager.service"], check=False
+        )
+    except FileNotFoundError:
+        return False
+    return result.returncode == 0
+
+
+def apply_network_address(cfg: Config, dry_run: bool) -> bool:
+    """Render and apply this appliance's own address, idempotently.
+
+    ``cfg.network_address is None`` means system.json set nothing usable —
+    left alone entirely, never defaulted or guessed (see
+    :func:`_parse_network_address`). Otherwise the NetworkManager keyfile is
+    rewritten only if its content actually changed, and NetworkManager is
+    asked to pick the change up live — §10.8's reconnection flow depends on
+    this taking effect without a reboot.
+    """
+    if cfg.network_address is None:
+        log("network.address not set; leaving NetworkManager addressing unmanaged")
+        return True
+    content = render_nm_connection(cfg.network_address)
+    if dry_run:
+        write_if_changed(NM_CONNECTION_PATH, content, dry_run=True, mode=0o600)
+        return True
+    changed = write_if_changed(NM_CONNECTION_PATH, content, dry_run=False, mode=0o600)
+    if not changed:
+        log("NetworkManager profile unchanged")
+        return True
+    if not network_manager_running():
+        # The boot case, and the normal one: this unit is ordered
+        # Before=NetworkManager.service, so NetworkManager reads the profile
+        # just written when it starts. There is nothing to reload yet, and
+        # asking is what used to fail this unit on every boot ("failed to
+        # reload connections: NetworkManager is not running") — found on the
+        # CM5, 24 September 2026. The root is a RAM overlay, so the profile is
+        # rewritten, and so "changed", on every single boot.
+        log("NetworkManager is not running yet; it will read the profile when it starts")
+        return True
+    try:
+        reload_result = subprocess.run(
+            ["nmcli", "connection", "reload"], capture_output=True, text=True
+        )
+    except FileNotFoundError:
+        warn("nmcli not found; NetworkManager profile written but not applied live")
+        return False
+    if reload_result.returncode != 0:
+        warn(f"nmcli connection reload failed:\n{reload_result.stderr.strip()}")
+        return False
+    up_result = subprocess.run(
+        ["nmcli", "connection", "up", NM_CONNECTION_ID], capture_output=True, text=True
+    )
+    if up_result.returncode != 0:
+        warn(f"nmcli connection up {NM_CONNECTION_ID} failed:\n{up_result.stderr.strip()}")
+        return False
+    log(f"network address applied: {cfg.network_address.cidr} via {cfg.network_address.gateway}")
+    return True
+
+
+# ---------------------------------------------------------------------------
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--config", type=Path, default=CONFIG_PATH)
+    ap.add_argument("--render", action="store_true", help="print the nftables ruleset and exit")
+    ap.add_argument(
+        "--render-network",
+        action="store_true",
+        help="print the NetworkManager connection profile and exit (nothing if unmanaged)",
+    )
+    ap.add_argument("--dry-run", action="store_true", help="report changes without writing")
+    args = ap.parse_args(argv)
+
+    cfg, ok = load(args.config)
+    if args.render:
+        sys.stdout.write(render_nft(cfg))
+        return 0 if ok else 1
+    if args.render_network:
+        if cfg.network_address is not None:
+            sys.stdout.write(render_nm_connection(cfg.network_address))
+        return 0 if ok else 1
+
+    log(f"hostname={cfg.hostname} timezone={cfg.timezone} vlan={cfg.vlan} "
+        f"management={cfg.management_address or 'UNSET (whole VLAN)'} devices={len(cfg.devices)} "
+        f"address={cfg.network_address.cidr if cfg.network_address else 'UNMANAGED'}")
+    apply_hostname(cfg, args.dry_run)
+    apply_timezone(cfg, args.dry_run)
+    net_ok = apply_network_address(cfg, args.dry_run)
+    fw_ok = apply_firewall(cfg, args.dry_run)
+    if not ok:
+        warn("system.json was malformed; defaults were applied — fix the file and restart auditorium-config-apply.service")
+    return 0 if (ok and net_ok and fw_ok) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -1,0 +1,7 @@
+[Unit]
+Description=Revert an unconfirmed network change (§10.8, contracts §5)
+ConditionPathExists=/data/config/.network-revert.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/auditorium-helper --check-network-revert

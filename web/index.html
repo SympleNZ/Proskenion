@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en-NZ">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0A0F1A" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="description" content="Proskenion — auditorium control" />
+    <title>Proskenion</title>
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <!-- iOS Safari ignores an SVG apple-touch-icon outright (§21.28); this
+         PNG default is swapped for the hirer's own icon by `useManifest`,
+         the same way the manifest link is swapped, so "Add to Home Screen"
+         from /hire installs under the hirer's distinct identity. -->
+    <link id="apple-touch-icon" rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link id="app-manifest" rel="manifest" href="/manifest.staff.json" />
+    <link rel="preload" href="/fonts/dm-sans-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/jetbrains-mono-latin.woff2" as="font" type="font/woff2" crossorigin />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

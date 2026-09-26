@@ -1,0 +1,154 @@
+#!/usr/bin/python3
+"""auditorium-wait-for-knx-gateway — ExecStartPre for knxd.service (§4.11).
+
+The defect this exists for, commissioned on the CM5 on 24-25 September 2026:
+knxd started 35 ms after eth0's carrier came up and its KNXnet/IP tunnel
+CONNECT got no answer — the switch port was not forwarding yet (spanning
+tree), or ARP had not settled — so the unit failed its very first attempt at
+every boot. `Restart=` ten seconds later always worked, so the daemon itself
+was fine; only the timing of the first try was wrong.
+
+This script runs before knxd, sends the gateway a KNXnet/IP DESCRIPTION_REQUEST
+(the same UDP/3671 exchange knxd's own tunnel connect performs) and retries for
+up to ``--timeout-s`` seconds. It always exits 0: a gateway that never answers
+is a real fault, and `Restart=always` on knxd.service already covers that —
+this script's job is only to not waste the first, doomed attempt.
+
+The gateway host comes from ``KNXD_OPTS`` (``-b ipt:HOST``), never hard-coded,
+because the gateway address is edited on `/data/config/knxd.conf` without a
+rebuild (§4.3). ``-b ip:`` (multicast, no single gateway) and every other
+backend are skipped outright — there is nothing to wait for.
+
+knxd.service's own `EnvironmentFile=/etc/knxd.conf` already puts KNXD_OPTS in
+this script's environment when systemd runs it as ExecStartPre=; the direct
+file read below is only the fallback for running this by hand.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import socket
+import struct
+import sys
+import time
+
+CONFIG_PATH = "/etc/knxd.conf"
+KNXNET_IP_PORT = 3671
+TIMEOUT_S = 30.0
+POLL_INTERVAL_S = 1.0
+#: One UDP round trip is not worth waiting seconds for; a gateway that is
+#: there answers in milliseconds, and a gateway that is not gets tried again
+#: on the next poll rather than stealing the whole budget on one attempt.
+RECV_TIMEOUT_S = 2.0
+
+_KNXD_OPTS_RE = re.compile(r'^\s*KNXD_OPTS\s*=\s*"(?P<value>.*)"\s*$', re.MULTILINE)
+_GATEWAY_RE = re.compile(r"-b\s+ipt:(?P<host>[^\s:]+)(?::(?P<port>\d+))?")
+
+
+def log(message: str) -> None:
+    print(f"wait-for-knx-gateway: {message}", flush=True)
+
+
+def read_knxd_opts(path: str = CONFIG_PATH) -> str:
+    """``KNXD_OPTS``, from this process's environment or, failing that, the file.
+
+    systemd loads `/etc/knxd.conf` as knxd.service's EnvironmentFile= and
+    hands the result to every Exec* in the unit, ExecStartPre= included — so
+    in the one place this actually runs, the environment already has it.
+    """
+    if "KNXD_OPTS" in os.environ:
+        return os.environ["KNXD_OPTS"]
+    try:
+        text = open(path, encoding="utf-8").read()
+    except OSError:
+        return ""
+    match = _KNXD_OPTS_RE.search(text)
+    return match.group("value") if match else ""
+
+
+def gateway_host_and_port(knxd_opts: str) -> tuple[str, int] | None:
+    """The tunnelling gateway's ``(host, port)`` from ``-b ipt:HOST[:PORT]``.
+
+    ``None`` for any other backend — multicast ``-b ip:``, a serial or USB
+    interface, or no ``-b`` at all — where there is no single gateway to wait
+    for.
+    """
+    match = _GATEWAY_RE.search(knxd_opts)
+    if match is None:
+        return None
+    port = int(match.group("port")) if match.group("port") else KNXNET_IP_PORT
+    return match.group("host"), port
+
+
+def _description_request(local_ip: str, local_port: int) -> bytes:
+    """A KNXnet/IP DESCRIPTION_REQUEST frame naming our own return address."""
+    hpai = struct.pack("!BB4sH", 8, 0x01, socket.inet_aton(local_ip), local_port)
+    header = struct.pack("!BBHH", 6, 0x10, 0x0203, 6 + len(hpai))
+    return header + hpai
+
+
+def gateway_answers(host: str, port: int = KNXNET_IP_PORT, recv_timeout_s: float = RECV_TIMEOUT_S) -> bool:
+    """One UDP round trip: does anything answer a KNXnet/IP description request?
+
+    Not a full KNXnet/IP client — knxd is about to be that — just enough of
+    the real exchange (a DESCRIPTION_REQUEST to UDP/3671, addressed back to
+    our own socket) to prove the path knxd's tunnel connect is about to use is
+    actually open: the switch port forwarding, ARP resolved, the gateway
+    listening.
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.settimeout(recv_timeout_s)
+            sock.connect((host, port))
+            local_ip, local_port = sock.getsockname()
+            sock.send(_description_request(local_ip, local_port))
+            sock.recv(2048)
+            return True
+    except OSError:
+        return False
+
+
+def wait_for_gateway(
+    host: str,
+    port: int = KNXNET_IP_PORT,
+    timeout_s: float = TIMEOUT_S,
+    poll_interval_s: float = POLL_INTERVAL_S,
+) -> bool:
+    """Retry :func:`gateway_answers` until it succeeds or ``timeout_s`` passes."""
+    deadline = time.monotonic() + timeout_s
+    while True:
+        if gateway_answers(host, port):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(poll_interval_s)
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--config", default=CONFIG_PATH)
+    parser.add_argument("--timeout-s", type=float, default=TIMEOUT_S)
+    parser.add_argument("--poll-interval-s", type=float, default=POLL_INTERVAL_S)
+    args = parser.parse_args(argv)
+
+    target = gateway_host_and_port(read_knxd_opts(args.config))
+    if target is None:
+        log("no single -b ipt: gateway in KNXD_OPTS; nothing to wait for")
+        return 0
+
+    host, port = target
+    started = time.monotonic()
+    if wait_for_gateway(host, port, args.timeout_s, args.poll_interval_s):
+        log(f"{host}:{port} answered after {time.monotonic() - started:.1f}s")
+    else:
+        log(
+            f"{host}:{port} did not answer within {args.timeout_s:.0f}s; "
+            "starting knxd anyway (Restart= covers a gateway that stays down)"
+        )
+    return 0  # never block the boot: a dead gateway is Restart='s job, not this one's
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

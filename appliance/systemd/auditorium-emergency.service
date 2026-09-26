@@ -1,0 +1,46 @@
+# auditorium-emergency.service — the emergency responder (§4.6, §16.7, §14.5).
+#
+# Started three ways, all of which write /srv/appliance/emergency-reason.json
+# first (appliance/lib/auditorium_emergency_reason.py) so this unit's
+# ConditionPathExists is already true by the time systemd evaluates it, and
+# so the responder itself never has to guess why it was started:
+#
+#   * auditorium-emergency-detect.service, ordered before this unit by
+#     Before=/Wants= in the same boot transaction — /data not mounted or not
+#     writable (data_unavailable, data_readonly).
+#   * auditorium-update-rollback, which calls `systemctl start --no-block`
+#     directly once it has written the reason — cannot recover an update
+#     (migration_failed), or /data has under 100 MB free (disk_full).
+#
+# On a normal boot the reason file does not exist, the condition fails, and
+# this unit is skipped — the same "normal boot never enters it" guarantee the
+# detect unit's own condition gives for path 1.
+#
+# Runs as root: it switches nginx from auditorium.conf to emergency.conf
+# (writing /etc/nginx/sites-enabled and reloading the service) and reads
+# SMART data and the backup USB. Nothing here goes through the Q2 helper's
+# request/response protocol — that protocol is for the unprivileged
+# application; this unit is triggered only by other root processes (systemd
+# itself, or auditorium-update-rollback, already running as root under
+# OnFailure=).
+#
+# Exit is automatic on reboot (§4.6): there is no ExecStop here that clears
+# the reason file — auditorium-emergency-cleanup.service does that,
+# unconditionally, first thing on every boot, which is what makes this
+# unit's own condition false on the boot after /data is repaired.
+
+[Unit]
+Description=Proskenion emergency mode — /data unavailable, an update could not recover, or /data is full (§4.6)
+ConditionPathExists=/srv/appliance/emergency-reason.json
+After=local-fs.target auditorium-emergency-detect.service
+Before=nginx.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/auditorium-emergency
+Restart=on-failure
+RestartSec=5
+SyslogIdentifier=auditorium-emergency
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+# certbot-renew.timer — weekly certificate renewal check (§4.11, §3.2, Q7).
+# Renewal is DNS-01 through Cloudflare, inside 30 days of expiry, and is
+# skipped (not attempted) while the clock is unverified (§4.9).
+
+[Unit]
+Description=Weekly certificate renewal check
+
+[Timer]
+# Mondays 04:00 Pacific/Auckland, jittered up to an hour
+OnCalendar=Mon *-*-* 04:00:00
+RandomizedDelaySec=3600
+Persistent=true
+
+[Install]
+WantedBy=timers.target

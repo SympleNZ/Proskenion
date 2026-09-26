@@ -1,0 +1,17 @@
+{
+  "name": "Auditorium Controls",
+  "short_name": "Auditorium",
+  "description": "Auditorium control — hire guest",
+  "id": "/hire",
+  "start_url": "/hire",
+  "scope": "/",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#0A0F1A",
+  "theme_color": "#0A0F1A",
+  "icons": [
+    { "src": "/icons/hirer-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/hirer-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/hirer-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

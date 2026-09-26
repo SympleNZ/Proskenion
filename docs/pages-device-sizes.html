@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en-NZ">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pages at device sizes — Auditorium Controller</title>
+<style>
+:root{
+  --bg-base:#0A0F1A; --bg-surface:#111827; --bg-elevated:#1C2B3A;
+  --teal-500:#00B8A0; --teal-300:#33DFC9; --success:#22C55E; --warning:#F0A500;
+  --warning-text:#FFC24D;
+  --text-1:#F0F4F8; --text-2:#8A9BB0; --text-muted:#7589A0; --text-disabled:#4A5B6E;
+  --fader-track:#060C14; --rule:rgba(255,255,255,.06); --rule-strong:rgba(255,255,255,.11);
+  --font-b:'DM Sans',ui-sans-serif,system-ui,-apple-system,sans-serif;
+  --font-m:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,monospace;
+  --r-sm:4px; --r-md:8px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:#06090F;color:var(--text-2);font-family:var(--font-b);
+  font-size:15px;-webkit-font-smoothing:antialiased;padding:26px}
+h1{color:var(--text-1);font-size:21px;margin:0 0 5px}
+.lede{color:var(--text-muted);font-size:13.5px;margin-bottom:8px;max-width:80ch}
+.ctl{display:flex;gap:8px;margin:16px 0 24px;flex-wrap:wrap;align-items:center}
+.ctl b{color:var(--text-2);font-weight:500;font-size:13px}
+.ctl button{background:var(--bg-surface);border:1px solid var(--rule);color:var(--text-2);
+  border-radius:7px;padding:9px 16px;font-family:var(--font-b);font-size:13px;cursor:pointer}
+.ctl button.on{background:var(--bg-elevated);color:var(--teal-300);border-color:rgba(0,184,160,.45)}
+.frames{display:flex;flex-direction:column;gap:32px}
+.cap{display:flex;align-items:baseline;gap:12px;margin-bottom:9px;flex-wrap:wrap}
+.cap b{color:var(--text-1);font-size:15px;font-weight:600}
+.cap .px{font-family:var(--font-m);font-size:12px;color:var(--text-muted)}
+.cap .fad{font-family:var(--font-m);font-size:12px;color:var(--teal-300)}
+.tag{font-size:11.5px;padding:3px 9px;border-radius:99px;background:var(--bg-elevated);
+  color:var(--text-muted);border:1px solid var(--rule)}
+.tag.t{background:rgba(0,184,160,.1);color:var(--teal-300);border-color:rgba(0,184,160,.3)}
+.tag.w{background:rgba(240,165,0,.1);color:var(--warning-text);border-color:rgba(240,165,0,.3)}
+.hold{overflow:hidden;border:1px solid var(--rule-strong);border-radius:9px;background:var(--bg-base)}
+.dev{transform-origin:top left;background:var(--bg-base);display:flex;flex-direction:column;
+  overflow:hidden;position:relative}
+
+.status{display:flex;align-items:center;gap:18px;padding:10px 18px;background:var(--bg-surface);
+  border-top:1px solid var(--rule);flex:none;height:50px}
+.clock{font-family:var(--font-m);font-size:15px;color:var(--text-1)}
+.tmr{font-family:var(--font-m);font-size:15px;color:var(--teal-300)}
+.tbtn{width:32px;height:32px;border-radius:4px;background:var(--bg-elevated);
+  border:1px solid var(--rule-strong);color:var(--text-1);font-size:12px;
+  display:flex;align-items:center;justify-content:center}
+.sep{width:1px;height:20px;background:var(--rule-strong)}
+.d{display:flex;align-items:center;gap:7px;font-size:12.5px}
+.led{width:10px;height:10px;border-radius:50%;flex:none}
+.led.g{background:radial-gradient(circle at 35% 35%,#AFFFEE,#22C55E 40%,#15803D 100%);
+  box-shadow:0 0 4px 2px rgba(34,197,94,.8)}
+.led.a{background:radial-gradient(circle at 35% 35%,#FFF3AA,#F0A500 40%,#B45309 100%);
+  box-shadow:0 0 4px 2px rgba(240,165,0,.9)}
+.sp{flex:1}
+.acct{width:32px;height:32px;border-radius:50%;background:var(--bg-elevated);
+  border:1px solid var(--rule-strong);color:var(--text-1);font-size:12px;font-weight:600;
+  display:flex;align-items:center;justify-content:center}
+.nav{display:flex;padding:0 12px;background:var(--bg-surface);border-bottom:1px solid var(--rule);
+  flex:none;height:48px;overflow:hidden}
+.nav a{padding:13px 15px;color:var(--text-2);font-size:13.5px;font-weight:500;
+  border-bottom:2px solid transparent;white-space:nowrap}
+.nav a.on{color:var(--teal-300);border-bottom-color:var(--teal-500)}
+.ptabs{display:flex;gap:9px;padding:14px 18px 0;flex:none;height:60px}
+.ptab{background:var(--bg-surface);border:1px solid var(--rule);color:var(--text-2);
+  border-radius:var(--r-md);padding:10px 18px;font-size:13.5px;font-weight:500;height:44px}
+.ptab.on{background:var(--bg-elevated);color:var(--teal-300);border-color:rgba(0,184,160,.45);
+  box-shadow:inset 3px 0 0 var(--teal-500)}
+
+/* ── one row, always. Horizontal scroll is the only overflow. ─────────── */
+.surface{flex:1;display:flex;gap:14px;padding:16px 18px 20px;min-height:0;min-width:0;
+  overflow-x:auto;overflow-y:hidden;align-items:stretch}
+.strip,.panel{background:var(--bg-surface);border:1px solid var(--rule);border-radius:var(--r-md);
+  position:relative;padding:13px 9px 12px;overflow:hidden;flex:none;min-height:0}
+.strip{width:150px;display:flex;flex-direction:column;align-items:center}
+.accent{position:absolute;top:0;left:0;right:0;height:3px}
+.nm{font-size:13.5px;font-weight:500;color:var(--text-1);text-align:center;margin-top:6px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%}
+.tg{font-family:var(--font-m);font-size:11px;color:var(--text-muted);height:15px;margin-bottom:9px}
+.zone{flex:1;width:100%;position:relative;min-height:110px}
+.scale{position:absolute;top:0;bottom:0;left:0;width:34px}
+.sm{position:absolute;right:0;width:34px;height:0;transform:translateY(-50%)}
+.sm i{position:absolute;right:0;top:-.5px;width:5px;height:1px;background:var(--rule-strong)}
+.sm.u i{width:12px;height:1.5px;background:rgba(255,255,255,.5)}
+.sm span{position:absolute;right:11px;top:50%;transform:translateY(-50%);
+  font-family:var(--font-m);font-size:11px;color:var(--text-muted)}
+.sm.u span{color:var(--text-1);font-weight:600}
+.fader{position:absolute;top:0;bottom:0;left:52px;width:11px;background:var(--fader-track);
+  border-radius:6px;box-shadow:inset 0 2px 4px rgba(0,0,0,.8)}
+.fg{position:absolute;inset:0;border-radius:6px;
+  background:linear-gradient(to top,#00B8A0 0%,#22C55E 62%,#F0A500 78%,#EF4444 92%,#CC1111 100%)}
+.fc{position:absolute;left:0;right:0;top:0;background:var(--fader-track);border-radius:6px 6px 0 0}
+.th{position:absolute;left:57px;transform:translate(-50%,-50%);width:52px;height:28px;
+  border-radius:4px;z-index:3;background:linear-gradient(to bottom,#FFF,#C8D8E8 58%,#9FB3C7);
+  box-shadow:0 2px 7px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.95)}
+.mt{position:absolute;top:0;bottom:0;right:2px;display:flex;gap:3px}
+.m{width:11px;background:var(--fader-track);border-radius:2px;position:relative;overflow:hidden}
+.m.s{width:8px}
+.mg{position:absolute;inset:0;background:linear-gradient(to top,#0b5f53 0%,#22C55E 40%,
+  #6FD34A 64%,#F0A500 71.4%,#FFC24D 80%,#EF4444 85.7%,#CC1111 100%)}
+.mc{position:absolute;left:0;right:0;top:0;background:#060C14}
+.z{position:absolute;left:0;right:2px;bottom:85.7%;height:1.5px;background:rgba(255,194,77,.8)}
+.db{font-family:var(--font-m);font-size:15px;color:var(--teal-500);text-align:center;
+  margin-top:11px;height:20px}
+.mu{margin-top:8px;width:100%;height:34px;border-radius:var(--r-sm);border:1px solid #1F2D3D;
+  background:#111827;color:var(--text-2);font-size:12px;font-weight:600;letter-spacing:.06em;
+  box-shadow:inset 0 2px 4px rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center}
+
+/* ── panels: square buttons, evenly spaced, scroll when they overflow ──── */
+.panel{display:flex;flex-direction:column;padding:13px 12px 14px}
+.pt{font-size:13.5px;font-weight:500;color:var(--text-1);text-align:center;margin:3px 0 11px;
+  flex:none}
+.grid{flex:1;display:grid;row-gap:12px;min-height:0;align-content:space-evenly}
+.b{background:linear-gradient(to bottom,#1E2A3C,#161F2E 62%,#131B28);border:1px solid #263346;
+  border-top-color:#33445C;border-radius:9px;display:flex;flex-direction:column;
+  align-items:center;color:var(--text-2);font-weight:500;
+  line-height:1.2;text-align:center;padding:11px 8px 9px;aspect-ratio:1;
+  box-shadow:0 2px 0 rgba(0,0,0,.55),0 4px 9px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.07)}
+.b i{width:28px;height:6px;border-radius:3px;flex:none;margin-bottom:8px;
+  background:radial-gradient(circle at 40% 40%,#4A5B6E,#25303F 60%,#161F2B)}
+.b em{flex:1;display:flex;align-items:center;justify-content:center;width:100%;
+  min-height:0;font-style:normal}
+.b em span{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;
+  overflow:hidden}
+.b.on{background:linear-gradient(to bottom,#131C29,#151E2B 60%,#16202D);
+  border-color:rgba(34,197,94,.42);color:var(--text-1);
+  box-shadow:0 0 0 1px rgba(34,197,94,.34),0 0 16px 3px rgba(34,197,94,.13),
+  inset 0 3px 7px rgba(0,0,0,.5)}
+.b.on i{background:radial-gradient(circle at 40% 40%,#AFFFEE,#22C55E 42%,#15803D 100%);
+  box-shadow:0 0 5px 2px rgba(34,197,94,.85)}
+
+/* ── phone landscape: rail floats over, compact furniture ─────────────── */
+.rail{position:absolute;left:0;top:0;bottom:0;width:56px;background:rgba(17,24,39,.97);
+  border-right:1px solid var(--rule);z-index:20;display:flex;flex-direction:column;
+  padding:8px 0;gap:2px;overflow:hidden;transition:width 180ms cubic-bezier(.2,0,0,1);
+  box-shadow:4px 0 18px rgba(0,0,0,.5)}
+.rail.open{width:176px}
+.rail a{display:flex;align-items:center;gap:11px;padding:0 0 0 17px;height:42px;
+  color:var(--text-2);font-size:13px;font-weight:500;white-space:nowrap;
+  border-left:3px solid transparent}
+.rail a b{font-family:var(--font-m);font-size:12.5px;font-weight:600;flex:none;width:22px}
+.rail a span{opacity:0;transition:opacity 140ms}
+.rail.open a span{opacity:1}
+.rail a.on{color:var(--teal-300);background:var(--bg-elevated);border-left-color:var(--teal-500)}
+.dev.compact .ptabs,.dev.compact .surface{margin-left:56px}
+.dev.compact .nm{font-size:12px;margin-top:3px}
+.dev.compact .tg{display:none}
+.dev.compact .db{font-size:13px;height:16px;margin-top:6px}
+.dev.compact .mu{height:26px;margin-top:5px;font-size:11px}
+.dev.compact .strip{padding:8px 7px 8px}
+.dev.compact .ptabs{height:46px;padding:7px 12px 0}
+.dev.compact .ptab{height:32px;padding:6px 13px;font-size:12.5px}
+.dev.compact .surface{padding:9px 12px 11px;gap:10px}
+.dev.compact .panel{padding:9px 9px 10px}
+.dev.compact .pt{font-size:12px;margin:0 0 7px}
+
+/* display scale — appears only at or above the design target */
+.uiscale{display:flex;align-items:center;gap:11px;padding:0 18px 0 0;flex:none;
+  color:var(--text-2);font-size:12.5px}
+.uiscale label{color:var(--text-muted);font-size:12px;white-space:nowrap}
+.uiscale .track{width:132px;height:5px;border-radius:3px;background:var(--fader-track);
+  position:relative;box-shadow:inset 0 1px 3px rgba(0,0,0,.8)}
+.uiscale .fill{position:absolute;left:0;top:0;bottom:0;border-radius:3px;
+  background:linear-gradient(90deg,var(--teal-500),var(--teal-300))}
+.uiscale .knob{position:absolute;top:50%;width:16px;height:16px;border-radius:50%;
+  transform:translate(-50%,-50%);background:linear-gradient(to bottom,#FFF,#C8D8E8);
+  box-shadow:0 1px 4px rgba(0,0,0,.7)}
+.uiscale b{font-family:var(--font-m);font-size:12px;color:var(--teal-300);
+  min-width:34px;text-align:right}
+.uiscale .dot{width:5px;height:5px;border-radius:50%;background:var(--rule-strong)}
+
+.legend{margin-top:36px;font-size:13.5px;color:var(--text-muted);max-width:830px;line-height:1.7}
+.legend b{color:var(--text-1)}
+.legend p{margin:0 0 13px}
+</style>
+</head>
+<body>
+
+<h1>Pages at device sizes</h1>
+<div class="lede">Each frame is the exact CSS size of its device, scaled to fit. Panel
+columns and button size are computed per frame, so what you see is what that device shows.</div>
+
+<div class="ctl"><b>Scale:</b>
+  <button data-k="0.42">42%</button><button data-k="0.55" class="on">55%</button>
+  <button data-k="0.72">72%</button></div>
+
+<div class="frames" id="frames"></div>
+
+<div class="legend">
+  <p><b>Buttons are square.</b> The side equals the column width, so a 1-wide panel gives a
+  126&nbsp;px square. That is what makes the count predictable: a booth screen fits six, a
+  13″ tablet five, a laptop or 11″ tablet four, a phone in landscape two.</p>
+
+  <p><b>Panels never scroll vertically.</b> A scroll indicator was tried — a chevron, then
+  an illuminated rail with a count — and neither was convincing. The better answer was to
+  remove the case: if the buttons do not fit, the button shrinks and the panel widens until
+  they do.</p>
+
+  <p><b>Size and columns are searched together, not in sequence.</b> For each column count,
+  take the largest button that still shows every row, and use the first arrangement inside
+  the width budget. Doing one and then the other produced panels twice as wide — expanding
+  columns first commits to a shape before finding out a slightly smaller button would have
+  kept the original one.</p>
+
+  <p><b>A panel occupies the same footprint as N channel strips, gaps included.</b> A 2-wide
+  panel is 314&nbsp;px — two 150&nbsp;px strips plus the 14&nbsp;px between them — so the
+  surface reads as one grid rather than two systems sitting next to each other. The slack
+  between the buttons and that width becomes the horizontal gap, which is what stops
+  multi-column panels looking crammed: at full size a 2-wide panel gets 38&nbsp;px between
+  its columns rather than 12.</p>
+
+  <p><b>Where the slack would be excessive the panel takes its natural width instead.</b>
+  Two 96&nbsp;px buttons held to a 314&nbsp;px footprint would sit 98&nbsp;px apart, which
+  is dead space rather than breathing room. Past 40&nbsp;px of slack the panel gives up the
+  alignment and uses a 20&nbsp;px gap — still generous, and honest about the fact that small
+  buttons do not fill a strip-width column.</p>
+
+  <p><b>That keeps the configured shape almost everywhere.</b> The 5-button Stage panel stays
+  one column on every target but a phone in landscape, shrinking from 126&nbsp;px to
+  96&nbsp;px rather than becoming two columns. The venue configured a shape; the layout
+  honours it and adjusts the size.</p>
+
+  <p><b>Only the phone in landscape genuinely runs out.</b> At 260&nbsp;px of panel height a
+  five-row column would need 42&nbsp;px buttons, below the 64&nbsp;px floor — so it becomes
+  2&nbsp;×&nbsp;3 at 78&nbsp;px. That is the one case where the arrangement changes rather
+  than the size.</p>
+
+  <p><b>One row, always.</b> Strips and panels share a single horizontally scrolling row on
+  every size, including a phone in portrait. Stacking panels beneath the faders was tried
+  and abandoned: it left the faders squashed and the panels half empty, and it meant two
+  layouts to reason about instead of one.</p>
+
+  <p><b>Phone landscape floats the navigation over the surface</b> rather than insetting it,
+  so the fader row keeps its full width. The rail is 56&nbsp;px of two-character labels,
+  expanding to 176&nbsp;px on touch and collapsing after about two seconds. With the status
+  bar dropped and compact strip furniture, fader travel goes from an unusable 37&nbsp;px to
+  226&nbsp;px.</p>
+
+  <p><b>Above 1080p the layout should scale, not stretch.</b> Filling the height is right up
+  to a point, and that point arrives sooner than expected: 1080p already gives 201&nbsp;mm of
+  physical fader travel on a 24″ panel — twice a console fader — and 1440p gives
+  253&nbsp;mm. A 4K panel unscaled gives <b>333&nbsp;mm</b>, a third of a metre for something
+  moved with one hand, with 126&nbsp;px buttons stranded beside it.</p>
+
+  <p><b>So a tall display gets a scale factor rather than a longer fader.</b> Everything
+  grows together — strips, type, buttons — and the layout sees a smaller logical viewport.
+  A 4K panel at 2× sees 1920&nbsp;×&nbsp;1080 and renders the design target at twice the
+  size, which is what the operating system's own display scaling would do anyway.</p>
+
+  <p><b>The control appears only where it has authority</b> — at or above
+  1920&nbsp;×&nbsp;1080. Below the design target the layout is already choosing button size
+  and column count, and a manual factor would fight that machinery, which is why tablets and
+  phones need no control and do not get one. Viewport size is the test rather than device
+  type, because a booth touchscreen is a coarse pointer <i>and</i> a large display, so it
+  reads as a tablet to every media query that matters.</p>
+
+  <p><b>It opens at a computed default rather than 1.0×</b> — 2.0× on a 4K panel, 1.3× on
+  1440p, 1.0× on the booth screen — so the slider is for viewing distance and taste, not
+  repair. Range 1.0× to 2.0× in tenths: no downward travel, since below the target the
+  layout owns the problem and going under 1.0 would only push targets past their minimums.
+  Stored per viewport size rather than per browser, so docking a laptop to a monitor recalls
+  each screen's own value.</p>
+
+  <p><b>1920&nbsp;×&nbsp;1080 is the design target</b> — the size everything else derives
+  from. Larger displays scale up to it, smaller ones adapt down. The 11″ tablets in landscape
+  are the real floor at 800&ndash;834&nbsp;px tall, not the phone, and they still clear the
+  ~378&nbsp;px a 100&nbsp;mm physical fader gives.</p>
+</div>
+
+<script>
+const CARD=150, PAD=24, GAP=12, TITLE=30;
+const DEVICES=[
+  {n:'4K monitor',d:'3840 × 2160 · no scaling',w:3840,h:2160,tag:'too tall'},
+  {n:'4K monitor',d:'3840 × 2160 · scale 2.0× (default)',w:3840,h:2160,ui:2,tag:'scaled'},
+  {n:'1440p monitor',d:'2560 × 1440 · scale 1.3× (default)',w:2560,h:1440,ui:1.3,tag:'scaled'},
+  {n:'1440p monitor',d:'2560 × 1440 · scale 1.0×',w:2560,h:1440,tag:'unscaled'},
+  {n:'Booth touchscreen',d:'1920 × 1080 PC touch',w:1920,h:1080,tag:'target'},
+  {n:'iPad Pro 13″',d:'landscape',w:1366,h:1024},
+  {n:'Laptop',d:'1440 × 900',w:1440,h:900},
+  {n:'iPad Pro 11″',d:'landscape',w:1194,h:834},
+  {n:'Galaxy Tab S9 11″',d:'landscape',w:1280,h:800,tag:'tightest landscape'},
+  {n:'iPad Pro 11″',d:'portrait',w:834,h:1194},
+  {n:'Phone',d:'portrait',w:390,h:844,tag:'scrolls sideways'},
+  {n:'Phone',d:'landscape · rail collapsed',w:844,h:390,rail:1,tag:'floating rail'},
+  {n:'Phone',d:'landscape · rail expanded',w:844,h:390,rail:1,open:1}
+];
+const LAW=[[0,'-∞'],[.176,'-40'],[.288,'-30'],[.424,'-20'],[.572,'-10'],[.66,'-5'],
+           [.766,'0',1],[.884,'+5'],[1,'+10']];
+const scale=LAW.map(([p,l,u])=>`<div class="sm ${u?'u':''}" style="top:${(1-p)*100}%">
+  <i></i><span>${l}</span></div>`).join('');
+const CH=[{n:'Wireless Mic 1',t:'ip1',a:'#E8C26C',p:.66,v:'−5.0',c:1,m:38},
+          {n:'Wireless Mic 2',t:'ip2',a:'#E8C26C',p:.60,v:'−7.5',c:1,m:92},
+          {n:'HDMI',t:'st2',a:'#00A5FE',p:.72,v:'−2.0',c:2,m:44},
+          {n:'Main',t:'main',a:'#E8EEF4',p:.766,v:'0.0',c:2,m:48}];
+function strip(c){
+  const mt=`<div class="mt">${Array.from({length:c.c}).map(()=>
+    `<div class="m ${c.c===2?'s':''}"><div class="mg"></div>
+     <div class="mc" style="height:${c.m}%"></div></div>`).join('')}<div class="z"></div></div>`;
+  return `<div class="strip"><div class="accent" style="background:${c.a}"></div>
+    <div class="nm">${c.n}</div><div class="tg">${c.t}</div>
+    <div class="zone"><div class="scale">${scale}</div>
+      <div class="fader"><div class="fg"></div>
+        <div class="fc" style="height:${(1-c.p)*100}%"></div></div>
+      <div class="th" style="top:${(1-c.p)*100}%"></div>${mt}</div>
+    <div class="db">${c.v}</div><div class="mu">MUTE</div></div>`;
+}
+const STAGE=[['Stage Bank 1',1],['Stage Bank 2',1],['Stage Bank 3',0],['Stage Bank 4',0],
+             ['All Stage',0]];
+const ROOM=[['Projector',0],['Screen',1],['House Lights',1],['Speakers',1],
+            ['HDMI: Side of Stage',1],['HDMI: Back of House',0],['Work Lights',0],
+            ['Cleaners',0],['Foyer',1],['Nightly Off',0]];
+
+// Panels never scroll. For each column count, take the largest button that
+// still shows every row, and pick the first arrangement inside the width
+// budget. Widening and shrinking are searched together rather than in
+// sequence, which finds narrower panels than doing one and then the other.
+const IDEAL=126, MINSIDE=64, MAXCOLS=6, BUDGET=0.70;
+const STRIP=150, SGAP=14, HGAP=20, MAXSLACK=40;
+
+// A panel occupies the same footprint as N channel strips, gaps included, so
+// the surface reads as one grid. The slack between the buttons and that width
+// becomes the horizontal gap — which is what stops multi-column panels looking
+// crammed. Where the slack would be excessive (small buttons on a phone) the
+// panel takes its natural width instead rather than holding a phantom
+// alignment full of dead space.
+function panelWidth(cols, side){
+  const aligned = cols*STRIP + (cols-1)*SGAP;
+  const slack = cols > 1
+    ? (aligned - PAD - cols*side) / (cols-1)     // becomes the gap
+    : aligned - PAD - side;                      // becomes side padding
+  if(slack >= 0 && slack <= MAXSLACK)
+    return {w:aligned, gap: cols>1 ? Math.round(slack) : HGAP, aligned:true};
+  return {w: cols*side + HGAP*(cols-1) + PAD, gap:HGAP, aligned:false};
+}
+function layout(count, cols0, innerH, availW){
+  const budget = availW * BUDGET;
+  let best = null;
+  for(let cols=cols0; cols<=MAXCOLS; cols++){
+    const rows = Math.ceil(count/cols);
+    const side = Math.min(IDEAL, Math.floor((innerH - GAP*(rows-1)) / rows));
+    if(side < MINSIDE) continue;                  // buttons would be too small
+    const P = panelWidth(cols, side);
+    const cand = {cols, side, width:P.w, gap:P.gap, aligned:P.aligned, rows};
+    if(P.w <= budget) return cand;                // first one that fits, wins
+    if(!best || P.w < best.width) best = cand;    // otherwise the narrowest
+  }
+  if(best) return best;
+  const P = panelWidth(cols0, MINSIDE);
+  return {cols:cols0, side:MINSIDE, rows:Math.ceil(count/cols0),
+          width:P.w, gap:P.gap, aligned:P.aligned};
+}
+
+function panel(title, cols, btns, innerH, availW){
+  const L = layout(btns.length, cols, innerH, availW);
+  return `<div class="panel" style="width:${L.width}px"><div class="pt">${title}</div>
+    <div class="grid" style="grid-template-columns:repeat(${L.cols},${L.side}px);
+         column-gap:${L.gap}px;justify-content:center">${
+      btns.map(([l,on])=>`<div class="b ${on?'on':''}"
+        style="font-size:${L.side<90?11:L.side<120?12.5:14}px"><i></i><em><span>${l}</span></em></div>`
+      ).join('')}</div></div>`;
+}
+const RAIL=[['PG','Pages',1],['SC','Scenes'],['MX','Mixer'],['LT','Lighting'],
+            ['SP','Stage Plan'],['VD','Video'],['PJ','Projector']];
+
+function frame(D,k){
+  const ui = D.ui || 1;
+  const lw = Math.round(D.w/ui), lh = Math.round(D.h/ui);
+  const chrome = D.rail ? 60 : 196;
+  const furn   = D.rail ? 104 : 157;
+  const surf   = lh - chrome;
+  const innerH = surf - PAD - (D.rail?26:TITLE) - 20;
+  const fad    = surf - furn;
+  const availW = lw - (D.rail?56:0) - 36;
+  // The control only appears where the automatic layout has nothing left to
+  // do — at or above the design target. Below it, button size and column count
+  // are already adapting and a manual factor would fight them.
+  const showScale = D.w >= 1920 && D.h >= 1080;
+  const pct = Math.round(((ui-1)/1.0)*100);
+  const scaleCtl = showScale ? `<div class="uiscale">
+      <label>Display scale</label>
+      <span class="dot"></span>
+      <div class="track"><div class="fill" style="width:${pct}%"></div>
+        <div class="knob" style="left:${pct}%"></div></div>
+      <b>${ui.toFixed(1)}×</b></div>` : '';
+  const tabs = `<div class="ptabs"><div class="ptab on">Performance</div>
+      <div class="ptab">Lighting</div><div class="ptab">Hire</div></div>`;
+  const surface = `<div class="surface">${CH.map(strip).join('')}
+      ${panel('Stage',1,STAGE,innerH,availW)}
+      ${panel('Room',2,ROOM,innerH,availW)}</div>`;
+  const shell = D.rail
+    ? `<div class="rail ${D.open?'open':''}">${RAIL.map(([a,l,on])=>
+         `<a class="${on?'on':''}"><b>${a}</b><span>${l}</span></a>`).join('')}</div>
+       ${tabs}${surface}`   /* no status bar below ~420px tall — §21.7 */
+    : `<div class="nav"><a class="on">Pages</a><a>Scenes</a><a>Mixer</a><a>Lighting</a>
+        <a>Stage Plan</a><a>Video</a><a>Projector</a>
+        <div class="sp"></div>${scaleCtl}<div class="acct">OP</div></div>
+      ${tabs}${surface}
+      <div class="status">
+        <div class="d"><span class="led g"></span>KNX</div>
+        <div class="d"><span class="led g"></span>DMX</div>
+        <div class="d"><span class="led g"></span>Mixer</div>
+        <div class="d"><span class="led a"></span>Projector</div>
+        <div class="d"><span class="led g"></span>HDMI</div>
+        <div class="sp"></div>
+        <span class="tmr">0:47:12</span><div class="tbtn">❚❚</div><div class="tbtn">⟲</div>
+        <div class="sep"></div><span class="clock">19:42</span></div>`;
+  const L = layout(STAGE.length,1,innerH,availW);
+  return `<div><div class="cap"><b>${D.n}</b>
+      <span class="px">${D.d}${ui>1?` → layout sees ${lw} × ${lh}`:''}</span>
+      <span class="fad">${fad} px fader · Stage ${L.cols}×${L.rows} at ${L.side}px${
+        L.aligned?'':' · unaligned'}</span>
+      ${D.tag?`<span class="tag ${D.tag==='target'?'t':'w'}">${D.tag}</span>`:''}</div>
+    <div class="hold" style="width:${Math.round(D.w*k)}px;height:${Math.round(D.h*k)}px">
+      <div class="dev ${D.rail?'compact':''}"
+           style="width:${lw}px;height:${lh}px;zoom:${ui};transform:scale(${k})">${shell}</div>
+    </div></div>`;
+}
+let k=0.55;
+const render=()=>document.getElementById('frames').innerHTML=DEVICES.map(d=>frame(d,k)).join('');
+document.querySelectorAll('.ctl button').forEach(b=>b.onclick=()=>{
+  k=parseFloat(b.dataset.k);
+  document.querySelectorAll('.ctl button').forEach(x=>x.classList.toggle('on',x===b));
+  render();});
+render();
+</script>
+</body>
+</html>

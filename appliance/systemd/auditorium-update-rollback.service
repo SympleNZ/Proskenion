@@ -1,0 +1,22 @@
+# auditorium-update-rollback.service — automatic recovery from a failed
+# application update (§14.5). Fired by OnFailure= on auditorium-core.service
+# once systemd has given up restarting it (StartLimitBurst=3 in 180 s).
+#
+# The script decides whether the failure was an update at all (the healthy
+# marker in boot-state.json names a different version from /data/app/current),
+# repoints the symlink atomically, restores the pre-update database snapshot —
+# in that order, §14.3 — and starts the service again. Email and the admin
+# banner are the application's job; it finds the rollback record in
+# boot-state.json when it next starts.
+
+[Unit]
+Description=Roll back a failed application update
+RequiresMountsFor=/data /srv/appliance
+# A rollback must never loop on itself.
+StartLimitBurst=2
+StartLimitIntervalSec=600
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/auditorium-update-rollback
+SyslogIdentifier=auditorium-update-rollback

@@ -1,0 +1,145 @@
+/*
+ * Stylesheet entry (spec §21.1). tokens.css is imported first and everything
+ * references it. Our layers sit inside Tailwind's cascade layers so utilities
+ * can still override component classes where a view needs to.
+ */
+@import "./tokens.css";
+@import "tailwindcss";
+@import "./base.css" layer(base);
+@import "./components.css" layer(components);
+@import "./animations.css" layer(utilities);
+@import "./print.css";
+
+/*
+ * Tailwind's default palette, type scale, spacing multiplier, radii and
+ * shadows are cleared so the only utilities that exist are the ones mapped to
+ * §21.3 tokens below. `inline reference` makes utilities emit var(--token)
+ * directly and stops Tailwind re-declaring the variables on :root.
+ */
+@theme {
+  --color-*: initial;
+  --font-*: initial;
+  --text-*: initial;
+  --font-weight-*: initial;
+  --radius-*: initial;
+  --shadow-*: initial;
+  --inset-shadow-*: initial;
+  --drop-shadow-*: initial;
+  --ease-*: initial;
+  --animate-*: initial;
+  --spacing: initial;
+}
+
+@theme inline reference {
+  /* Background layers → bg-base, bg-surface, bg-elevated, bg-overlay */
+  --color-base: var(--color-bg-base);
+  --color-surface: var(--color-bg-surface);
+  --color-elevated: var(--color-bg-elevated);
+  --color-overlay: var(--color-bg-overlay);
+
+  /* Hairlines → border-hairline, border-hairline-strong, border-hairline-input */
+  --color-hairline: var(--border-elevated);
+  --color-hairline-strong: var(--border-overlay);
+  --color-hairline-input: var(--border-input);
+
+  /* Accent */
+  --color-teal-500: var(--color-teal-500);
+  --color-teal-400: var(--color-teal-400);
+  --color-teal-300: var(--color-teal-300);
+  --color-teal-900: var(--color-teal-900);
+
+  /* Semantic — fills and text variants */
+  --color-success: var(--color-success);
+  --color-warning: var(--color-warning);
+  --color-danger: var(--color-danger);
+  --color-info: var(--color-info);
+  --color-success-text: var(--color-success-text);
+  --color-warning-text: var(--color-warning-text);
+  --color-danger-text: var(--color-danger-text);
+  --color-info-text: var(--color-info-text);
+
+  /* Text → text-fg, text-fg-secondary, text-fg-muted, text-fg-disabled, text-fg-inverse */
+  --color-fg: var(--color-text-primary);
+  --color-fg-secondary: var(--color-text-secondary);
+  --color-fg-muted: var(--color-text-muted);
+  --color-fg-disabled: var(--color-text-disabled);
+  --color-fg-inverse: var(--color-text-inverse);
+
+  /* Device status */
+  --color-status-green: var(--color-status-green);
+  --color-status-amber: var(--color-status-amber);
+  --color-status-red: var(--color-status-red);
+  --color-status-grey: var(--color-status-grey);
+
+  /* Group palette — identity only, never status */
+  --color-group-rose: var(--group-rose);
+  --color-group-salmon: var(--group-salmon);
+  --color-group-tangerine: var(--group-tangerine);
+  --color-group-amber: var(--group-amber);
+  --color-group-lime: var(--group-lime);
+  --color-group-fern: var(--group-fern);
+  --color-group-ocean: var(--group-ocean);
+  --color-group-azure: var(--group-azure);
+  --color-group-violet: var(--group-violet);
+  --color-group-orchid: var(--group-orchid);
+  --color-group-silver: var(--group-silver);
+  --color-group-white: var(--group-white);
+
+  /* Typography → font-body, font-mono; text-xs … text-3xl carry their line-height */
+  --font-body: var(--font-body);
+  --font-mono: var(--font-mono);
+  --text-xs: var(--text-xs);
+  --text-xs--line-height: var(--leading-xs);
+  --text-sm: var(--text-sm);
+  --text-sm--line-height: var(--leading-sm);
+  --text-base: var(--text-base);
+  --text-base--line-height: var(--leading-base);
+  --text-lg: var(--text-lg);
+  --text-lg--line-height: var(--leading-lg);
+  --text-xl: var(--text-xl);
+  --text-xl--line-height: var(--leading-xl);
+  --text-2xl: var(--text-2xl);
+  --text-2xl--line-height: var(--leading-2xl);
+  --text-3xl: var(--text-3xl);
+  --text-3xl--line-height: var(--leading-3xl);
+  --font-weight-regular: var(--weight-regular);
+  --font-weight-medium: var(--weight-medium);
+  --font-weight-semibold: var(--weight-semibold);
+  --font-weight-bold: var(--weight-bold);
+
+  /* Spacing — only the §21.3 steps exist; p-7 or gap-9 do not compile to anything */
+  --spacing-0: 0;
+  --spacing-hairline: var(--hairline);
+  --spacing-1: var(--space-1);
+  --spacing-2: var(--space-2);
+  --spacing-3: var(--space-3);
+  --spacing-4: var(--space-4);
+  --spacing-5: var(--space-5);
+  --spacing-6: var(--space-6);
+  --spacing-8: var(--space-8);
+  --spacing-10: var(--space-10);
+  --spacing-12: var(--space-12);
+  --spacing-16: var(--space-16);
+  --spacing-20: var(--space-20);
+  /* Touch targets → h-touch, min-w-touch, size-touch, h-touch-primary, h-touch-hirer */
+  --spacing-touch: var(--touch-min);
+  --spacing-touch-primary: var(--touch-primary);
+  --spacing-touch-hirer: var(--touch-hirer);
+  --spacing-thumb: var(--touch-thumb);
+  --spacing-dot: var(--status-dot-size);
+
+  /* Radius */
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+  --radius-full: var(--radius-full);
+
+  /* Shadow — positioning context only (§21.3) */
+  --shadow-overlay: var(--shadow-overlay);
+
+  /* Easing */
+  --ease-out: var(--ease-out);
+  --ease-in-out: var(--ease-in-out);
+  --ease-spring: var(--ease-spring);
+}

@@ -1,0 +1,25 @@
+{
+  // The service worker (src/sw/worker.ts) runs in a ServiceWorkerGlobalScope,
+  // not a window: the WebWorker library instead of the DOM one, which cannot
+  // be combined in one program. `routing.ts` is shared with the application
+  // and uses neither.
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "WebWorker"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": [],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["src/sw/worker.ts", "src/sw/routing.ts"]
+}

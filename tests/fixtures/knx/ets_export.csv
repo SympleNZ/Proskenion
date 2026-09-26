@@ -1,0 +1,6 @@
+Main,Middle,Sub,Name,Description,Data Type
+1,0,1,Stage Lights Command,Sent by the south wall touch panel,1.001
+1,0,2,Stage Lights Status,,1.001
+1,1,1,Foyer Lights Command,,1.001
+2,1,1,House Lights Centre,,5.001
+bad,addr,x,Malformed Row,This row is broken,1.001

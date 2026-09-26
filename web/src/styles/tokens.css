@@ -1,0 +1,214 @@
+/*
+ * Proskenion design tokens — spec §21.3.
+ *
+ * The single source of truth for every colour, typeface, size, space, radius,
+ * duration and easing in the interface. This file is imported first and
+ * everything references it; no component defines its own values (§21.1).
+ * Dark mode only — there is no light scheme and no toggle.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* ── Background layers ─────────────────────────────────────────────────
+   * Four levels of dark, each six to eight lightness points above the last.
+   * Elevation is expressed through background colour, not shadow.          */
+  --color-bg-base:     #0A0F1A;   /* Page background, deepest */
+  --color-bg-surface:  #111827;   /* Cards, panels, sidebar */
+  --color-bg-elevated: #1C2B3A;   /* Modals, sheets, popovers */
+  --color-bg-overlay:  #243447;   /* Hover, selected items */
+
+  /* Hairlines that catch ambient light on the upper layers (§21.3 elevation
+   * examples and quick reference). */
+  --border-elevated: rgb(255 255 255 / 0.06);   /* .elevated border-top; cards */
+  --border-overlay:  rgb(255 255 255 / 0.08);   /* .overlay border */
+  --border-input:    rgb(255 255 255 / 0.12);   /* Input border */
+  --shadow-overlay:  0 24px 64px rgb(0 0 0 / 0.6);   /* Positioning context only */
+
+  /* ── Accent ──────────────────────────────────────────────────────────── */
+  --color-teal-500: #00B8A0;   /* Primary — active states, CTAs, selection */
+  --color-teal-400: #00D4BC;   /* Hover on teal elements */
+  --color-teal-300: #33DFC9;   /* Focus rings, highlights */
+  --color-teal-900: #00241E;   /* Teal-tinted backgrounds */
+
+  /* ── Semantic colours ────────────────────────────────────────────────── */
+  /* Fills, borders, LEDs, indicators */
+  --color-success: #22C55E;
+  --color-warning: #F0A500;
+  --color-danger:  #EF4444;
+  --color-info:    #3B82F6;
+
+  /* Text on any background layer — lighter, contrast-checked (§24.4) */
+  --color-success-text: #5EE08A;
+  --color-warning-text: #FFC24D;
+  --color-danger-text:  #FF7B7B;
+  --color-info-text:    #7FB0FF;
+
+  /* ── Group palette ───────────────────────────────────────────────────────
+   * Identity colours for lighting groups, mixer channel accents, page panels
+   * and control surface scribble strips. Identity only, never status.       */
+  --group-rose:      #FF4B82;   /*   8°  L*60 */
+  --group-salmon:    #FF7F68;   /*  36°  L*67 */
+  --group-tangerine: #E17B1B;   /*  62°  L*62 */
+  --group-amber:     #E8C26C;   /*  86°  L*80 */
+  --group-lime:      #A3BC00;   /* 111°  L*72 */
+  --group-fern:      #93C896;   /* 144°  L*76 */
+  --group-ocean:     #1CDAF1;   /* 214°  L*80 */
+  --group-azure:     #00A5FE;   /* 266°  L*65 */
+  --group-violet:    #A482C9;   /* 310°  L*60 */
+  --group-orchid:    #F99FD8;   /* 340°  L*76 */
+  --group-silver:    #B4C0CC;   /* neutral  L*77 */
+  --group-white:     #E8EEF4;   /* neutral  L*94 */
+
+  /* ── Text ────────────────────────────────────────────────────────────── */
+  --color-text-primary:   #F0F4F8;   /* Headings, active values */
+  --color-text-secondary: #8A9BB0;   /* Body text, descriptions */
+  --color-text-muted:     #7589A0;   /* Placeholders, timestamps, meta — base and surface only */
+  --color-text-disabled:  #4A5B6E;   /* Disabled controls only */
+  --color-text-inverse:   #0A0F1A;   /* Text on teal */
+
+  /* ── Device status ───────────────────────────────────────────────────────
+   * Never used alone — every status pairs colour with an icon (§21.7, §24.1). */
+  --color-status-green: #22C55E;   /* Connected and healthy */
+  --color-status-amber: #F0A500;   /* Degraded, or showing last-known values */
+  --color-status-red:   #EF4444;   /* Unreachable or error */
+  --color-status-grey:  #4A5B6E;   /* Not configured */
+
+  /* ── Faders ──────────────────────────────────────────────────────────── */
+  --color-fader-track: #060C14;
+  --color-fader-grad:  linear-gradient(to top,
+                         #00B8A0 0%, #22C55E 62%, #F0A500 78%,
+                         #EF4444 92%, #CC1111 100%);
+  --color-fader-cover: #060C14;   /* Hides the gradient above the thumb */
+  --color-fader-thumb: #FFFFFF;
+  --color-fader-muted: #4A5B6E;
+  --color-mute-active: #EF4444;
+  --color-mute-off:    #243447;
+
+  /* §21.4's machined-channel track and thumb gradients (P2-T9): the file had
+   * only the flat fader colours above; these stops and shadows were written
+   * as raw values in the spec's hardware-aesthetic CSS block and had no
+   * token home yet. */
+  --color-fader-track-mid:  #0F1C2A;   /* Track gradient, recessed channel */
+  --color-fader-track-edge: #1A2D40;   /* Track gradient, top edge */
+  --color-fader-thumb-mid:  #C8D8E8;   /* Thumb gradient */
+  --color-fader-thumb-edge: #A0B4C8;   /* Thumb gradient, base */
+  --shadow-fader-track: inset 0 2px 4px rgb(0 0 0 / 0.8), inset 0 -1px 0 rgb(255 255 255 / 0.04);
+  --shadow-fader-thumb: 0 2px 6px rgb(0 0 0 / 0.6), 0 1px 2px rgb(0 0 0 / 0.8), inset 0 1px 0 rgb(255 255 255 / 0.9);
+
+  /* ── Typography ──────────────────────────────────────────────────────── */
+  --font-body: 'DM Sans', system-ui, sans-serif;   /* All UI text */
+  --font-mono: 'JetBrains Mono', monospace;        /* Technical values */
+
+  /* Size / line-height pairs. Hierarchy comes from weight and size, not from
+   * a second typeface. */
+  --text-xs:   11px;   --leading-xs:   1.4;    /* Status labels, timestamps, channel numbers */
+  --text-sm:   13px;   --leading-sm:   1.5;    /* Table cells, secondary labels, badges */
+  --text-base: 15px;   --leading-base: 1.65;   /* Body text, form labels */
+  --text-lg:   17px;   --leading-lg:   1.5;    /* Sub-headers, card titles */
+  --text-xl:   21px;   --leading-xl:   1.4;    /* Panel headers, view titles */
+  --text-2xl:  26px;   --leading-2xl:  1.3;    /* Screen titles, mobile */
+  --text-3xl:  32px;   --leading-3xl:  1.2;    /* Section headings, desktop */
+
+  --weight-regular:  400;   /* Body text, descriptions */
+  --weight-medium:   500;   /* Labels, navigation, table headers */
+  --weight-semibold: 600;   /* Section headings, buttons, active states */
+  --weight-bold:     700;   /* Screen titles */
+
+  /* ── Spacing — 4px base, no arbitrary values ─────────────────────────── */
+  --space-1:  4px;    --space-2:  8px;    --space-3: 12px;   --space-4: 16px;
+  --space-5: 20px;    --space-6: 24px;    --space-8: 32px;   --space-10: 40px;
+  --space-12: 48px;   --space-16: 64px;   --space-20: 80px;
+
+  /* ── Radius ──────────────────────────────────────────────────────────── */
+  --radius-sm:   4px;      /* Badges, chips, small inputs */
+  --radius-md:   8px;      /* Cards, panels, buttons, modals */
+  --radius-lg:   12px;     /* Large panels, stage plan container */
+  --radius-xl:   16px;     /* Mobile bottom sheets */
+  --radius-full: 9999px;   /* Status dots, toggles, pills */
+
+  /* ── Touch targets — requirements, not guidance ──────────────────────── */
+  --touch-min:      44px;   /* All interactive elements, 44 × 44 (WCAG 2.5.5) */
+  --touch-standard: 44px;   /* Standard buttons, height */
+  --touch-primary:  64px;   /* Primary operator buttons: scene cards, source buttons */
+  --touch-hirer:    72px;   /* Hirer surface */
+  --touch-thumb:    32px;   /* Fader thumb, 32 × 32 */
+  --touch-mute:     44px;   /* Mute button, 44 × 44 */
+
+  /* ── Quick-reference sizes ───────────────────────────────────────────── */
+  --status-dot-size:   10px;   /* Status dot: 10px circle, --radius-full */
+  --nav-active-border: 3px;    /* Nav item active: 3px teal left border */
+  --focus-ring-width:  2px;    /* Focus: teal ring, 2px, 2px offset */
+  --focus-ring-offset: 2px;
+  --hairline:          1px;    /* Card, input and rule borders */
+
+  /* ── Pages surface strip footprint (§21.9) ───────────────────────────────
+   * Fixed by the spec, not derived from the Mixer/Lighting views' own
+   * compact strip (`--space-20 + --space-4` = 96px): "A 2-wide panel is
+   * 314 px — two 150 px strips plus the 14 px between them — not 288 px
+   * derived from its buttons" (§21.9), and "A 150 px strip at 13.5 px takes
+   * about sixteen characters on one line" (§21.21). Used only on the Pages
+   * surface (`.page-surface-flow`'s own descendants) — the operator Mixer
+   * and Lighting views keep their own narrower strip.                       */
+  --pages-strip-width: 150px;
+  --pages-strip-gap:   14px;
+
+  /* A panel button's latch (§21.9: "It drops two pixels") and its LED's own
+   * glow geometry — the colour is a var(), composed at the call site, so
+   * only the blur/spread live here. */
+  --panel-button-latch-drop: 2px;
+  --led-glow-blur:   5px;
+  --led-glow-spread: 2px;
+
+  /* Full box-shadow recipes too specific to compose from the space scale
+   * (§21.9's own button-face treatment), mirroring `--shadow-fader-track`/
+   * `--shadow-fader-thumb` above. */
+  --shadow-panel-button: 0 2px 0 rgb(0 0 0 / 0.55), 0 4px 9px rgb(0 0 0 / 0.45), inset 0 1px 0 rgb(255 255 255 / 0.07);
+  --shadow-panel-button-latched-inset: inset 0 3px 7px rgb(0 0 0 / 0.5);
+
+  /* ── Animation ───────────────────────────────────────────────────────── */
+  --duration-fast:      100ms;   /* Dot colour, button active */
+  --duration-base:      200ms;   /* Hover, tooltip */
+  --duration-moderate:  300ms;   /* Panel slide, sheet open */
+  --duration-slow:      400ms;   /* Modal appear */
+  --duration-very-slow: 600ms;   /* Scene result reveal */
+  --duration-reduced:    50ms;   /* Everything, under prefers-reduced-motion (§21.3) */
+
+  --ease-out:    cubic-bezier(0, 0, 0.2, 1);        /* Panels, modals */
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);      /* State toggles */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* Fader thumb */
+
+  /* ── Interactive states ──────────────────────────────────────────────────
+   * Every interactive element defines all five:
+   *   Default   base appearance
+   *   Hover     background one layer up, teal border hint
+   *   Focus     teal ring, 2px, 2px offset (:focus-visible, never removed)
+   *   Active    scale 0.97, deeper background
+   *   Disabled  40% opacity, not-allowed cursor, no hover                  */
+  --active-scale:        0.97;
+  --disabled-opacity:    0.4;
+  --muted-strip-opacity: 0.6;   /* Muted channel strip drops to 60% (§21.3, faders) */
+}
+
+/* ── Layout breakpoints ────────────────────────────────────────────────────
+ * Not part of the §21.3 token table, but the only place raw lengths may live.
+ * Media queries cannot read custom properties, so these are declared to
+ * Tailwind's theme and used through its variants (`short:`, `tablet:`,
+ * `desktop:`) or `theme(--breakpoint-…)` / `theme(--viewport-…)` in media queries.
+ *   short    below ~420 px of height: phone in landscape — the status bar hides
+ *            and device state moves into the navigation rail (§21.7, §21.9)
+ *   tablet   tablet and up: tab strip and sidebar layouts (§21.6)
+ *   desktop  desktop: admin sidebar always visible (§21.6)
+ *   design   1920 × 1080 design target: Display scale is offered (§21.9)     */
+@theme {
+  --viewport-short-height: 420px;
+  --viewport-design-height: 1080px;
+  --breakpoint-tablet: 768px;
+  --breakpoint-desktop: 1024px;
+  --breakpoint-design: 1920px;
+}
+@custom-variant short (@media (max-height: 420px));
+@custom-variant tall (@media (min-height: 421px));
+@custom-variant tablet (@media (min-width: 768px));
+@custom-variant desktop (@media (min-width: 1024px));
+@custom-variant design (@media (min-width: 1920px) and (min-height: 1080px));

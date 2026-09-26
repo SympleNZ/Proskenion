@@ -1,0 +1,123 @@
+/*
+ * Keyframes and transition utilities (spec §21.1, §21.3). Motion is reserved
+ * for things that answer an action — opening, confirming, revealing a result.
+ * Every duration and easing is a token.
+ */
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slide-up {
+  from { transform: translateY(var(--space-6)); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes slide-in-left {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+/* Wrong PIN: the boxes shake briefly, then clear (§21.8) */
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(calc(-1 * var(--space-1))); }
+  40% { transform: translateX(var(--space-1)); }
+  60% { transform: translateX(calc(-1 * var(--space-1))); }
+  80% { transform: translateX(var(--space-1)); }
+}
+
+/* Teal glow: PIN boxes on completion, the sign-in button on success (§21.8) */
+@keyframes teal-glow {
+  0% { box-shadow: 0 0 0 0 var(--color-teal-500); border-color: var(--color-teal-500); }
+  50% { box-shadow: 0 0 var(--space-4) var(--space-1) var(--color-teal-500); border-color: var(--color-teal-300); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+/* Clamped value accepted: a brief amber pulse, not a failure (§21.27) */
+@keyframes amber-pulse {
+  0% { box-shadow: 0 0 0 0 var(--color-warning); }
+  100% { box-shadow: 0 0 0 var(--space-2) transparent; }
+}
+
+/* Control rollback: brief red glow on the track (§21.27) */
+@keyframes red-glow {
+  0% { box-shadow: 0 0 var(--space-2) var(--space-1) var(--color-danger); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+/* Scene card success (§21.10): "brief green bloom, settles". red-glow and
+ * amber-pulse already cover failed and partial; this is the missing colour. */
+@keyframes green-glow {
+  0% { box-shadow: 0 0 var(--space-2) var(--space-1) var(--color-success); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+/* Running LED. Under prefers-reduced-motion base.css stops this and keeps the glow. */
+@keyframes led-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--color-teal-500); }
+  50% { box-shadow: 0 0 0 var(--space-2) transparent; }
+}
+
+/* A panel button's transitioning lamp (§21.9, §7.4): amber and pulsing.
+ * Under prefers-reduced-motion base.css stops this and keeps the static glow. */
+@keyframes panel-led-amber-pulse {
+  0%, 100% { box-shadow: 0 0 var(--led-glow-blur) var(--led-glow-spread) var(--color-warning); }
+  50% { box-shadow: 0 0 var(--led-glow-blur) var(--led-glow-spread) transparent; }
+}
+
+.animate-fade-in {
+  animation: fade-in var(--duration-base) var(--ease-out) both;
+}
+
+.animate-slide-up {
+  animation: slide-up var(--duration-moderate) var(--ease-out) both;
+}
+
+.animate-slide-in-right {
+  animation: slide-in-right var(--duration-moderate) var(--ease-out) both;
+}
+
+.animate-slide-in-left {
+  animation: slide-in-left var(--duration-moderate) var(--ease-out) both;
+}
+
+.animate-shake {
+  animation: shake var(--duration-slow) var(--ease-in-out) both;
+}
+
+.animate-teal-glow {
+  animation: teal-glow var(--duration-very-slow) var(--ease-out) both;
+}
+
+.animate-amber-pulse {
+  animation: amber-pulse var(--duration-moderate) var(--ease-out) both;
+}
+
+.animate-red-glow {
+  animation: red-glow var(--duration-slow) var(--ease-out) both;
+}
+
+.animate-green-glow {
+  animation: green-glow var(--duration-slow) var(--ease-out) both;
+}
+
+.led-pulse {
+  animation: led-pulse var(--duration-very-slow) var(--ease-in-out) infinite;
+}
+
+.transition-fast {
+  transition-duration: var(--duration-fast);
+  transition-timing-function: var(--ease-in-out);
+}
+
+.transition-base {
+  transition-duration: var(--duration-base);
+  transition-timing-function: var(--ease-in-out);
+}

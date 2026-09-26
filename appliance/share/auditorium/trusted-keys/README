@@ -1,0 +1,72 @@
+Package signing trust anchors (§6.11)
+=====================================
+
+Public keys that verify application packages and OS upgrades live in this
+directory, on the read-only root filesystem:
+
+    /usr/local/share/auditorium/trusted-keys/
+
+Any *.pub file here can verify a package. Two properties are load-bearing:
+
+  1. This directory is never read through a path under /opt/auditorium,
+     because that resolves into /data/app/current — an update package could
+     then ship its own key and self-authorise every later update. The anchors
+     sit outside anything an update can write.
+
+  2. It is a directory, not a file, so keys can be rotated: replacing the
+     anchor needs an OS upgrade, which needs a valid signature from the key
+     being replaced. Holding two keys at once breaks that circularity. The
+     rollover procedure and the key-loss recovery path are in §14.1 and, step
+     by step, in docs/build/packages.md.
+
+The file format
+---------------
+
+One key per file, mode 0644, directory 0755, owned by root:
+
+    # Proskenion package signing anchor (§6.11)
+    # key-id: 3f7a1c9e2b4d6085
+    # release key, held by Simon
+    ed25519 tVJ8QkrN0X5…base64 of the 32 raw public key bytes…=
+
+Lines beginning '#' are comments and blank lines are ignored. There is exactly
+one key line; a file with two is rejected. The key is base64 of the 32 raw
+Ed25519 public key bytes — not PEM, not OpenSSH, so the verifier cannot be
+talked into parsing a certificate or an algorithm it did not ask for.
+
+The key id is DERIVED by the verifier — the first eight bytes of the SHA-256
+of the raw key, as hex — and the '# key-id:' line is documentation. A comment
+that disagrees with its key is logged and ignored, never believed.
+
+A *.pub that is not a regular file, a symlink above all, is ignored: an anchor
+must be the file the root image put here, not a pointer to somewhere writable.
+
+Installing the real key
+-----------------------
+
+The private key is generated and held OFF this machine, and never enters the
+repository or continuous integration (§14.1, §22.8):
+
+    uv run python tools/package.py keygen --name release-2026 \
+        --out-dir ~/keys --comment "release key, held by Simon"
+
+That writes ~/keys/release-2026.key (PKCS#8 PEM, mode 0600 — back this up in
+the password manager and one offline copy) and ~/keys/release-2026.pub.
+
+Copy only the .pub here:
+
+    cp ~/keys/release-2026.pub appliance/share/auditorium/trusted-keys/
+
+and rebuild the image (appliance/image/build.sh), which installs it to
+/usr/local/share/auditorium/trusted-keys/ with mode 0644.
+
+Until at least one *.pub is present here, build.sh warns and the appliance
+refuses every package with "No package signing key is installed".
+
+System images are different
+---------------------------
+
+A system image (§13.6, Q13) is signed by a key this machine generates on first
+boot and is verified against /srv/appliance/image-keys/ — never this
+directory — so that only images this machine captured restore here. The two
+directories are never interchangeable; see docs/build/packages.md §1.

@@ -1,0 +1,58 @@
+# auditorium-helper@.service — carries out one privileged request (contracts §2).
+#
+# Started by auditorium-helper.path as auditorium-helper@queue.service, which
+# drains /data/run/helper oldest first. systemd runs one instance of a given
+# unit name at a time, so that instance name *is* the "one request at a time"
+# rule — there is no lock in the script relying on being the only copy.
+#
+# The template is not decoration: `systemctl start auditorium-helper@<uuid>`
+# handles exactly that request, which is how a request is replayed by hand
+# from a console during commissioning without touching the queue.
+#
+# It has no [Install] section and is never enabled. Nothing but the path unit
+# and an administrator starts it.
+#
+# Running as root is the point of the unit, so the sandbox is about what it
+# cannot reach rather than what it can: it writes /run/systemd/system (the
+# §4.7 watchdog drop-in), /data, /srv/appliance, /srv/local and /boot/firmware
+# (slot staging), and it needs none of anybody's home directory.
+# NoNewPrivileges=yes still holds — root has the privileges it needs already,
+# and nothing here should ever gain more by executing a setuid binary out of
+# /data.
+
+[Unit]
+Description=Privileged appliance helper (%i)
+RequiresMountsFor=/data /srv/appliance
+After=auditorium-config-apply.service local-fs.target
+# A request only ever asks for work on this machine's own state; it must not
+# be attempted before the filesystems holding that state are up.
+#
+# No start limit. The default is five starts in ten seconds, after which
+# systemd refuses to start the unit at all — so a run of requests, which is
+# exactly what a compromised application would send, would leave the
+# appliance unable to restart, reboot or update. The helper is a one-shot
+# that handles what is there and exits; how often it is asked to run is the
+# path unit's business, and a refusal is reported in the status file rather
+# than as a failure of this unit.
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/auditorium-helper --dispatch %i
+# apply-update holds the §4.7 watchdog window open for 60 s and capture-image
+# streams a root slot, so the bound is generous. It is a bound, not a licence:
+# a helper still running after half an hour is wedged and is killed.
+TimeoutStartSec=1800
+SyslogIdentifier=auditorium-helper
+Environment=PYTHONUNBUFFERED=1
+Environment=TZ=Pacific/Auckland
+UMask=0022
+
+ProtectHome=yes
+ProtectKernelTunables=yes
+NoNewPrivileges=yes
+PrivateTmp=yes
+RestrictSUIDSGID=yes
+
+StandardOutput=journal
+StandardError=journal

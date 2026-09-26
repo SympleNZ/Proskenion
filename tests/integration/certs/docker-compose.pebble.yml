@@ -1,0 +1,41 @@
+# Pebble (a test-only ACME server) and its companion DNS/HTTP challenge test
+# server, for proving issuance for real without touching Let's Encrypt or
+# Cloudflare (Q7's "prove it against Pebble ... in Docker"). Standard shape
+# from the letsencrypt/pebble project's own compose file — a fixed bridge
+# network so Pebble can be pointed at challtestsrv's fake DNS by address.
+#
+# test_acme_pebble.py starts this itself (docker compose up -d) and tears it
+# down afterwards; nothing here is started by CI or by verify-in-docker.sh.
+
+services:
+  pebble:
+    image: ghcr.io/letsencrypt/pebble:latest
+    # The image's entrypoint is the pebble binary itself; this is its
+    # arguments, not a second invocation of the command name.
+    # challtestsrv's DNS server listens on :8053 by default (not 53).
+    command: ["-config", "/test/config/pebble-config.json", "-dnsserver", "10.30.50.3:8053"]
+    environment:
+      PEBBLE_VA_NOSLEEP: "1"
+      PEBBLE_WFE_NONCEREJECT: "0"
+    ports:
+      - "14000:14000" # ACME directory (HTTPS, Pebble's own test CA)
+      - "15000:15000" # management API
+    networks:
+      acmenet:
+        ipv4_address: 10.30.50.2
+
+  challtestsrv:
+    image: ghcr.io/letsencrypt/pebble-challtestsrv:latest
+    command: ["-defaultIPv6", "", "-defaultIPv4", "10.30.50.3"]
+    ports:
+      - "8055:8055" # HTTP management API (set-txt / clear-txt)
+    networks:
+      acmenet:
+        ipv4_address: 10.30.50.3
+
+networks:
+  acmenet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.30.50.0/24

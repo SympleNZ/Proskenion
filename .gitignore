@@ -1,0 +1,50 @@
+# Private — never committed (spec §20.3). In .gitignore from the first commit.
+HANDOVER.md
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+*.egg-info/
+dist/
+/build/
+
+# Node
+node_modules/
+web/dist/
+web/.vite/
+
+# End-to-end run output (spec §22.5): traces, screenshots and logs from a
+# failed journey. Useful for the run that produced them, never committed.
+tests/e2e/.artifacts/
+playwright-report/
+.playwright/
+
+# Local data
+*.db
+*.db-wal
+*.db-shm
+.env
+*.aupkg
+
+# Signing keys — never in the repository (§14.1)
+*.pem
+*.key
+!docs/**/*.pem.example
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Bench captures from tools/cq_probe.py --dump; large and machine-specific
+tools/*.log
+
+# Agent worktrees (Claude Code isolation); never part of the repository
+.claude/worktrees/

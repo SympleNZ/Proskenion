@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# auditorium-backup-media-owner — make the mounted backup USB writable by the
+# application (§4.5, §13.3). Run by auditorium-backup-media.service, which
+# mnt-backup.mount pulls in every time it starts — at boot, if the stick was
+# already in, and on hot-insert via appliance/udev/99-backup-media.rules.
+#
+# A freshly formatted ext4 filesystem's root is owned root:root 0755; the
+# application (user auditorium) cannot write into that. `install -d` sets
+# ownership and mode on the mountpoint whether it was just created or has
+# been the application's for months, so a stick formatted anywhere — this
+# machine, a laptop, another appliance — just works, and one that already
+# holds backups at the root of the stick is left exactly as it is: nothing
+# here moves where the application reads or writes
+# (proskenion.core.backup_destinations.DEFAULT_USB_MOUNT is /mnt/backup,
+# unchanged).
+
+set -euo pipefail
+
+MOUNT_POINT="${1:-/mnt/backup}"
+APP_USER="${2:-auditorium}"
+
+install -d -o "$APP_USER" -g "$APP_USER" -m 0750 "$MOUNT_POINT"

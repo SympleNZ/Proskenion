@@ -1,0 +1,17 @@
+{
+  "name": "proskenion-lint-toolchain",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Self-contained lint toolchain. Spec §5.1: typescript-eslint gates on TypeScript 7.1, so ESLint and its plugins run here against a lint-only TypeScript 6.x pin while the root build uses TypeScript 7. Installed by the root postinstall; run from the root with `npm run lint`.",
+  "main": "index.js",
+  "dependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.0.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.6",
+    "globals": "^17.12.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "^8.70.0"
+  }
+}

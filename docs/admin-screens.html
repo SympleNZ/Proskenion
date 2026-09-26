@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="en-NZ">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Admin — Auditorium Controller</title>
+<style>
+:root{
+  --bg-base:#0A0F1A; --bg-surface:#111827; --bg-elevated:#1C2B3A; --bg-overlay:#243447;
+  --teal-500:#00B8A0; --teal-400:#00D4BC; --teal-300:#33DFC9;
+  --success:#22C55E; --warning:#F0A500; --danger:#EF4444; --info:#3B82F6;
+  --success-text:#5EE08A; --warning-text:#FFC24D; --danger-text:#FF7B7B; --info-text:#7FB0FF;
+  --text-1:#F0F4F8; --text-2:#8A9BB0; --text-muted:#7589A0; --text-disabled:#4A5B6E;
+  --rule:rgba(255,255,255,.06); --rule-strong:rgba(255,255,255,.11);
+  --g-amber:#E8C26C; --g-azure:#00A5FE; --g-fern:#93C896; --g-violet:#A482C9;
+  --g-ocean:#1CDAF1; --g-white:#E8EEF4; --g-tangerine:#E17B1B; --g-orchid:#F99FD8;
+  --font-b:'DM Sans',ui-sans-serif,system-ui,-apple-system,sans-serif;
+  --font-m:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,monospace;
+  --r-sm:4px; --r-md:8px; --r-lg:12px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg-base);color:var(--text-2);font-family:var(--font-b);
+  font-size:15px;-webkit-font-smoothing:antialiased;display:grid;
+  grid-template-columns:238px minmax(0,1fr);min-height:100vh}
+
+/* sidebar */
+aside{background:var(--bg-surface);border-right:1px solid var(--rule);padding:22px 0;
+  position:sticky;top:0;height:100vh;overflow-y:auto}
+.brand{padding:0 20px 18px;border-bottom:1px solid var(--rule);margin-bottom:14px}
+.brand b{color:var(--text-1);font-size:15px;display:flex;align-items:center;gap:10px}
+.brand .led{width:10px;height:10px;border-radius:50%;
+  background:radial-gradient(circle at 35% 35%,#AFFFEE,#22C55E 40%,#15803D 100%);
+  box-shadow:0 0 4px 2px rgba(34,197,94,.8),0 0 10px 4px rgba(34,197,94,.4)}
+.brand span{display:block;margin-top:6px;font-family:var(--font-m);font-size:11px;
+  color:var(--text-muted)}
+.navgrp{padding:14px 20px 6px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--text-disabled);font-weight:600}
+nav a{display:block;padding:9px 20px;color:var(--text-2);text-decoration:none;font-size:14px;
+  border-left:3px solid transparent;cursor:pointer}
+nav a:hover{background:var(--bg-elevated);color:var(--text-1)}
+nav a.on{background:var(--bg-elevated);color:var(--teal-300);border-left-color:var(--teal-500)}
+
+main{padding:30px 34px 60px;min-width:0}
+h1{color:var(--text-1);font-size:22px;margin:0 0 4px;letter-spacing:-.01em}
+.lede{color:var(--text-muted);font-size:13.5px;margin-bottom:24px;max-width:70ch}
+h2{color:var(--text-1);font-size:15px;font-weight:600;margin:30px 0 10px}
+code{font-family:var(--font-m);font-size:12.5px;color:var(--teal-300)}
+
+.card{background:var(--bg-surface);border:1px solid var(--rule);border-radius:var(--r-md);
+  padding:18px 20px;margin-bottom:14px}
+.card h3{color:var(--text-1);font-size:14.5px;font-weight:600;margin:0 0 3px;
+  display:flex;align-items:center;gap:9px}
+.card .sub{font-family:var(--font-m);font-size:11.5px;color:var(--text-muted);margin-bottom:14px}
+.sect{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-disabled);
+  font-weight:600;margin:16px 0 9px}
+.row{display:flex;align-items:center;gap:12px;margin-bottom:9px;flex-wrap:wrap}
+.row label{width:120px;font-size:13px;color:var(--text-2);flex:none}
+input,select{background:var(--bg-base);border:1px solid var(--rule-strong);border-radius:var(--r-sm);
+  color:var(--text-1);padding:8px 11px;font-family:var(--font-b);font-size:13.5px;min-width:170px}
+input:focus,select:focus{outline:2px solid var(--teal-500);outline-offset:2px;border-color:transparent}
+.hint{font-size:12px;color:var(--text-muted)}
+.mono{font-family:var(--font-m);font-size:12px;color:var(--text-muted)}
+
+.led{width:9px;height:9px;border-radius:50%;flex:none;display:inline-block}
+.led.g{background:radial-gradient(circle at 35% 35%,#AFFFEE,#22C55E 40%,#15803D 100%);
+  box-shadow:0 0 4px 2px rgba(34,197,94,.75)}
+.led.a{background:radial-gradient(circle at 35% 35%,#FFF3AA,#F0A500 40%,#B45309 100%);
+  box-shadow:0 0 4px 2px rgba(240,165,0,.8)}
+.led.r{background:radial-gradient(circle at 35% 35%,#FFAAAA,#EF4444 40%,#991B1B 100%);
+  box-shadow:0 0 4px 2px rgba(239,68,68,.8)}
+.led.o{background:radial-gradient(circle at 35% 35%,#6B7E94,#2D3D4F 40%,#1C2B3A 100%)}
+
+.caps{display:flex;gap:7px;flex-wrap:wrap;margin-top:4px}
+.cap{font-size:12px;padding:4px 10px;border-radius:var(--r-sm);
+  background:rgba(34,197,94,.09);color:var(--success-text);border:1px solid rgba(34,197,94,.28)}
+.cap.no{background:rgba(255,255,255,.03);color:var(--text-disabled);
+  border-color:var(--rule);text-decoration:line-through}
+
+btn,.btn{display:inline-flex;align-items:center;gap:7px;background:var(--bg-elevated);
+  border:1px solid var(--rule-strong);border-radius:var(--r-sm);color:var(--text-1);
+  padding:9px 15px;font-family:var(--font-b);font-size:13px;font-weight:500;cursor:pointer;
+  min-height:38px}
+.btn:hover{background:var(--bg-overlay)}
+.btn.p{background:var(--teal-500);color:#0A0F1A;border-color:transparent;font-weight:600}
+.btn.sm{padding:6px 11px;min-height:32px;font-size:12.5px}
+
+table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:6px}
+thead{background:var(--bg-elevated)}
+th{text-align:left;color:var(--text-muted);font-size:11px;letter-spacing:.05em;
+  text-transform:uppercase;padding:9px 12px;border-bottom:1px solid var(--rule-strong);
+  font-weight:600;white-space:nowrap}
+td{padding:10px 12px;border-bottom:1px solid var(--rule);vertical-align:middle}
+tbody tr:hover{background:var(--bg-surface)}
+td .mono{color:var(--text-muted)}
+.sw{width:11px;height:11px;border-radius:3px;display:inline-block;vertical-align:-1px;
+  margin-right:8px}
+
+.note{background:linear-gradient(90deg,rgba(0,184,160,.07),transparent);
+  border-left:3px solid var(--teal-500);border-radius:var(--r-md);padding:12px 15px;
+  margin:14px 0;font-size:13px}
+.warn{background:linear-gradient(90deg,rgba(240,165,0,.08),transparent);
+  border-left:3px solid var(--warning);border-radius:var(--r-md);padding:12px 15px;
+  margin:14px 0;font-size:13px}
+.warn b{color:var(--warning-text)} .note b{color:var(--teal-300)}
+.err{background:linear-gradient(90deg,rgba(239,68,68,.09),transparent);
+  border-left:3px solid var(--danger);border-radius:var(--r-md);padding:12px 15px;
+  margin:12px 0;font-size:13px} .err b{color:var(--danger-text)}
+
+.pill{font-size:11.5px;padding:3px 9px;border-radius:99px;font-family:var(--font-m);
+  background:var(--bg-elevated);color:var(--text-muted);border:1px solid var(--rule)}
+.pill.on{background:rgba(34,197,94,.1);color:var(--success-text);border-color:rgba(34,197,94,.3)}
+.pill.lock{background:rgba(240,165,0,.1);color:var(--warning-text);border-color:rgba(240,165,0,.3)}
+
+/* page editor canvas */
+.canvas{display:flex;gap:10px;background:var(--bg-base);border:1px dashed var(--rule-strong);
+  border-radius:var(--r-md);padding:14px;overflow-x:auto;margin-top:10px}
+.mini{width:84px;height:170px;background:var(--bg-surface);border:1px solid var(--rule);
+  border-radius:6px;flex:none;position:relative;padding:8px 6px;font-size:11.5px;
+  text-align:center;color:var(--text-1)}
+.mini i{position:absolute;top:0;left:0;right:0;height:3px;border-radius:6px 6px 0 0}
+.mini .f{position:absolute;left:50%;transform:translateX(-50%);bottom:10px;top:34px;width:5px;
+  background:#060C14;border-radius:3px}
+.mtray{display:flex;gap:8px;padding:16px 8px 8px;border-radius:8px;position:relative;flex:none}
+.mtray span{position:absolute;top:5px;left:9px;font-size:11px;font-weight:600;
+  letter-spacing:.05em;text-transform:uppercase}
+.mpanel{width:84px;background:var(--bg-surface);border:1px solid var(--rule);border-radius:6px;
+  flex:none;padding:8px 6px;display:flex;flex-direction:column;gap:6px}
+.mpanel .t{font-size:11.5px;color:var(--text-1);text-align:center;margin-bottom:2px}
+.mpanel b{flex:1;background:linear-gradient(to bottom,#1E2A3C,#161F2E);border:1px solid #263346;
+  border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:11px;
+  font-weight:500;color:var(--text-2);padding:2px}
+.mpanel b.on{border-color:rgba(34,197,94,.4);color:var(--text-1);
+  box-shadow:0 0 0 1px rgba(34,197,94,.25),inset 0 2px 5px rgba(0,0,0,.45)}
+.pal{display:flex;gap:6px;margin-top:8px}
+.pal i{width:22px;height:22px;border-radius:5px;cursor:pointer;border:2px solid transparent}
+.pal i.sel{border-color:var(--text-1)}
+</style>
+</head>
+<body>
+
+<aside>
+  <div class="brand"><b><span class="led"></span>Auditorium</b>
+    <span>admin · v1.0.0-dev</span></div>
+  <div class="navgrp">Control</div>
+  <nav>
+    <a data-s="pages">Pages</a>
+    <a data-s="rules" class="on">Rules</a>
+    <a data-s="hirer">Hirer Access</a>
+  </nav>
+  <div class="navgrp">Configure</div>
+  <nav>
+    <a data-s="devices">Devices</a>
+    <a data-s="mixer">Mixer</a>
+    <a data-s="lighting">Lighting</a>
+  </nav>
+  <div class="navgrp">System</div>
+  <nav>
+    <a data-s="health">Health</a>
+  </nav>
+</aside>
+
+<main id="main"></main>
+
+<script>
+const SCREENS = {
+
+// ══════════════════════════════════════════════════════════ DEVICES
+devices: `
+<h1>Devices</h1>
+<div class="lede">One card per configured driver instance. Forms are generated from each
+driver's declared schema, so adding a driver needs no interface work.</div>
+
+<h2>Mixer</h2>
+<div class="card">
+  <h3><span class="led g"></span>Allen &amp; Heath CQ-20B <span class="pill">cq20b</span></h3>
+  <div class="sub">10.2.30.248 · connected 4 h 12 m</div>
+
+  <div class="sect">Connections</div>
+  <table style="margin-bottom:6px"><tbody>
+    <tr><td style="width:150px"><span class="led g"></span> MIDI</td>
+        <td class="mono">tcp 51325</td><td>Control — scene recall, faders, mutes, pan</td></tr>
+    <tr><td><span class="led g"></span> Native</td>
+        <td class="mono">tcp 51326</td><td>Metering, channel names, stereo link state</td></tr>
+  </tbody></table>
+
+  <div class="sect">Connection</div>
+  <div class="row"><label>IP address</label><input value="10.2.30.248"></div>
+  <div class="row"><label>Port</label><input value="51325" style="min-width:100px"></div>
+
+  <div class="sect">Settings</div>
+  <div class="row"><label>MIDI channel</label>
+    <select><option>1</option><option>2</option></select></div>
+  <div class="row"><label>Metering</label>
+    <select><option>Enabled — native connection</option><option>Disabled</option></select></div>
+
+  <div class="sect">Capabilities <span class="hint">as connected</span></div>
+  <div class="caps">
+    <span class="cap">Scene recall</span><span class="cap">Pan</span><span class="cap">Mute</span>
+    <span class="cap">Metering</span>
+    <span class="cap no">Gain</span><span class="cap no">DCAs</span>
+  </div>
+  <div class="hint" style="margin-top:9px">20 inputs · 6 outputs · −∞ to +10 dB ·
+    meters post-compressor, −60 to +10 dB</div>
+  <div style="margin-top:15px"><span class="btn sm">Test connection</span>
+    <span class="btn sm">Change driver</span></div>
+</div>
+
+<h2>Video matrix</h2>
+<div class="card">
+  <h3><span class="led g"></span>Lenkeng LKV422 <span class="pill">lkv422</span></h3>
+  <div class="sub">/dev/serial/by-id/usb-FTDI_USB-RS232_Cable_FTB6SPL2-if00-port0</div>
+
+  <div class="sect">Connection</div>
+  <div class="row"><label>Transport</label>
+    <select><option>Serial</option><option>Ethernet</option></select></div>
+  <div class="row"><label>Device</label>
+    <select style="min-width:330px">
+      <option>FTDI USB-RS232 Cable · FTB6SPL2</option>
+      <option>FTDI FT232R · AB0C1DEF — in use, DMX</option>
+      <option>Prolific USB-Serial · no serial — unstable path</option>
+    </select>
+    <span class="btn sm">↻ Refresh</span><span class="btn sm">Identify</span></div>
+  <div class="row"><label></label><span class="mono">stored as the by-id path, not /dev/ttyUSB0</span></div>
+  <div class="row"><label>Baud</label>
+    <select style="min-width:100px"><option>9600</option><option>19200</option></select>
+    <span class="hint">A factory reset returns the device to 9600 — leave it.</span></div>
+  <div style="margin-top:15px"><span class="btn sm">Test connection</span></div>
+</div>
+
+<h2>Projector</h2>
+<div class="card">
+  <h3><span class="led a"></span>PJLink projector <span class="pill">pjlink</span></h3>
+  <div class="sub">10.2.30.249 · warming</div>
+  <div class="row"><label>Transport</label>
+    <select><option>Ethernet</option><option>Serial</option></select>
+    <span class="hint">Same driver, same protocol — swapping is a dropdown.</span></div>
+  <div class="row"><label>IP address</label><input value="10.2.30.249"></div>
+  <div class="row"><label>Password</label><input type="password" value="········" >
+    <span class="btn sm">Change</span></div>
+</div>
+
+<div class="warn"><b>Test does more than open the port.</b> A serial device opens whether or
+not anything is attached, so Test sends the driver's probe and reports the reply. A pass
+is evidence; an open port is not.</div>
+`,
+
+// ══════════════════════════════════════════════════════════ RULES
+rules: `
+<h1>Rules</h1>
+<div class="lede">Rules say <i>when</i>; scenes say <i>what</i>. This is the daily control
+map — for most installations the most-consulted page here.</div>
+
+<div class="row" style="margin-bottom:4px">
+  <span class="btn p sm">+ Add rule</span>
+  <span class="btn sm">Rules</span><span class="btn sm">Derived status</span>
+</div>
+
+<table>
+<thead><tr><th></th><th>Name</th><th>When</th><th>Then</th><th>Guard</th><th>State</th><th></th></tr></thead>
+<tbody>
+<tr><td class="mono">≡</td><td>Stage Bank 1</td><td class="mono">knx 1/0/1</td>
+    <td><span class="sw" style="background:var(--g-amber)"></span>group “Row 1” → 100 / 0 %</td>
+    <td class="mono">—</td><td><span class="led g"></span> on</td><td><span class="btn sm">Test</span></td></tr>
+<tr><td class="mono">≡</td><td>Stage Bank 2</td><td class="mono">knx 1/0/2</td>
+    <td><span class="sw" style="background:var(--g-amber)"></span>group “Row 2” → 100 / 0 %</td>
+    <td class="mono">—</td><td><span class="led o"></span> off</td><td><span class="btn sm">Test</span></td></tr>
+<tr><td class="mono">≡</td><td>All Stage</td><td class="mono">knx 1/0/0</td>
+    <td><span class="sw" style="background:var(--g-amber)"></span>group “All Stage” → 100 / 0 %</td>
+    <td class="mono">—</td><td><span class="led o"></span> off</td><td><span class="btn sm">Test</span></td></tr>
+<tr><td class="mono">≡</td><td>Projector on</td><td class="mono">knx 1/2/1 = 1</td>
+    <td>projector power on</td><td class="mono">—</td><td class="mono">—</td>
+    <td><span class="btn sm">Test</span></td></tr>
+<tr><td class="mono">≡</td><td>Alarm armed</td><td class="mono">knx 0/5/0 = 1</td>
+    <td>scene “All Off” <span class="pill lock">critical</span></td><td class="mono">—</td>
+    <td class="mono">—</td><td><span class="btn sm">Test</span></td></tr>
+<tr><td class="mono">≡</td><td>Nightly off</td><td class="mono">23:00 daily</td>
+    <td>scene “All Off”</td><td class="mono">—</td><td class="mono">—</td>
+    <td><span class="btn sm">Test</span></td></tr>
+<tr><td class="mono">≡</td><td>Mixer alert</td><td class="mono">mixer offline 60 s</td>
+    <td>notify</td><td class="mono">—</td><td class="mono">—</td>
+    <td><span class="btn sm">Test</span></td></tr>
+</tbody></table>
+<div class="hint" style="margin-top:9px">Drag ≡ to reorder — all matching rules run, in this order.</div>
+
+<h2>Derived status</h2>
+<div class="lede" style="margin-bottom:10px">Outgoing addresses that continuously reflect
+state. Recomputed on every change, not written by whatever caused it.</div>
+<table>
+<thead><tr><th>Address</th><th>Name</th><th>Reflects</th><th>Now</th></tr></thead>
+<tbody>
+<tr><td class="mono">1/0/11</td><td>Bank 1 state</td><td>“Row 1” all at 100 %</td>
+    <td><span class="led g"></span> 1</td></tr>
+<tr><td class="mono">1/0/10</td><td>All Stage state</td><td>“All Stage” all at 100 %</td>
+    <td><span class="led o"></span> 0</td></tr>
+<tr><td class="mono">1/2/2</td><td>Projector on</td><td>projector state is ON</td>
+    <td><span class="led o"></span> 0</td></tr>
+<tr><td class="mono">1/2/3</td><td>Projector busy</td><td>projector warming or cooling</td>
+    <td><span class="led a"></span> 1</td></tr>
+<tr><td class="mono">1/0/9</td><td>External control</td><td>external control active</td>
+    <td><span class="led o"></span> 0</td></tr>
+</tbody></table>
+
+<div class="note"><b>All Stage reads 0 while Bank 1 reads 1.</b> One evaluation — <i>is
+everything this address covers on?</i> — applied to every status after any change. There is
+no mixed state to represent in a boolean, and the panel follows a fader dragged in the web
+interface because the predicate watches the level store, not the rule that fired.</div>
+`,
+
+// ══════════════════════════════════════════════════════════ PAGES
+pages: `
+<h1>Pages</h1>
+<div class="lede">The everyday surface. Channel strips, group trays and button panels in one
+layout, grouped by activity. Mixer and Lighting remain the advanced view.</div>
+
+<div class="row"><span class="btn sm">Performance</span>
+  <span class="btn p sm">Lighting</span><span class="btn sm">Hire</span>
+  <span class="btn sm">+ Add page</span></div>
+
+<div class="card" style="margin-top:14px">
+  <h3>Lighting</h3>
+  <div class="sub">2 group trays · 1 panel · opens with Upstage collapsed</div>
+
+  <div class="canvas">
+    <div class="mtray" style="padding-top:20px;background:rgba(232,194,108,.055);border:1px solid rgba(232,194,108,.3)">
+      <span style="color:var(--g-amber)">Front of Stage</span>
+      <div class="mini"><i style="background:var(--g-amber)"></i>Fix 1<div class="f"></div></div>
+      <div class="mini"><i style="background:var(--g-amber)"></i>Fix 2<div class="f"></div></div>
+      <div class="mini"><i style="background:var(--g-amber)"></i>Fix 3<div class="f"></div></div>
+      <div class="mini" style="background:rgba(232,194,108,.12)">
+        <i style="background:var(--g-amber);height:5px"></i>Bank 1<div class="f"></div></div>
+    </div>
+    <div class="mtray" style="padding-top:20px;background:rgba(28,218,241,.055);border:1px solid rgba(28,218,241,.3)">
+      <span style="color:var(--g-ocean)">Upstage · 2</span>
+      <div class="mini" style="background:rgba(28,218,241,.12)">
+        <i style="background:var(--g-ocean);height:5px"></i>Bank 3<div class="f"></div></div>
+    </div>
+    <div class="mpanel" style="width:184px">
+      <div class="t">House</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;flex:1">
+        <b class="on">Full Up</b><b>To Half</b><b>Down</b><b>Off</b>
+        <b>Work</b><b>Cleaners</b></div>
+    </div>
+  </div>
+
+  <div class="sect">Selected — panel “House”</div>
+  <div class="row"><label>Title</label><input value="House"></div>
+  <div class="row"><label>Width</label>
+    <select style="min-width:130px"><option>2 — six buttons</option>
+      <option>1 — three buttons</option><option>3 — nine</option><option>4 — twelve</option></select>
+    <span class="hint">Rows are always three; columns follow the width.</span></div>
+
+  <div class="sect">Button — “Full Up”</div>
+  <div class="row"><label>Label</label><input value="House Full Up"></div>
+  <div class="row"><label>Fires rule</label>
+    <select style="min-width:230px"><option>House Lights — Full</option></select></div>
+  <div class="row"><label>Lamp from</label>
+    <select style="min-width:230px"><option>House at 100 % (derived status)</option>
+      <option>— none —</option></select></div>
+  <div class="row"><label>Colour</label>
+    <div class="pal">
+      <i style="background:#FF4B82"></i><i style="background:#FF7F68"></i>
+      <i style="background:#E17B1B"></i><i class="sel" style="background:#E8C26C"></i>
+      <i style="background:#A3BC00"></i><i style="background:#93C896"></i>
+      <i style="background:#1CDAF1"></i><i style="background:#00A5FE"></i>
+      <i style="background:#A482C9"></i><i style="background:#F99FD8"></i>
+      <i style="background:#B4C0CC"></i><i style="background:#E8EEF4"></i>
+    </div></div>
+  <div class="row"><label>Confirm</label>
+    <select style="min-width:130px"><option>No</option><option>Yes</option></select></div>
+</div>
+
+<div class="note"><b>The page places a master; it never defines membership.</b> Membership
+lives on the group, because rules and KNX bindings target groups too. There is no
+page-level conflict to resolve, because a page cannot disagree with a definition it does
+not hold.</div>
+`,
+
+// ══════════════════════════════════════════════════════════ HIRER
+hirer: `
+<h1>Hirer Access</h1>
+<div class="lede">Pages control <i>what</i>. Ceilings control <i>how far</i>.</div>
+
+<div class="card">
+  <div class="row"><label>Current PIN</label><span class="mono">••••••</span>
+    <span class="btn sm">Change PIN</span></div>
+  <div class="row"><label>Access</label>
+    <select style="min-width:130px"><option>Enabled</option><option>Disabled</option></select>
+    <span class="hint">Disabling drops active hirer connections immediately.</span></div>
+</div>
+
+<h2>Pages — what can this hirer reach?</h2>
+<table>
+<thead><tr><th style="width:60px">Assigned</th><th>Page</th><th>Contains</th></tr></thead>
+<tbody>
+<tr><td><span class="pill on">✓</span></td><td>Hire</td>
+    <td>2 channels · 1 panel <span class="mono">(Stage Lights On/Off, House Lights)</span></td></tr>
+<tr><td><span class="pill">—</span></td><td>Performance</td><td>4 channels · 2 panels</td></tr>
+<tr><td><span class="pill">—</span></td><td>Lighting</td><td>2 group trays · 1 panel</td></tr>
+</tbody></table>
+<div class="note"><b>A hirer sees only the pages ticked here, and no other views.</b>
+What they can reach is a layout you can open and look at — not the product of six
+visibility flags across five tables.</div>
+
+<h2>Ceilings — how far can each fader travel?</h2>
+<table>
+<thead><tr><th>Channel</th><th>Maps to</th><th>On page</th><th>Maximum</th></tr></thead>
+<tbody>
+<tr><td>Wireless Mic 1</td><td class="mono">ip1</td><td>Hire</td><td class="mono">−5.0 dB</td></tr>
+<tr><td>HDMI</td><td class="mono">st2</td><td>Hire</td><td class="mono">0.0 dB</td></tr>
+</tbody></table>
+<div class="hint" style="margin-top:9px">Only channels reachable from an assigned page are
+listed. A ceiling applies whenever the session is a hirer, whichever page the channel was
+reached from.</div>
+
+<div class="warn"><b>A rule bypasses the permission model.</b> It sets a group or fires a
+scene with no ceiling and no channel filter. Under page assignment that is a button on a
+page someone can review, rather than a flag somewhere — but check what the buttons on a
+hirer page actually do.</div>
+`,
+
+// ══════════════════════════════════════════════════════════ MIXER
+mixer: `
+<h1>Mixer</h1>
+<div class="lede">This list is the virtual surface. It does not have to mirror the desk's
+numbering — expose what the venue uses, in the order that suits the operator.</div>
+
+<div class="row"><span class="btn p sm">+ Add channel</span>
+  <span class="btn sm">Create from device ▾</span></div>
+
+<table>
+<thead><tr><th></th><th>Name</th><th>Maps to</th><th>Scribble</th><th>Staff</th><th>Hirer</th>
+<th>Max</th><th>Tracked</th></tr></thead>
+<tbody>
+<tr><td class="mono">≡</td><td>Wireless Mic 1</td><td class="mono">ip1</td>
+    <td class="mono">Wirele</td><td>✓</td><td>✓</td><td class="mono">−5.0 dB</td><td>✓</td></tr>
+<tr><td class="mono">≡</td><td>Wireless Mic 2</td><td class="mono">ip2</td>
+    <td class="mono" style="color:var(--warning-text)">W Mic 2</td><td>✓</td><td>✓</td>
+    <td class="mono">−5.0 dB</td><td>✓</td></tr>
+<tr><td class="mono">≡</td><td>AUX</td><td class="mono">st1</td>
+    <td class="mono">AUX</td><td>✓</td><td>✕</td><td class="mono">—</td><td>✓</td></tr>
+<tr><td class="mono">≡</td><td>HDMI</td><td class="mono">st2</td>
+    <td class="mono">HDMI</td><td>✓</td><td>✓</td><td class="mono">0.0 dB</td><td>✓</td></tr>
+<tr><td class="mono">≡</td><td>Foldback</td><td class="mono">out5 + out6</td>
+    <td class="mono">Foldbac</td><td>✓</td><td>✕</td><td class="mono">—</td><td>✓</td></tr>
+<tr><td class="mono">≡</td><td>Main</td><td class="mono">main</td>
+    <td class="mono">Main</td><td>✓</td><td>✕</td><td class="mono">—</td><td>✓</td></tr>
+</tbody></table>
+
+<div class="warn"><b>“Wireless Mic 2” carries an override.</b> Both wireless mics truncate to
+<code>Wirele</code>, and truncation removes the only part that discriminates. A collision is
+an error, not a warning — on a surface the operator cannot check, two identical labels are
+worse than a cryptic one.</div>
+
+<div class="card" style="margin-top:16px">
+  <h3>Foldback</h3>
+  <div class="sub">ganged · out5 + out6</div>
+  <div class="row"><label>Name</label><input value="Foldback"><span class="hint">8 / ~16 — fits the strip</span></div>
+  <div class="row"><label>Scribble</label><span class="mono">Foldbac</span>
+    <span class="btn sm">Override</span></div>
+  <div class="row"><label>Maps to</label>
+    <select style="min-width:190px"><option>Out 5 (out5)</option></select>
+    <select style="min-width:190px"><option>Out 6 (out6)</option></select>
+    <span class="btn sm">+ Gang another</span></div>
+  <div class="row"><label>Kind</label><span class="mono">output — from the driver</span></div>
+  <div class="hint" style="margin-left:132px">All references take the same value. One
+    ceiling applies, because it is one channel.</div>
+</div>
+`,
+
+// ══════════════════════════════════════════════════════════ LIGHTING
+lighting: `
+<h1>Lighting — Groups</h1>
+<div class="lede">Groups are defined once here. Rules, KNX bindings and page trays all
+reference them, so membership has a single home.</div>
+
+<table>
+<thead><tr><th>Colour</th><th>Name</th><th>Members</th><th>Used by</th><th>Hirer</th></tr></thead>
+<tbody>
+<tr><td><span class="sw" style="background:var(--g-amber)"></span><span class="mono">Amber</span></td>
+    <td>Row 1 — Front of Stage</td><td>4 fixtures</td>
+    <td class="mono">rule · page “Lighting”</td><td>✓</td></tr>
+<tr><td><span class="sw" style="background:var(--g-tangerine)"></span><span class="mono">Tangerine</span></td>
+    <td>Row 2</td><td>4 fixtures</td><td class="mono">rule</td><td>✓</td></tr>
+<tr><td><span class="sw" style="background:var(--g-ocean)"></span><span class="mono">Ocean</span></td>
+    <td>Row 3 — Upstage</td><td>2 fixtures</td>
+    <td class="mono">rule · page “Lighting”</td><td>✕</td></tr>
+<tr><td><span class="sw" style="background:var(--g-violet)"></span><span class="mono">Violet</span></td>
+    <td>Row 4</td><td>4 fixtures</td><td class="mono">rule</td><td>✕</td></tr>
+<tr><td><span class="sw" style="background:var(--g-white)"></span><span class="mono">White</span></td>
+    <td>All Stage</td><td>14 fixtures</td><td class="mono">rule</td><td>✕</td></tr>
+</tbody></table>
+
+<div class="card" style="margin-top:16px">
+  <h3>Row 1 — Front of Stage</h3>
+  <div class="sub">4 fixtures · referenced by 1 rule and 1 page</div>
+  <div class="row"><label>Name</label><input value="Row 1 — Front of Stage"></div>
+  <div class="row"><label>Colour</label>
+    <div class="pal">
+      <i style="background:#FF4B82"></i><i style="background:#FF7F68"></i>
+      <i style="background:#E17B1B"></i><i class="sel" style="background:#E8C26C"></i>
+      <i style="background:#A3BC00"></i><i style="background:#93C896"></i>
+      <i style="background:#1CDAF1"></i><i style="background:#00A5FE"></i>
+      <i style="background:#A482C9"></i><i style="background:#F99FD8"></i>
+      <i style="background:#B4C0CC"></i><i style="background:#E8EEF4"></i>
+    </div></div>
+  <div class="hint" style="margin-left:132px">Ten hues and two neutrals, separated by
+    measurement. White reads as emphasis — keep it for a master.</div>
+</div>
+
+<div class="err"><b>Cannot delete “Row 2”.</b> Used by rule “Stage Bank 2” and derived
+status <code>1/0/12</code>. Remove those references first.</div>
+`,
+
+// ══════════════════════════════════════════════════════════ HEALTH
+health: `
+<h1>System Health</h1>
+<div class="lede">Vitals come through the platform layer, so an unsupported metric on a
+ported platform reads “not available” rather than a wrong number.</div>
+
+<div class="card">
+  <h3><span class="led g"></span>Storage — Kingston NV2 256 GB</h3>
+  <div class="sub">0 % life used · 42 °C · 0 media errors</div>
+  <table><tbody>
+    <tr><td style="width:190px"><span class="led g"></span> <code>/</code> slot A</td>
+        <td class="mono">4.2 GB / 16 GB</td><td class="hint">read-only</td></tr>
+    <tr><td><span class="led g"></span> <code>/srv/appliance</code></td>
+        <td class="mono">12 MB / 1 GB</td><td class="hint">device secret, excluded from backups</td></tr>
+    <tr><td><span class="led g"></span> <code>/data</code></td>
+        <td class="mono">2.1 GB / 64 GB</td><td class="hint">application, database, logs</td></tr>
+    <tr><td><span class="led g"></span> <code>/srv/local</code></td>
+        <td class="mono">8.4 GB / 140 GB</td><td class="hint">local copies — not a backup</td></tr>
+  </tbody></table>
+</div>
+
+<div class="card">
+  <h3><span class="led g"></span>Application</h3>
+  <table><tbody>
+    <tr><td style="width:190px">Event loop lag</td>
+        <td class="mono">p50 2 ms · p99 14 ms</td><td class="hint">5-minute window</td></tr>
+    <tr><td>Memory</td><td class="mono">187 MB</td><td class="hint">idle target &lt; 200 MB</td></tr>
+    <tr><td>Event bus drops</td><td class="mono">0 continuous · 0 discrete</td>
+        <td class="hint">shedding is visible, never silent</td></tr>
+    <tr><td>WebSocket clients</td><td class="mono">3</td><td class="hint">2 tablets, 1 desktop</td></tr>
+  </tbody></table>
+</div>
+
+<div class="card">
+  <h3><span class="led a"></span>Devices</h3>
+  <table><tbody>
+    <tr><td style="width:190px"><span class="led g"></span> KNX</td>
+        <td class="mono">knxd socket</td><td class="hint">heartbeat 9/9/9 round-tripping</td></tr>
+    <tr><td><span class="led g"></span> Lighting output</td><td class="mono">Art-Net 10.2.30.245</td>
+        <td class="hint">ArtPollReply 2 s ago · 40 fps</td></tr>
+    <tr><td><span class="led g"></span> Mixer</td><td class="mono">tcp 51325 + 51326</td>
+        <td class="hint">both connections up</td></tr>
+    <tr><td><span class="led a"></span> Projector</td><td class="mono">pjlink 10.2.30.249</td>
+        <td class="hint">warming — commands rejected until ON</td></tr>
+    <tr><td><span class="led g"></span> Video matrix</td><td class="mono">/dev/serial/by-id/…</td>
+        <td class="hint">PAXXR replied 6 s ago</td></tr>
+    <tr><td><span class="led o"></span> Control surface</td><td class="mono">not configured</td>
+        <td class="hint">optional — Phase 9</td></tr>
+    <tr><td><span class="led a"></span> Backup media</td><td class="mono">/mnt/backup</td>
+        <td class="hint">absent 6 h — amber, never red</td></tr>
+  </tbody></table>
+</div>
+
+<div class="note"><b>Backup media and the control surface stay out of the operator status
+bar.</b> That bar carries devices whose loss affects the room; losing either of these
+degrades maintenance or convenience, not operation.</div>
+`
+};
+
+const main = document.getElementById('main');
+function show(k){
+  main.innerHTML = SCREENS[k];
+  document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on', a.dataset.s===k));
+  main.scrollTop = 0; window.scrollTo(0,0);
+  main.querySelectorAll('.pal i').forEach(i=>i.onclick=()=>{
+    i.parentElement.querySelectorAll('i').forEach(x=>x.classList.remove('sel'));
+    i.classList.add('sel');
+  });
+}
+document.querySelectorAll('nav a').forEach(a=>a.onclick=()=>show(a.dataset.s));
+show('rules');
+</script>
+</body>
+</html>

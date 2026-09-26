@@ -1,0 +1,15 @@
+# /etc/udev/rules.d/99-backup-media.rules — backup USB hot-insert (§4.5).
+#
+# The stick is in /etc/fstab as LABEL=AVC-BACKUP with nofail and a 5 s device
+# timeout, so a missing stick never delays boot. When it is inserted later,
+# start the fstab-generated mount unit; the application's 60 s probe sees
+# /mnt/backup appear and clears the banner without a restart. On removal,
+# stop the unit so a stale mount does not linger and return I/O errors.
+#
+# systemctl is used rather than mount(8) so the mount is the same unit systemd
+# already tracks, and --no-block keeps the udev RUN handler short.
+
+ACTION=="add",    SUBSYSTEM=="block", ENV{ID_FS_LABEL}=="AVC-BACKUP", \
+  RUN+="/usr/bin/systemctl start --no-block mnt-backup.mount"
+ACTION=="remove", SUBSYSTEM=="block", ENV{ID_FS_LABEL}=="AVC-BACKUP", \
+  RUN+="/usr/bin/systemctl stop --no-block mnt-backup.mount"

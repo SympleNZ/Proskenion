@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# auditorium-cert-reload — load a newly written certificate into nginx (§6.16).
+#
+# Run by auditorium-cert-reload.service, itself triggered by
+# auditorium-cert-reload.path when /data/certs/reload-requested is touched.
+# What it does depends on why nginx is in the state it is in:
+#
+#   active      reload, as before.
+#   failed      start it. On the first boot after the first install nginx
+#   activating  fails for want of /data/certs/live/<fqdn>/, and the certificate
+#               this run was asked to load is the application's §3.2 fallback
+#               for exactly that. Skipping here — which this script used to —
+#               left nginx down, and with it the Certificates screen and the
+#               wizard that could have fixed it (the CM5, 24 September 2026).
+#               A start in progress may have read its configuration before the
+#               certificate existed, so it is restarted too.
+#   inactive    skip quietly. Someone stopped nginx on purpose — maintenance —
+#               and a renewal must not bring it back behind their back. That
+#               is what the skip was always for, and it still covers it.
+#
+# A failure is logged once, not retried: the path unit fires again on the next
+# genuine change, so there is nothing here to loop.
+
+set -euo pipefail
+
+state="$(systemctl is-active nginx 2>/dev/null || true)"
+
+case "$state" in
+    active|reloading)
+        if systemctl reload nginx; then
+            echo "auditorium-cert-reload: nginx reloaded"
+        else
+            echo "auditorium-cert-reload: systemctl reload nginx failed" >&2
+            exit 1
+        fi
+        ;;
+    failed|activating)
+        systemctl reset-failed nginx 2>/dev/null || true
+        if systemctl restart nginx; then
+            echo "auditorium-cert-reload: nginx was ${state}; started it with the new certificate"
+        else
+            echo "auditorium-cert-reload: nginx was ${state} and would not start" >&2
+            exit 1
+        fi
+        ;;
+    *)
+        echo "auditorium-cert-reload: nginx is ${state:-unknown}, not failed: stopped on purpose, so not started"
+        ;;
+esac

@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<!DOCTYPE GroupAddress-Export [
+  <!ENTITY xxe SYSTEM "file:///etc/passwd">
+]>
+<GroupAddress-Export>
+  <GroupAddress Address="1/0/1" Name="&xxe;" DatapointType="DPST-1-1"/>
+</GroupAddress-Export>

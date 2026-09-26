@@ -1,0 +1,34 @@
+# auditorium-backup-media.service — the backup USB writable by the
+# application (§4.5, §13.3). Triggered by mnt-backup.mount (WantedBy= below),
+# so this runs both at boot (the stick was already inserted, fstab's nofail
+# mounts it) and on hot-insert (appliance/udev/99-backup-media.rules starts
+# mnt-backup.mount, which pulls this in the same way).
+#
+# A freshly formatted ext4 filesystem's root is owned root:root 0755, and the
+# application (user auditorium, ReadWritePaths= in auditorium-core.service)
+# cannot write into a directory it does not own. On the CM5, 24-25 September
+# 2026, the nightly backup job's write to /mnt/backup failed with "Permission
+# denied" until a one-off manual `chown auditorium:auditorium /mnt/backup`.
+# This unit is that chown, run every time the mount comes up, so a stick
+# formatted on any machine (this one, a laptop, another appliance) just
+# works, and one that already holds backups at the root of the stick keeps
+# working exactly as it did — nothing here moves where the application reads
+# or writes (proskenion.core.backup_destinations.DEFAULT_USB_MOUNT).
+#
+# `install -d` rather than a bare chown: it also creates /mnt/backup should
+# the mountpoint directory itself somehow be missing, and it is idempotent —
+# safe to run again on every mount, including a stick that is already ours.
+
+[Unit]
+Description=Make the backup USB stick writable by the application
+RequiresMountsFor=/mnt/backup
+After=mnt-backup.mount
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/auditorium-backup-media-owner
+SyslogIdentifier=auditorium-backup-media
+
+[Install]
+WantedBy=mnt-backup.mount

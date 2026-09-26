@@ -1,0 +1,18 @@
+{
+  // The end-to-end suite lives here, beside the unit and integration suites
+  // (spec §19.2), while its Node dependencies live in `web/` — the JavaScript
+  // toolchain is a developer-machine tool and never runs on the appliance
+  // (§5.1), so there is one npm project, not two. Node would not find
+  // `web/node_modules` from this directory on its own; Playwright reads this
+  // mapping when it loads the tests, and `web/tsconfig.e2e.json` carries the
+  // same mapping for `npm run typecheck`.
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@playwright/test": ["../../web/node_modules/@playwright/test"],
+      "playwright-core": ["../../web/node_modules/playwright-core"],
+      "@axe-core/playwright": ["../../web/node_modules/@axe-core/playwright"],
+      "axe-core": ["../../web/node_modules/axe-core"]
+    }
+  }
+}

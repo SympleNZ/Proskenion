@@ -1,0 +1,20 @@
+[Unit]
+Description=Proskenion recovery HDMI console menu (§13.7)
+Conflicts=getty@tty1.service
+After=getty@tty1.service systemd-user-sessions.service plymouth-quit-wait.service
+After=rc-local.service
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/recovery/console.py
+Restart=always
+RestartSec=1
+StandardInput=tty
+StandardOutput=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+User=root
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# auditorium-verify — started monthly by auditorium-verify.timer (§13.4).
+#
+# See auditorium-backup for why this lives on the read-only root and runs
+# proskenion.tools.verify directly: auditorium-verify.service already runs
+# this as the `auditorium` user.
+
+set -euo pipefail
+
+VENV_PYTHON=/opt/auditorium/venv/bin/python
+
+if [[ ! -x "$VENV_PYTHON" ]]; then
+    cat >&2 <<MSG
+auditorium-verify: the application environment is missing.
+
+  Expected: ${VENV_PYTHON}
+  Nothing was verified this month.
+
+  Check:   ls -l /opt/auditorium /data/app/
+           systemctl status data.mount auditorium-core.service
+MSG
+    exit 2
+fi
+
+exec "$VENV_PYTHON" -m proskenion.tools.verify

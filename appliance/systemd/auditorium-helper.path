@@ -1,0 +1,32 @@
+# auditorium-helper.path — notices a privileged request and starts the helper
+# (contracts §2, Q2).
+#
+# auditorium-core.service runs as the unprivileged `auditorium` user under
+# NoNewPrivileges=yes (§4.11), so restarting a service, rebooting, writing a
+# root slot or replacing the application tree is not something it can do. It
+# writes a request file into a directory it owns and this path unit starts
+# auditorium-helper@queue.service as root — the same split as
+# auditorium-cert-reload.path, with arguments and an answer.
+#
+# The glob is the UUID a request is named after, spelled out, rather than
+# *.json: the helper writes its status beside the request as
+# <uuid>.status.json and keeps it for an hour, and *.json would match those
+# too, so the unit would re-trigger on its own output for the next hour. A
+# request name is exactly 36 characters of UUID plus .json; a status name is
+# not.
+#
+# PathExistsGlob is level-triggered: while the triggered unit runs, the path
+# unit stands down, and it checks again when the unit finishes. Anything that
+# arrived meanwhile fires it straight away, so requests queue rather than
+# overlap, and none is lost.
+
+[Unit]
+Description=Watch for privileged requests from the application
+RequiresMountsFor=/data /srv/appliance
+
+[Path]
+PathExistsGlob=/data/run/helper/????????-????-????-????-????????????.json
+Unit=auditorium-helper@queue.service
+
+[Install]
+WantedBy=multi-user.target

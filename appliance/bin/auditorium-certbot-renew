@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# auditorium-certbot-renew — started weekly by certbot-renew.timer (§4.11, §3.2, Q7).
+#
+# This script does not talk to Let's Encrypt or Cloudflare itself, and it
+# never runs as root: the account key, the Cloudflare token and the WebSocket
+# broadcaster the six §21.24 progress steps are reported over all belong to
+# the running application (proskenion.core.certs.CertificateManager), not to
+# a one-shot script. It only asks that application to check — by touching the
+# signal file CertificateManager.watch polls for, the same pattern
+# auditorium's PIN-reset and hirer-access-reset tools already use.
+#
+# The application decides what "check" means from there: renew inside 30
+# days of expiry, skip only the renewal attempt while the clock is
+# unverified (§4.9), and fall back to self-signed only if nothing valid
+# remains. If the application isn't running, the touch is simply picked up
+# the next time it starts and polls.
+
+set -euo pipefail
+
+CERTS_DIR="/data/certs"
+SIGNAL_FILE="${CERTS_DIR}/renew-requested"
+
+install -d -m 0755 "${CERTS_DIR}"
+date --iso-8601=seconds > "${SIGNAL_FILE}"
+echo "auditorium-certbot-renew: requested a certificate renewal check"

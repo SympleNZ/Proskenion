@@ -1,0 +1,3 @@
+# /etc/sudoers.d/auditorium-admin — the login user has no password (key-only
+# SSH, §6.15), so sudo cannot ask for one. The SSH key is the credential.
+@ADMIN_USER@ ALL=(ALL) NOPASSWD: ALL

@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Overview — Proskenion recovery{% endblock %}
+{% block content %}
+<h2>What this recovery environment sees right now</h2>
+
+<section>
+  <h3>Disks</h3>
+  {% if disks %}
+  <table>
+    <tr><th>Device</th><th>Size</th><th>Model</th><th>Transport</th></tr>
+    {% for disk in disks %}
+    <tr>
+      <td>{{ disk.path }}</td>
+      <td>{{ "%.1f"|format(disk.size_bytes / 1073741824) }} GiB</td>
+      <td>{{ disk.model or "—" }}</td>
+      <td>{{ disk.transport or "—" }}{% if disk.removable %} (removable){% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p>No disks found besides the one this recovery environment booted from.</p>
+  {% endif %}
+</section>
+
+<section>
+  <h3>System images found</h3>
+  {% if images %}
+  <ul>{% for image in images %}<li>{{ image }}</li>{% endfor %}</ul>
+  {% else %}
+  <p>None on the USB stick or an attached drive. Plug one in, or use <a href="/restore">Restore data</a> to rebuild <code>/data</code> instead of the whole disk.</p>
+  {% endif %}
+</section>
+
+<section>
+  <h3>Backup archives found</h3>
+  {% if archives %}
+  <ul>{% for archive in archives %}<li>{{ archive }}</li>{% endfor %}</ul>
+  {% else %}
+  <p>None on the USB stick or an attached drive.</p>
+  {% endif %}
+</section>
+
+<section>
+  <h3>Network</h3>
+  {% if devices %}
+  <table>
+    <tr><th>Device</th><th>Type</th><th>State</th></tr>
+    {% for device, kind, state in devices %}
+    <tr><td>{{ device }}</td><td>{{ kind }}</td><td>{{ state }}</td></tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p>No network devices reported.</p>
+  {% endif %}
+</section>
+{% endblock %}

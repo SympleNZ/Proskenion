@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en-NZ">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Group palette — Auditorium Controller</title>
+<style>
+:root{
+  --bg-base:#0A0F1A; --bg-surface:#111827; --bg-elevated:#1C2B3A;
+  --teal-500:#00B8A0; --teal-300:#33DFC9;
+  --success:#22C55E; --warning:#F0A500; --danger:#EF4444; --info:#3B82F6;
+  --text-1:#F0F4F8; --text-2:#8A9BB0; --text-muted:#7589A0; --text-disabled:#4A5B6E;
+  --rule:rgba(255,255,255,.06); --rule-strong:rgba(255,255,255,.11);
+  --font-b:'DM Sans',ui-sans-serif,system-ui,-apple-system,sans-serif;
+  --font-m:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg-base);color:var(--text-2);
+  font-family:var(--font-b);font-size:15px;-webkit-font-smoothing:antialiased;padding:28px}
+h1{color:var(--text-1);font-size:21px;margin:0 0 5px}
+.sub{color:var(--text-muted);font-size:13.5px;margin-bottom:20px}
+h2{color:var(--text-1);font-size:15px;margin:34px 0 12px;font-weight:600}
+code{font-family:var(--font-m);font-size:12.5px;color:var(--teal-300)}
+
+.controls{display:flex;gap:9px;margin-bottom:22px;flex-wrap:wrap}
+.tgl{background:var(--bg-surface);border:1px solid var(--rule);color:var(--text-2);
+  border-radius:8px;padding:10px 18px;font-family:var(--font-b);font-size:13px;
+  font-weight:500;cursor:pointer;min-height:44px}
+.tgl:hover{background:var(--bg-elevated);color:var(--text-1)}
+.tgl.on{background:var(--bg-elevated);color:var(--teal-300);
+  border-color:rgba(0,184,160,.45);box-shadow:inset 3px 0 0 var(--teal-500)}
+
+/* swatch cards */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:14px}
+.sw{background:var(--bg-surface);border:1px solid var(--rule);border-radius:9px;
+  overflow:hidden}
+.sw .bar{height:5px}
+.sw .body{padding:13px 14px 14px}
+.sw .nm{color:var(--text-1);font-size:14.5px;font-weight:600;margin-bottom:2px}
+.sw .hx{font-family:var(--font-m);font-size:12px;color:var(--text-muted)}
+.sw .ctx{display:flex;gap:9px;margin-top:12px;align-items:stretch}
+.sw .tray{flex:1;border-radius:7px;padding:9px 10px;font-size:11.5px;
+  font-weight:600;letter-spacing:.05em;text-transform:uppercase}
+.sw .chip{width:44px;border-radius:7px}
+.sw .dot{width:44px;border-radius:7px;display:flex;align-items:center;justify-content:center}
+.sw .dot i{width:22px;height:6px;border-radius:3px;display:block}
+.meta{margin-top:11px;font-family:var(--font-m);font-size:11px;color:var(--text-disabled);
+  display:flex;justify-content:space-between}
+
+/* adjacency check */
+.pairs{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.pair{width:112px;border-radius:7px;overflow:hidden;border:1px solid var(--rule)}
+.pair div{height:34px}
+.pair span{display:block;font-family:var(--font-m);font-size:11px;
+  color:var(--text-disabled);text-align:center;padding:4px 0;background:var(--bg-surface)}
+
+.legend{margin-top:32px;font-size:13.5px;color:var(--text-muted);max-width:820px;line-height:1.7}
+.legend b{color:var(--text-1)}
+.legend p{margin:0 0 13px}
+.res{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0 4px}
+.res div{padding:8px 13px;border-radius:7px;font-size:12px;font-family:var(--font-m);
+  background:var(--bg-surface);border:1px solid var(--rule)}
+.res i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:7px;
+  vertical-align:-1px}
+</style>
+</head>
+<body>
+
+<h1>Group palette</h1>
+<div class="sub">Ten hues and two neutrals for lighting groups, mixer channel accents and page panels.<br>
+Separated by CIEDE2000, spread across the hue wheel, and checked under colour-blind vision.</div>
+
+<div class="controls">
+  <button class="tgl on" data-v="normal">Normal vision</button>
+  <button class="tgl" data-v="prot">Protanopia</button>
+  <button class="tgl" data-v="deut">Deuteranopia</button>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<h2>Adjacent pairs</h2>
+<div class="sub" style="margin-bottom:10px">Every consecutive pair, as they would appear on neighbouring strips.</div>
+<div class="pairs" id="pairs"></div>
+
+<h2>Reserved — never used for identity</h2>
+<div class="res" id="res"></div>
+
+<div class="legend">
+  <p><b>&Delta;E alone is not enough — hue separation is a separate constraint.</b>
+  Two colours can measure well apart and still read as one colour at two brightnesses,
+  which is what happened to an earlier pair of cyans 19&deg; apart. For identity
+  labelling hue is the dominant cue, so every adjacent pair here is at least 24&deg;
+  apart <i>and</i> at least &Delta;E2000&nbsp;18.</p>
+
+  <p><b>The blue region gets a wider gap than the reds.</b> Human hue discrimination is
+  poorest between roughly 185&deg; and 290&deg;, so that span requires 44&deg; between
+  members where the warm end needs 24&deg;. Ocean and Azure sit 52&deg; apart for that
+  reason. It is why the palette is ten rather than twelve, and ten that are reliably distinct
+  beats twelve with a doubtful pair.</p>
+
+  <p><b>Measured with CIEDE2000, not CIE76.</b> CIE76 overstates differences in the blue
+  region — an earlier version had two blues measuring &Delta;E&nbsp;27 apart that were
+  plainly hard to separate, because under CIEDE2000 they were only 13. Anything added to
+  this palette must be checked the same way.</p>
+
+  <p><b>Distance from the status colours is deliberately relaxed.</b> Identity and status
+  appear in different places: a group colour is a 3&nbsp;px strip edge, a tray tint, a
+  panel LED, while green, amber and red live in the status bar, on mute buttons and in
+  banners. They are not confusable in practice, so the constraint budget goes on
+  separating the palette <i>from itself</i> — which is what matters when two groups sit
+  side by side. The primary teal is the exception and keeps a wider berth, because it
+  shares contexts with these.</p>
+
+  <p><b>Colour is a secondary signal here, not the only one.</b> A group tray carries its
+  name and channels carry theirs, per §24.1. That is what makes ten possible at all:
+  demanding full separation <i>under</i> colour-blindness collapses the red&ndash;green
+  axis and leaves about six usable colours. Instead, confusable pairs separate by
+  lightness — Rose against Fern differ by 16 points of L*, Salmon against Amber by 13.
+  Toggle the simulations: the hues collapse, the brightness difference does not.</p>
+
+  <p><b>The two neutrals sit outside the hue rules entirely</b>, because they have no
+  hue to separate. They are also the only members that stay reliably distinguishable
+  under colour-blindness — everything else partially desaturates while these do not.</p>
+
+  <p><b>White reads as emphasis rather than identity.</b> It is the brightest thing
+  available, so a white accent dominates whatever sits beside it. Best kept for a Main
+  or master strip rather than an ordinary group. It is deliberately a shade below
+  <code>--color-text-primary</code> so that labels stay dominant over the accent
+  carrying them.</p>
+
+  <p><b>Silver has to stay well clear of the disabled grey.</b>
+  <code>#4A5B6E</code> means <i>not configured</i> in the status bar and <i>inactive</i>
+  on a control, so a dim grey group would read as broken. Silver sits 39 points of L*
+  above it at &Delta;E2000&nbsp;35.9. A mid grey is <b>not</b> usable at all — it lands
+  on <code>--color-text-secondary</code> at &Delta;E&nbsp;6.0 and would read as body
+  text.</p>
+
+  <p><b>There is no true red, and that is a property of the theme.</b> On a near-black
+  background the only reds bright enough to see are lighter than the danger red, and a
+  light red is a salmon; anything darker either disappears or lands on
+  <code>#EF4444</code> itself. Red is also the one status colour that fills a large
+  control — the mute button — three pixels from a channel's accent stripe. Salmon is as
+  close as the theme allows.</p>
+
+  <p><b>Every colour clears 6:1 on both dark surfaces</b>, so one value carries the
+  accent, the tray tint and the LED without a second variant. The 70&deg; gap between
+  Fern and Ocean is where the teal accent lives, and is correctly left to it.</p>
+
+</div>
+
+<script>
+const PALETTE=[
+  {n:'Rose',     h:'#FF4B82', L:60, hue:8,   dE:15.0, near:'danger'},
+  {n:'Salmon',   h:'#FF7F68', L:67, hue:36,  dE:12.0, near:'danger'},
+  {n:'Tangerine',h:'#E17B1B', L:62, hue:62,  dE:15.1, near:'warning'},
+  {n:'Amber',    h:'#E8C26C', L:80, hue:86,  dE:11.3, near:'warning'},
+  {n:'Lime',     h:'#A3BC00', L:72, hue:111, dE:19.4, near:'success'},
+  {n:'Fern',     h:'#93C896', L:76, hue:144, dE:12.6, near:'success'},
+  {n:'Ocean',    h:'#1CDAF1', L:80, hue:214, dE:18.7, near:'teal accent'},
+  {n:'Azure',    h:'#00A5FE', L:65, hue:266, dE:13.3, near:'info'},
+  {n:'Violet',   h:'#A482C9', L:60, hue:310, dE:21.6, near:'info'},
+  {n:'Orchid',   h:'#F99FD8', L:76, hue:340, dE:30.5, near:'danger'},
+  {n:'Silver',   h:'#B4C0CC', L:77, hue:null, dE:35.9, near:'text-disabled'},
+  {n:'White',    h:'#E8EEF4', L:94, hue:null, dE:45.9, near:'text-disabled'}
+];
+const RESERVED=[['teal accent','#00B8A0'],['success','#22C55E'],['warning','#F0A500'],
+                ['danger','#EF4444'],['info','#3B82F6']];
+
+// ── Viénot colour-blindness simulation ──────────────────────────────────────
+const s2l=c=>{c/=255;return c<=.04045?c/12.92:Math.pow((c+.055)/1.055,2.4)};
+const l2s=c=>{c=c<=.0031308?12.92*c:1.055*Math.pow(c,1/2.4)-.055;
+  return Math.max(0,Math.min(255,Math.round(c*255)))};
+function sim(hex,kind){
+  if(kind==='normal') return hex;
+  const n=parseInt(hex.slice(1),16);
+  let r=s2l((n>>16)&255), g=s2l((n>>8)&255), b=s2l(n&255);
+  let L=17.8824*r+43.5161*g+4.11935*b,
+      M=3.45565*r+27.1554*g+3.86714*b,
+      S=0.0299566*r+0.184309*g+1.46709*b;
+  if(kind==='prot') L=2.02344*M-2.52581*S; else M=0.494207*L+1.24827*S;
+  const R=0.080944*L-0.130504*M+0.116721*S,
+        G=-0.0102485*L+0.0540194*M-0.113615*S,
+        B=-0.000365294*L-0.00412163*M+0.693513*S;
+  return '#'+[l2s(R),l2s(G),l2s(B)].map(v=>v.toString(16).padStart(2,'0')).join('');
+}
+const rgba=(hex,a)=>{const n=parseInt(hex.slice(1),16);
+  return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`};
+
+let mode='normal';
+function render(){
+  document.getElementById('grid').innerHTML = PALETTE.map(p=>{
+    const c = sim(p.h, mode);
+    return `<div class="sw">
+      <div class="bar" style="background:${c}"></div>
+      <div class="body">
+        <div class="nm">${p.n}</div>
+        <div class="hx">${p.h}</div>
+        <div class="ctx">
+          <div class="tray" style="background:${rgba(c,.09)};border:1px solid ${rgba(c,.32)};
+               color:${c}">Row 1</div>
+          <div class="chip" style="background:${rgba(c,.16)};border:1px solid ${rgba(c,.34)}"></div>
+          <div class="dot" style="background:#0E1622;border:1px solid ${rgba(c,.34)}">
+            <i style="background:${c};box-shadow:0 0 6px 2px ${rgba(c,.55)}"></i></div>
+        </div>
+        <div class="meta"><span>L* ${p.L}${p.hue===null?' · neutral':' · hue '+p.hue+'°'}</span>
+          <span>ΔE2000 ${p.dE} from ${p.near}</span></div>
+      </div></div>`;
+  }).join('');
+
+  document.getElementById('pairs').innerHTML = PALETTE.map((p,i)=>{
+    const q = PALETTE[(i+1)%PALETTE.length];
+    return `<div class="pair">
+      <div style="background:${sim(p.h,mode)}"></div>
+      <div style="background:${sim(q.h,mode)}"></div>
+      <span>${p.n} / ${q.n}</span></div>`;
+  }).join('');
+
+  document.getElementById('res').innerHTML = RESERVED.map(([n,h])=>
+    `<div><i style="background:${sim(h,mode)}"></i>${n} ${h}</div>`).join('');
+}
+document.querySelectorAll('.tgl').forEach(b=>b.onclick=()=>{
+  mode=b.dataset.v;
+  document.querySelectorAll('.tgl').forEach(x=>x.classList.toggle('on',x===b));
+  render();
+});
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,278 @@
+#!/usr/bin/python3
+"""auditorium-install-package — install an application package from a shell (§14.2, contracts §2).
+
+The first application package has nothing to upload it through: the web
+application that normally drives an update is what the package contains. So
+this does, as root, exactly what that application would: it writes an
+``apply-update`` request into /data/run/helper and has auditorium-helper carry
+it out, then reports the helper's status file.
+
+Nothing here decides whether a package is acceptable. The helper re-verifies
+it against the trust anchors on the read-only root before anything is written
+outside /data (§6.11), extracts it beside any installed version, snapshots the
+database if there is one, swaps /data/app/current and restarts the
+application. The manifest is read here only to name the version in the
+request, which the helper then checks against the signed manifest itself.
+
+  sudo auditorium-install-package /home/admin/auditorium_v1.0.0.aupkg
+
+A package outside /data/tmp is copied there first — the helper accepts paths
+inside /data/tmp or /srv/local and nowhere else — and the copy is removed
+afterwards, whatever happened.
+
+Why ``systemctl start auditorium-helper@queue.service`` rather than running
+the helper here: auditorium-helper.path watches the same directory and starts
+that very unit the moment the request appears. Running the helper directly as
+well would be two processes handling one request. Starting the same unit name
+joins whichever start is already under way, because systemd runs one instance
+of a unit name at a time, so the request is handled once, under the unit's
+own sandbox and timeout, and journalled as auditorium-helper.
+
+A freshly built appliance is in emergency mode (``not_installed``) when its
+first package goes in. The helper ends that once the new version runs
+healthily; any other emergency reason stays until a reboot (§4.6). The last
+lines printed say which, so a successful install is never mistaken for a
+failed one because the emergency page is still showing.
+
+Exit status: 0 installed, 1 refused or failed, 2 bad usage.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import uuid
+from collections.abc import Callable, Sequence
+from pathlib import Path
+
+sys.path.insert(0, "/usr/local/lib/auditorium")
+
+import auditorium_emergency_reason as emergency_reason  # noqa: E402
+
+HELPER_DIR = Path("/data/run/helper")
+EMERGENCY_REASON = emergency_reason.DEFAULT_PATH
+TMP_DIR = Path("/data/tmp")
+APP_DIR = Path("/data/app")
+HELPER_UNIT = "auditorium-helper@queue.service"
+CORE_UNIT = "auditorium-core.service"
+MANIFEST_NAME = "manifest.json"
+#: The manifest is read only to name the version; the verifier's own limit is
+#: far above any real one, and this only has to refuse something absurd.
+MAX_MANIFEST_BYTES = 4 * 1024 * 1024
+VERSION_RE = re.compile(r"v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)\Z")
+STATUS_SUFFIX = ".status.json"
+
+Runner = Callable[[Sequence[str]], "subprocess.CompletedProcess[str]"]
+
+
+class InstallError(Exception):
+    """The package could not be handed to the helper, or the helper refused it."""
+
+
+def say(message: str) -> None:
+    print(f"auditorium-install-package: {message}", flush=True)
+
+
+def package_version(package: Path) -> str:
+    """The version an application package's manifest declares.
+
+    Unverified, and used for nothing but the request: the helper verifies the
+    signature and refuses a request whose version is not the signed one.
+    """
+    try:
+        with tarfile.open(package, mode="r:") as archive:
+            first = archive.next()
+            if first is None or first.name != MANIFEST_NAME or not first.isreg():
+                raise InstallError(f"{package} does not begin with {MANIFEST_NAME}; it is not a package")
+            if first.size > MAX_MANIFEST_BYTES:
+                raise InstallError(f"{package}'s manifest is {first.size} bytes; it is not a package")
+            handle = archive.extractfile(first)
+            if handle is None:
+                raise InstallError(f"{package}'s manifest cannot be read")
+            with handle:
+                manifest = json.loads(handle.read().decode("utf-8"))
+    except (tarfile.TarError, OSError, ValueError, UnicodeDecodeError) as exc:
+        raise InstallError(f"{package} is not a readable package: {exc}") from exc
+    if not isinstance(manifest, dict):
+        raise InstallError(f"{package}'s manifest is not a JSON object")
+    if manifest.get("type") != "app":
+        raise InstallError(
+            f"{package} is a {manifest.get('type')!r} package; this installs application packages"
+        )
+    version = manifest.get("version")
+    if not isinstance(version, str) or not VERSION_RE.match(version):
+        raise InstallError(f"{package}'s manifest names no vX.Y.Z version")
+    return version
+
+
+def _inside(path: Path, root: Path) -> bool:
+    return path != root and root in path.parents
+
+
+def stage(package: Path, tmp_dir: Path, request_id: str) -> tuple[Path, bool]:
+    """Where the helper will read the package from, and whether this made a copy.
+
+    A package already inside ``tmp_dir``, reached with no symlink on the way,
+    is used where it is. Anything else is copied in, 0600 and owned by root:
+    the helper opens every component with O_NOFOLLOW and refuses a path
+    outside /data/tmp and /srv/local, so a package in a home directory or
+    behind a symlink would be refused rather than read.
+    """
+    absolute = Path(os.path.abspath(package))
+    if _inside(absolute, tmp_dir) and Path(os.path.realpath(absolute)) == absolute:
+        return absolute, False
+    target = tmp_dir / f"install-{request_id}.aupkg"
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as sink, package.open("rb") as source:
+            shutil.copyfileobj(source, sink, 1 << 20)
+            sink.flush()
+            os.fsync(sink.fileno())
+    except BaseException:
+        target.unlink(missing_ok=True)
+        raise
+    return target, True
+
+
+def write_request(
+    helper_dir: Path, request_id: str, package: Path, version: str, *, now: dt.datetime | None = None
+) -> Path:
+    """The request contracts §2 defines, written the way the application writes one.
+
+    Mode 0600, named for its id, and renamed into place whole: the path unit's
+    glob fires on the final name, so a half-written request is never seen.
+    """
+    moment = now or dt.datetime.now().astimezone()
+    body = {
+        "verb": "apply-update",
+        "id": request_id,
+        "requested_at": moment.isoformat(timespec="seconds"),
+        "args": {"package": package.as_posix(), "version": version},
+    }
+    temporary = helper_dir / f".{request_id}.tmp"
+    final = helper_dir / f"{request_id}.json"
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(body, handle)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, final)
+    return final
+
+
+def _systemctl(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(list(argv), capture_output=True, text=True, check=False)
+
+
+def read_status(helper_dir: Path, request_id: str) -> dict[str, object]:
+    path = helper_dir / f"{request_id}{STATUS_SUFFIX}"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise InstallError(
+            f"the helper left no readable status ({exc}); see journalctl -u 'auditorium-helper@*'"
+        ) from exc
+    if not isinstance(data, dict):
+        raise InstallError(f"{path} is not a status object")
+    return data
+
+
+def install(
+    package: Path,
+    *,
+    helper_dir: Path = HELPER_DIR,
+    tmp_dir: Path = TMP_DIR,
+    run: Runner = _systemctl,
+    request_id: str | None = None,
+) -> str:
+    """Hand ``package`` to the helper and wait for it. Returns the installed version."""
+    if not package.is_file():
+        raise InstallError(f"{package} is not a file")
+    for directory in (helper_dir, tmp_dir):
+        if not directory.is_dir():
+            raise InstallError(f"{directory} does not exist; is /data mounted?")
+    version = package_version(package)
+    request_id = request_id or str(uuid.uuid4())
+
+    staged, copied = stage(package, tmp_dir, request_id)
+    try:
+        say(f"installing {version} from {staged} (request {request_id})")
+        write_request(helper_dir, request_id, staged, version)
+        say(
+            "the helper verifies, extracts, snapshots, switches and restarts; "
+            "allow a minute or two — the environment is built at the first start"
+        )
+        done = run(["systemctl", "start", HELPER_UNIT])
+        if done.returncode != 0:
+            detail = (done.stderr or done.stdout or "").strip()
+            raise InstallError(f"systemctl start {HELPER_UNIT} failed: {detail}")
+        status = read_status(helper_dir, request_id)
+    finally:
+        if copied:
+            staged.unlink(missing_ok=True)
+
+    state = status.get("state")
+    if state != "done":
+        raise InstallError(
+            f"the helper did not install {version}: {status.get('message')}"
+            f" — {status.get('error')}"
+        )
+    return version
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        description="Install an application package through auditorium-helper (contracts §2)"
+    )
+    parser.add_argument("package", type=Path, help="a signed auditorium_<version>.aupkg")
+    args = parser.parse_args(argv)
+    if os.name == "posix" and os.geteuid() != 0:
+        say("run this as root: sudo auditorium-install-package PACKAGE")
+        return 2
+    before = emergency_reason.read(EMERGENCY_REASON)
+    try:
+        version = install(args.package)
+    except InstallError as exc:
+        say(str(exc))
+        return 1
+    current = os.path.basename(os.readlink(APP_DIR / "current")) if (APP_DIR / "current").is_symlink() else None
+    core = _systemctl(["systemctl", "is-active", CORE_UNIT]).stdout.strip()
+    say(f"installed {version}; /data/app/current -> {current}; {CORE_UNIT} is {core}")
+    for line in emergency_report(before, emergency_reason.read(EMERGENCY_REASON)):
+        say(line)
+    if core != "active":
+        say(f"the application did not come up: journalctl -u {CORE_UNIT} -n 50")
+        return 1
+    return 0
+
+
+def emergency_report(
+    before: dict[str, object] | None, after: dict[str, object] | None
+) -> list[str]:
+    """What to tell the person at the console about emergency mode (§4.6).
+
+    The helper ends emergency mode entered as ``not_installed`` once the
+    version it installed runs healthily; nothing else ends it but a reboot.
+    Either way this says so plainly: an install that succeeded behind a page
+    still saying "emergency mode" reads as an install that failed.
+    """
+    if after is not None:
+        return [
+            f"the appliance is still in emergency mode ({after.get('reason')}), so nginx "
+            "still serves the emergency page: reboot to leave it (sudo systemctl reboot)"
+        ]
+    if before is not None:
+        return [f"emergency mode ({before.get('reason')}) has ended; nginx serves the application"]
+    return []
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

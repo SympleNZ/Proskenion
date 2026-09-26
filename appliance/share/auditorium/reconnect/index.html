@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en-NZ">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Auditorium controller — reconnecting</title>
+<!--
+  /usr/local/share/auditorium/reconnect/index.html — the §10.8 reconnection
+  page (spec §10.8, contracts §5). Served by nginx on port 80 directly from
+  the root image, never proxied to the application: the whole point is that
+  it still works while the application is restarting into its new address.
+
+  The admin interface (proskenion/api/network.py's POST /system/network)
+  navigates the browser here, to http://{old_address}/reconnect, with query
+  parameters carrying what this page cannot know on its own:
+
+    address       the new address to poll                        (required)
+    hostname      the configured hostname                          (required)
+    dns_updated   "1" when the appliance already pointed hostname
+                  at address (a Cloudflare token is configured) —
+                  otherwise DNS needs updating manually
+
+  ...and, in the URL *fragment* rather than the query string (contracts §5,
+  wave 3 additions) — a fragment is never sent in an HTTP request, so it
+  never reaches this server's access log or a Referer header, here or at
+  the destination:
+
+    confirm_token the token POST /system/network answered with, which
+                  confirms the change is kept rather than reverted
+                  after three minutes — optional; carried straight
+                  through to the destination's own fragment unread,
+                  since only the application (proskenion/api/network.py's
+                  POST /system/network/confirm) can say whether it matches
+
+  No build step, no framework, no external request except the polls this
+  page exists to make: everything is inline, the same rule
+  appliance/share/auditorium/emergency/index.html follows for the same
+  reason (this must work with nothing else on the appliance guaranteed to
+  be up).
+-->
+<style>
+  :root {
+    color-scheme: dark;
+    --bg-base: #0f1115;
+    --bg-surface: #171a21;
+    --border: #2a2f3a;
+    --text: #e6e8ee;
+    --text-muted: #9aa3b2;
+    --amber: #e0a526;
+    --green: #4caf6f;
+    --red: #e05252;
+    --sans: "DM Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg-base);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.5;
+  }
+  main { max-width: 560px; margin: 0 auto; padding: 48px 20px; }
+  h1 { font-size: 22px; font-weight: 600; margin: 0 0 8px; }
+  p.lead { color: var(--text-muted); margin: 0 0 24px; }
+  section {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .row { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+  .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--text-muted);
+    flex: none;
+  }
+  .dot.pending { background: var(--amber); }
+  .dot.ok { background: var(--green); }
+  .dot.fail { background: var(--red); }
+  code {
+    font-family: var(--mono);
+    background: var(--bg-base);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+  }
+  .notice {
+    border: 1px solid var(--amber);
+    color: var(--amber);
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 14px;
+    margin-top: 12px;
+  }
+  a.manual { color: var(--text); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Reconnecting…</h1>
+  <p class="lead">
+    The controller's network settings changed. This page checks for it at
+    its new address, on the appliance itself — not through the application,
+    which may be restarting.
+  </p>
+  <section>
+    <div class="row"><div class="dot ok"></div><span>Change applied — waiting for <code id="target-address">the new address</code></span></div>
+    <div class="row"><div class="dot pending" id="poll-dot"></div><span id="poll-text">Checking every 3 seconds…</span></div>
+  </section>
+  <div id="notice" class="notice" hidden>
+    DNS was not updated automatically (no Cloudflare token configured).
+    You may need to update it yourself before the hostname resolves here.
+  </div>
+  <p id="manual-fallback" hidden>
+    Not redirected automatically? <a class="manual" id="manual-link" href="#">Continue manually</a>.
+  </p>
+</main>
+<script>
+(function () {
+  "use strict";
+  var params = new URLSearchParams(window.location.search);
+  var address = params.get("address");
+  var hostname = params.get("hostname");
+  var dnsUpdated = params.get("dns_updated") === "1";
+  // The fragment, never the query string (see the header comment). Read
+  // once, then dropped from this page's own address bar immediately — the
+  // same "consume, don't just read" rule the interface follows on the far
+  // side (web/src/admin/network/reconnect.ts's takeArrivalToken).
+  var hash = window.location.hash.replace(/^#/, "");
+  var confirmToken = new URLSearchParams(hash).get("confirm_token");
+  if (confirmToken) {
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  }
+  var pollDot = document.getElementById("poll-dot");
+  var pollText = document.getElementById("poll-text");
+  var targetLabel = document.getElementById("target-address");
+  var manualFallback = document.getElementById("manual-fallback");
+  var manualLink = document.getElementById("manual-link");
+  var notice = document.getElementById("notice");
+
+  if (!address) {
+    pollText.textContent = "No new address was given — nothing to check.";
+    pollDot.className = "dot fail";
+    return;
+  }
+  targetLabel.textContent = address;
+
+  var destination = dnsUpdated && hostname
+    ? "https://" + hostname + "/"
+    : "https://" + address + "/";
+  if (confirmToken) {
+    destination += "#confirm_token=" + encodeURIComponent(confirmToken);
+  }
+  manualLink.href = destination;
+  if (!dnsUpdated) {
+    notice.hidden = false;
+  }
+
+  var POLL_INTERVAL_MS = 3000;
+  var attempts = 0;
+
+  function redirect() {
+    pollDot.className = "dot ok";
+    pollText.textContent = "Connected. Redirecting…";
+    window.location.href = destination;
+  }
+
+  function poll() {
+    attempts += 1;
+    // The one cross-origin request this appliance allows (CORS on /health
+    // only, §10.8) — this page is served over http from the old address;
+    // polling https here would be mixed content even before the new
+    // address's certificate is trusted.
+    var url = "http://" + address + "/health?_=" + Date.now();
+    fetch(url, { mode: "cors", cache: "no-store" })
+      .then(function (response) {
+        if (response.ok) {
+          redirect();
+          return;
+        }
+        schedule();
+      })
+      .catch(function () {
+        schedule();
+      });
+  }
+
+  function schedule() {
+    pollDot.className = "dot pending";
+    pollText.textContent = "Checking every 3 seconds… (attempt " + attempts + ")";
+    if (attempts === 5) {
+      manualFallback.hidden = false;
+    }
+    window.setTimeout(poll, POLL_INTERVAL_MS);
+  }
+
+  poll();
+})();
+</script>
+</body>
+</html>

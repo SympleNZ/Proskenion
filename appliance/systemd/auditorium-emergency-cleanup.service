@@ -1,0 +1,31 @@
+# auditorium-emergency-cleanup.service — exit is automatic on reboot (§4.6).
+#
+# /srv/appliance/emergency-reason.json is what auditorium-emergency.service's
+# own ConditionPathExists= gates on (contracts, appliance/lib/
+# auditorium_emergency_reason.py) so that unit can be started directly by
+# auditorium-update-rollback with no boot-time condition of its own to fight.
+# The cost is that the file has to be someone's job to remove once whatever
+# it recorded is fixed — nothing clears it when emergency mode exits, because
+# exit is "repair the storage, reboot" (§4.6), not a step that runs while
+# things are still broken.
+#
+# This unit is that someone: unconditional, and ordered before both
+# auditorium-emergency-detect.service and auditorium-emergency.service so a
+# stale file from the boot that failed is gone before either of those units'
+# conditions are evaluated on this one. On a boot where /data is genuinely
+# still unavailable, auditorium-emergency-detect.service writes a fresh
+# reason immediately afterwards — this unit only ever removes a *previous*
+# boot's record, never today's.
+
+[Unit]
+Description=Clear any stale emergency-mode reason from a previous boot (§4.6)
+After=local-fs.target
+Before=auditorium-emergency-detect.service auditorium-emergency.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/auditorium-emergency --clear-stale
+SyslogIdentifier=auditorium-emergency-cleanup
+
+[Install]
+WantedBy=multi-user.target

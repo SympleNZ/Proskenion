@@ -1,0 +1,20 @@
+# auditorium-cert-reload.service — loads a new certificate into nginx
+# (§6.16). Triggered by auditorium-cert-reload.path; it has no [Install]
+# section and is never enabled or started directly.
+#
+# The script reloads a running nginx, and starts a *failed* one: on the first
+# boot after the first install nginx fails for want of a certificate, and the
+# one it has just been asked to load is the application's §3.2 fallback
+# (docs/build/image.md "First boot"). It still leaves an nginx that was
+# stopped on purpose alone. A failure is logged once rather than retried —
+# the path unit fires again on the next genuine change, so there is nothing
+# here to loop.
+
+[Unit]
+Description=Load a new certificate into nginx
+After=nginx.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/auditorium-cert-reload
+SyslogIdentifier=auditorium-cert-reload

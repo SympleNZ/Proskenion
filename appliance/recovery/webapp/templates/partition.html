@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Partition &amp; image — Proskenion recovery{% endblock %}
+{% block content %}
+<h2>Partition and image a new SSD</h2>
+<p class="warn">This erases the whole target disk and writes the chosen system image to slot A. There is no undo.</p>
+
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+{% if not plan %}
+<form method="post">
+  <label>Target disk (everything on it is destroyed)
+    <select name="disk" required>
+      {% for disk in disks %}
+      <option value="{{ disk.path }}">{{ disk.path }} — {{ "%.1f"|format(disk.size_bytes / 1073741824) }} GiB {{ disk.model or "" }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>System image
+    <select name="image" required>
+      {% for image in images %}
+      <option value="{{ image }}">{{ image }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button type="submit">Review</button>
+</form>
+{% if not disks %}<p>No candidate disks were found.</p>{% endif %}
+{% if not images %}<p>No system images were found on the USB stick or an attached drive.</p>{% endif %}
+
+{% else %}
+<div class="confirm">
+  <h3>This will erase {{ plan.disk }}</h3>
+  <ul>
+    <li>Every partition and every byte on <strong>{{ plan.disk }}</strong> will be overwritten.</li>
+    <li>§2.3's six-partition table will be recreated with the PARTUUIDs recorded in the image.</li>
+    <li>Slot A will be written from <strong>{{ plan.image }}</strong> (version {{ plan.image_version }}) and marked active.</li>
+    <li>Slot B is left empty, as a fresh SSD's would be.</li>
+  </ul>
+  <form method="post">
+    <input type="hidden" name="disk" value="{{ plan.disk }}">
+    <input type="hidden" name="image" value="{{ plan.image }}">
+    <input type="hidden" name="confirm_token" value="{{ plan.token }}">
+    <button type="submit" class="destructive">Erase {{ plan.disk }} and write this image</button>
+  </form>
+  <p><a href="/partition">Cancel</a></p>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en-NZ">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="60">
+<title>Auditorium controller — emergency mode</title>
+<!--
+  /usr/local/share/auditorium/emergency/index.html — the template the
+  emergency responder renders (§4.6, appliance/lib/auditorium_emergency.py,
+  render_page()), served through emergency.conf on 80 and 443.
+
+  Everything in this file must work with /data and /opt/auditorium absent:
+  no scripts, no fonts, no images. The system sans-serif stack stands in for
+  DM Sans because the self-hosted fonts live under /opt/auditorium/web/fonts,
+  which is exactly what is missing in this mode.
+
+  The {{PLACEHOLDERS}} are filled in by render_page() on every request, with
+  html.escape()d values, so the page always shows the current time and the
+  reason this run of the responder was started for. Read unrendered — a
+  template, or a proxy failure serving this file's bytes directly — the page
+  still tells a reader what has happened and what to do.
+-->
+<style>
+  :root {
+    color-scheme: dark;
+    --bg-base: #0f1115;
+    --bg-surface: #171a21;
+    --border: #2a2f3a;
+    --text: #e6e8ee;
+    --text-muted: #9aa3b2;
+    --amber: #e0a526;
+    --red: #e05252;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: "DM Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg-base);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.5;
+  }
+  main { max-width: 720px; margin: 0 auto; padding: 32px 20px 48px; }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+  .badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border: 1px solid var(--red);
+    border-radius: 4px;
+    color: var(--red);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  h1 { font-size: 24px; font-weight: 600; margin: 0; }
+  p.lead { color: var(--text-muted); margin: 8px 0 24px; }
+  section {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+  }
+  h2 { font-size: 15px; font-weight: 600; margin: 0 0 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; }
+  dt { color: var(--text-muted); }
+  dd { margin: 0; font-family: var(--mono); font-size: 14px; word-break: break-word; }
+  ol { padding-left: 20px; margin: 0; }
+  li { margin-bottom: 8px; }
+  code { font-family: var(--mono); font-size: 14px; background: var(--bg-base); padding: 1px 6px; border-radius: 4px; }
+  .amber { color: var(--amber); }
+  footer { color: var(--text-muted); font-size: 13px; margin-top: 24px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <span class="badge" aria-label="Status: emergency">&#9888; Emergency mode</span>
+    <h1>Auditorium controller</h1>
+  </header>
+  <p class="lead">The data partition is unavailable, so the control system has not started. Lighting panels and devices keep their own state; nothing here is controlling them.</p>
+
+  <section>
+    <h2>Status</h2>
+    <dl>
+      <dt>Host</dt><dd>{{HOSTNAME}}</dd>
+      <dt>Time</dt><dd>{{TIME}}</dd>
+      <dt>Reason</dt><dd>{{REASON}}</dd>
+      <dt>SSD (smartctl)</dt><dd>{{SSD_STATUS}}</dd>
+      <dt>Last backup on /mnt/backup</dt><dd>{{LAST_BACKUP}}</dd>
+      <dt>SSH</dt><dd>Available on the management address — nothing about this failure affects it.</dd>
+    </dl>
+  </section>
+
+  <section>
+    <h2>What to do</h2>
+    <ol>
+      <li><span class="amber">Do not power-cycle repeatedly.</span> One clean restart is reasonable; if this page returns, the storage needs attention.</li>
+      <li>Connect over SSH from the management address and check the data partition: <code>sudo journalctl -b -u data.mount</code> and <code>sudo smartctl -H /dev/nvme0n1</code>.</li>
+      <li>If the filesystem is damaged: <code>sudo fsck.ext4 -f /dev/disk/by-partlabel/data</code> with the partition unmounted, then reboot.</li>
+      <li>If the SSD has failed: fit a replacement, write the golden image, and restore the most recent backup from the backup USB or the network destination.</li>
+      <li>Follow <code>docs/hardware/recovery.md</code> for the full procedure. Exit from this mode is automatic: repair the storage, reboot, and the system starts normally.</li>
+    </ol>
+  </section>
+
+  <footer>This page is served from the read-only system partition. It refreshes every minute. The health endpoint at <code>/health</code> returns 503 while this mode is active.</footer>
+</main>
+</body>
+</html>

@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en-NZ">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Channel metering — Auditorium Controller</title>
+<style>
+:root{
+  --bg-base:#0A0F1A; --bg-surface:#111827; --bg-elevated:#1C2B3A; --bg-overlay:#243447;
+  --teal-500:#00B8A0; --teal-400:#00D4BC; --teal-300:#33DFC9;
+  --success:#22C55E; --warning:#F0A500; --danger:#EF4444;
+  --warning-text:#FFC24D; --danger-text:#FF7B7B;
+  --text-1:#F0F4F8; --text-2:#8A9BB0; --text-muted:#7589A0; --text-disabled:#4A5B6E;
+  --fader-track:#060C14; --rule:rgba(255,255,255,.06); --rule-strong:rgba(255,255,255,.11);
+  --font-b:'DM Sans',ui-sans-serif,system-ui,-apple-system,sans-serif;
+  --font-m:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,monospace;
+  --radius-sm:4px; --radius-md:8px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg-base);color:var(--text-2);
+  font-family:var(--font-b);font-size:15px;-webkit-font-smoothing:antialiased;padding:28px}
+h1{color:var(--text-1);font-size:21px;margin:0 0 5px;letter-spacing:-.01em}
+.sub{color:var(--text-muted);font-size:13.5px;margin-bottom:6px}
+.hint{color:var(--teal-300);font-size:13px;margin-bottom:24px}
+h2{color:var(--text-1);font-size:15px;margin:34px 0 4px;font-weight:600}
+.h2sub{color:var(--text-muted);font-size:13px;margin-bottom:14px}
+code{font-family:var(--font-m);color:var(--teal-300);font-size:12.5px}
+
+.banner{background:linear-gradient(90deg,rgba(240,165,0,.09),transparent);
+  border-left:3px solid var(--warning);border-radius:var(--radius-md);
+  padding:12px 16px;margin:14px 0 18px;font-size:13.5px}
+.banner b{color:var(--warning-text);font-weight:600}
+
+.rack{display:flex;gap:14px;align-items:stretch;flex-wrap:wrap}
+.strip{width:150px;height:470px;background:var(--bg-surface);
+  border:1px solid var(--rule);border-radius:var(--radius-md);
+  position:relative;display:flex;flex-direction:column;align-items:center;
+  padding:13px 9px 12px;overflow:hidden;touch-action:none}
+.accent{position:absolute;top:0;left:0;right:0;height:3px;opacity:.9}
+.name{font-size:13.5px;font-weight:500;color:var(--text-1);text-align:center;
+  margin-top:6px;min-height:17px;line-height:1.2}
+.tag{font-family:var(--font-m);font-size:11px;color:var(--text-muted);
+  min-height:15px;margin-bottom:9px}
+.tag.native{color:var(--teal-300)}
+
+.zone{flex:1;width:100%;position:relative;min-height:0}
+
+/* fader scale — generated from the driver's law table */
+.scale{position:absolute;top:0;bottom:0;left:0;width:36px}
+.smark{position:absolute;right:0;width:36px;height:0;transform:translateY(-50%)}
+.smark i{position:absolute;right:0;top:-.5px;width:5px;height:1px;
+  background:var(--rule-strong)}
+.smark.lab i{width:8px}
+.smark.unity i{width:12px;height:1.5px;background:rgba(255,255,255,.5)}
+.smark span{position:absolute;right:11px;top:50%;transform:translateY(-50%);
+  font-family:var(--font-m);font-size:11px;color:var(--text-muted);
+  letter-spacing:-.03em;white-space:nowrap}
+.smark.unity span{color:var(--text-1);font-weight:600}
+
+/* fader slot */
+.fader{position:absolute;top:0;bottom:0;left:53px;width:11px;
+  background:var(--fader-track);border-radius:6px;cursor:ns-resize;
+  box-shadow:inset 0 2px 4px rgba(0,0,0,.8),inset 0 -1px 0 rgba(255,255,255,.04)}
+.fader-grad{position:absolute;inset:0;border-radius:6px;
+  background:linear-gradient(to top,#00B8A0 0%,#22C55E 62%,#F0A500 78%,#EF4444 92%,#CC1111 100%)}
+.fader-cover{position:absolute;left:0;right:0;top:0;background:var(--fader-track);
+  border-radius:6px 6px 0 0}
+.thumb{position:absolute;left:58px;transform:translate(-50%,-50%);
+  width:52px;height:28px;border-radius:4px;cursor:ns-resize;z-index:3;
+  background:linear-gradient(to bottom,#FFF,#C8D8E8 58%,#9FB3C7);
+  box-shadow:0 2px 7px rgba(0,0,0,.6),0 1px 2px rgba(0,0,0,.85),
+             inset 0 1px 0 rgba(255,255,255,.95)}
+.thumb::after{content:'';position:absolute;left:6px;right:6px;top:50%;height:1.5px;
+  background:rgba(0,0,0,.4);transform:translateY(-.75px);border-radius:1px}
+.thumb.detent{box-shadow:0 0 0 2px rgba(255,194,77,.8),0 2px 7px rgba(0,0,0,.6),
+             inset 0 1px 0 rgba(255,255,255,.95)}
+
+/* meters */
+.meters{position:absolute;top:0;bottom:0;right:0;width:34px}
+.mwrap{position:absolute;top:0;bottom:0;right:2px;display:flex;gap:3px}
+.meter{width:11px;background:var(--fader-track);border-radius:2px;position:relative;
+  overflow:hidden;box-shadow:inset 0 1px 3px rgba(0,0,0,.85)}
+.meter.slim{width:8px}
+.meter-grad{position:absolute;inset:0;
+  background:linear-gradient(to top,
+    #0b5f53 0%, #22C55E 40%, #6FD34A 64%,
+    #F0A500 71.4%, #FFC24D 80%,
+    #EF4444 85.7%, #CC1111 100%)}
+.meter-cover{position:absolute;left:0;right:0;top:0;background:#060C14;
+  transition:height 45ms linear}
+.peak{position:absolute;left:0;right:0;height:2px;background:var(--text-1);
+  opacity:.9;transition:bottom 200ms ease-out}
+.mline{position:absolute;right:2px;height:1px;background:rgba(255,255,255,.14);
+  z-index:2;pointer-events:none}
+.mline.zero{height:1.5px;background:rgba(255,194,77,.8);
+  box-shadow:0 0 5px rgba(240,165,0,.5)}
+.mline span{position:absolute;right:100%;top:50%;transform:translateY(-50%);
+  margin-right:4px;font-family:var(--font-m);font-size:11px;
+  color:var(--warning-text);white-space:nowrap}
+
+.db{font-family:var(--font-m);font-size:15px;color:var(--teal-500);
+  text-align:center;margin-top:11px;letter-spacing:-.02em;min-height:20px}
+.db.off{color:var(--text-disabled)}
+.db.at-unity{color:var(--warning-text)}
+.mute{margin-top:8px;width:100%;height:34px;border-radius:var(--radius-sm);
+  border:1px solid #1F2D3D;background:#111827;color:var(--text-2);
+  font-family:var(--font-b);font-size:12px;font-weight:600;letter-spacing:.06em;
+  box-shadow:inset 0 2px 4px rgba(0,0,0,.6);cursor:pointer}
+.mute.on{background:#2A0A0A;color:var(--danger-text);border-color:#7F1D1D;
+  box-shadow:0 0 6px 2px rgba(239,68,68,.5),0 0 14px 4px rgba(239,68,68,.22),
+             inset 0 1px 0 rgba(255,255,255,.08)}
+
+.strip.nometer .scale{left:22px}
+.strip.nometer .fader{left:75px}
+.strip.nometer .thumb{left:80px}
+
+.legend{margin-top:30px;font-size:13.5px;color:var(--text-muted);
+  max-width:820px;line-height:1.7}
+.legend b{color:var(--text-1)}
+.legend p{margin:0 0 13px}
+.laws{display:flex;gap:34px;flex-wrap:wrap;margin-top:10px}
+.lawcol{font-family:var(--font-m);font-size:12px;line-height:1.6}
+.lawcol b{display:block;font-family:var(--font-b);font-size:13px;
+  color:var(--text-1);margin-bottom:5px}
+</style>
+</head>
+<body>
+
+<h1>Channel metering</h1>
+<div class="sub">Mixer view — driver-derived fader scale, meter reference lines, mono and stereo strips</div>
+<div class="hint">▸ Drag any fader. It detents at 0&nbsp;dB — push past to break out.</div>
+
+<h2>Metering available</h2>
+<div class="h2sub">Driver reports <code>supports_metering</code> — the native connection is up</div>
+<div class="rack" id="rack"></div>
+
+<h2>Metering unavailable</h2>
+<div class="h2sub">The native connection was refused — control is unaffected</div>
+<div class="banner">
+  <b>Metering unavailable</b> — the mixer's native connection was refused.
+  Faders, mutes and scene recall are working normally.
+</div>
+<div class="rack" id="rack2"></div>
+
+<div class="legend">
+  <p><b>The scale is generated from the driver's fader law, not hard-coded.</b>
+  §5.5 already has the driver publishing a position&ndash;to&ndash;dB table so the
+  browser can place the thumb at frame rate; the printed legend comes from the
+  same table. Which points are labelled is a driver property too, because desks
+  print different scales:</p>
+
+  <div class="laws">
+    <div class="lawcol"><b>Allen &amp; Heath CQ</b>
+      +10 +5 <span style="color:var(--text-1)">0</span> &minus;5 &minus;10 &minus;20 &minus;30 &minus;40 &minus;&infin;<br>
+      unity at 76.6% of travel</div>
+    <div class="lawcol"><b>A different desk</b>
+      +10 <span style="color:var(--text-1)">0</span> &minus;10 &minus;20 &minus;30 &minus;50 &minus;&infin;<br>
+      unity elsewhere, different taper</div>
+  </div>
+
+  <p style="margin-top:14px">Swap the mixer and the legend follows, because it was
+  never ours to define. Hard-coding A&amp;H's law would have made the scale
+  confidently wrong on any other hardware &mdash; worse than having no scale.</p>
+
+  <p><b>0&nbsp;dB detents.</b> Within 1.5&nbsp;dB the fader holds exactly at unity and
+  the cap picks up an amber ring; breaking out takes a deliberate further push
+  rather than a nudge. This matters far more on a touchscreen than a mouse, and
+  unity is the position an operator returns to most.</p>
+
+  <p><b>The meter gradient changes colour exactly at the printed marks.</b> Green
+  below &minus;10, amber to 0, red above. The meter reads the same whether you
+  look at the colour or the scale.</p>
+
+  <p><b>Stereo channels get two meters.</b> ST1 and ST2 arrive as separate left and
+  right records, so a summed meter would hide the failure that matters most: one
+  side dead means a cable or source fault, and a single bar reading &ldquo;signal
+  present&rdquo; sends you looking in the wrong place.</p>
+
+  <p><b>When metering is unavailable the bar is absent, not empty</b>, and the fader
+  re-centres. An empty meter track reads as silence, which would be a lie.</p>
+</div>
+
+<script>
+// ═══ what the driver publishes ═══════════════════════════════════════════════
+// Position (fraction of travel) against dB. `lab` marks the points this desk
+// prints on its panel. Unity at 0.766 = NRPN 12544 / 16383.
+const CQ_LAW = [
+  {p:0.000, db:-Infinity, lab:'-\u221E'},
+  {p:0.088, db:-50},
+  {p:0.176, db:-40, lab:'-40'},
+  {p:0.288, db:-30, lab:'-30'},
+  {p:0.424, db:-20, lab:'-20'},
+  {p:0.572, db:-10, lab:'-10'},
+  {p:0.660, db:-5,  lab:'-5'},
+  {p:0.766, db:0,   lab:'0', unity:true},
+  {p:0.884, db:5,   lab:'+5'},
+  {p:1.000, db:10,  lab:'+10'}
+];
+const DETENTS = [0];          // dB values that detent — driver property
+const SNAP_DB = 1.5;          // half-width of the detent zone
+
+// interpolate both ways across the law table
+function posToDb(law, p){
+  p = Math.max(0, Math.min(1, p));
+  if (p <= law[0].p) return law[0].db;
+  for (let i=0; i<law.length-1; i++){
+    const a=law[i], b=law[i+1];
+    if (p <= b.p){
+      if (a.db === -Infinity) return b.db - (b.p - p)/(b.p - a.p) * 40;
+      return a.db + (p - a.p)/(b.p - a.p) * (b.db - a.db);
+    }
+  }
+  return law[law.length-1].db;
+}
+function dbToPos(law, db){
+  if (db === -Infinity) return 0;
+  for (let i=0; i<law.length-1; i++){
+    const a=law[i], b=law[i+1];
+    if (a.db === -Infinity) continue;
+    if (db <= b.db) return a.p + (db - a.db)/(b.db - a.db) * (b.p - a.p);
+  }
+  return 1;
+}
+
+// ═══ meter scale ═════════════════════════════════════════════════════════════
+const MTR_MIN=-60, MTR_MAX=10;
+const mpos = d => Math.max(0, Math.min(1, (d-MTR_MIN)/(MTR_MAX-MTR_MIN)));
+const MTR_MARKS=[{db:0,label:'0',zero:true},{db:-10},{db:-20},{db:-30},{db:-40}];
+
+const CHANNELS=[
+  {name:'Mic 1',    tag:'ip1',    accent:'#E8A020', db:-5,  ch:1, drive:'speech'},
+  {name:'Mic 2',    tag:'ip2',    accent:'#E8A020', db:-7.5,ch:1, drive:'silent'},
+  {name:'AUX',      tag:'st1',    accent:'#2874A6', db:-10, ch:2, drive:'silent'},
+  {name:'HDMI',     tag:'st2',    accent:'#2874A6', db:-2,  ch:2, drive:'music', native:true},
+  {name:'Foldback', tag:'out1/2', accent:'#7D3C98', db:-15, ch:2, drive:'quiet', muted:true},
+  {name:'Main',     tag:'main',   accent:'#F0F4F8', db:0,   ch:2, drive:'music'}
+];
+
+const scaleHTML = CQ_LAW.map(m =>
+  `<div class="smark ${m.lab?'lab':''} ${m.unity?'unity':''}" style="top:${(1-m.p)*100}%">
+     <i></i>${m.lab?`<span>${m.lab}</span>`:''}</div>`).join('');
+
+const linesHTML = MTR_MARKS.map(m =>
+  `<div class="mline ${m.zero?'zero':''}" style="bottom:${mpos(m.db)*100}%;
+     left:${m.zero?0:14}px">${m.zero?'<span>0</span>':''}</div>`).join('');
+
+function strip(c, withMeter){
+  const meters = withMeter ? `
+    <div class="meters">
+      <div class="mwrap">
+        ${Array.from({length:c.ch}).map(()=>`
+          <div class="meter ${c.ch===2?'slim':''}" data-m>
+            <div class="meter-grad"></div><div class="meter-cover" style="height:100%"></div>
+            <div class="peak" style="bottom:0"></div>
+          </div>`).join('')}
+      </div>${linesHTML}
+    </div>` : '';
+  const p = dbToPos(CQ_LAW, c.db);
+  return `
+  <div class="strip ${withMeter?'':'nometer'}" data-drive="${c.drive}" data-db="${c.db}">
+    <div class="accent" style="background:${c.accent}"></div>
+    <div class="name">${c.name}</div>
+    <div class="tag ${c.native?'native':''}">${c.tag}</div>
+    <div class="zone">
+      <div class="scale">${scaleHTML}</div>
+      <div class="fader" data-track>
+        <div class="fader-grad"></div>
+        <div class="fader-cover" style="height:${(1-p)*100}%"></div>
+      </div>
+      <div class="thumb" style="top:${(1-p)*100}%"></div>
+      ${meters}
+    </div>
+    <div class="db ${c.muted?'off':''}">${fmt(c.db)}</div>
+    <button class="mute ${c.muted?'on':''}">MUTE</button>
+  </div>`;
+}
+function fmt(db){
+  if (db === -Infinity) return '\u2212\u221E';
+  const s = Math.abs(db).toFixed(1);
+  return db < 0 ? '\u2212'+s : (db === 0 ? '0.0' : '+'+s);
+}
+
+document.getElementById('rack').innerHTML  = CHANNELS.map(c=>strip(c,true)).join('');
+document.getElementById('rack2').innerHTML = CHANNELS.slice(0,4).map(c=>strip(c,false)).join('');
+
+// ═══ drag with detent ════════════════════════════════════════════════════════
+document.querySelectorAll('.strip').forEach(el=>{
+  const zone  = el.querySelector('.zone');
+  const track = el.querySelector('[data-track]');
+  const thumb = el.querySelector('.thumb');
+  const cover = el.querySelector('.fader-cover');
+  const read  = el.querySelector('.db');
+  let held = false, broke = 0;
+
+  function apply(db){
+    // Detent: hold exactly at the value while inside the zone. Breaking out
+    // needs a deliberate push rather than a nudge, so we track how far past
+    // the edge the pointer has travelled.
+    let snapped = db, atDetent = false;
+    for (const d of DETENTS){
+      if (Math.abs(db - d) <= SNAP_DB){
+        if (broke < 6){ snapped = d; atDetent = true; broke++; }
+      } else broke = 0;
+    }
+    const p = dbToPos(CQ_LAW, snapped);
+    cover.style.height = (1-p)*100 + '%';
+    thumb.style.top    = (1-p)*100 + '%';
+    read.textContent   = fmt(Math.round(snapped*10)/10);
+    thumb.classList.toggle('detent', atDetent);
+    read.classList.toggle('at-unity', atDetent);
+    el.dataset.db = snapped;
+  }
+  function fromEvent(e){
+    const r = track.getBoundingClientRect();
+    const p = 1 - (e.clientY - r.top) / r.height;
+    apply(posToDb(CQ_LAW, p));
+  }
+  zone.addEventListener('pointerdown', e=>{
+    if (e.target.closest('.meters')) return;
+    held = true; broke = 0; zone.setPointerCapture(e.pointerId); fromEvent(e);
+  });
+  zone.addEventListener('pointermove', e=>{ if (held) fromEvent(e); });
+  zone.addEventListener('pointerup',   ()=>{ held = false; });
+  el.querySelector('.mute').addEventListener('click', ev=>
+    ev.currentTarget.classList.toggle('on'));
+});
+
+// ═══ meter animation ═════════════════════════════════════════════════════════
+const state = new WeakMap();
+function level(drive, t, side){
+  const off = side*0.35;
+  switch(drive){
+    case 'speech':{
+      const p=(t*1.6+off)%3.2;
+      if(p>2.1) return -58;
+      return -14 + 10*Math.abs(Math.sin(p*7.5))*(0.6+0.4*Math.sin(p*2.1));
+    }
+    case 'music': return -11 + 5*Math.sin(t*2.3+off) + 3*Math.sin(t*7.1+off*2) + 1.5*Math.sin(t*17+off);
+    case 'quiet': return -30 + 6*Math.sin(t*1.9+off);
+    default:      return -57;
+  }
+}
+function tick(ts){
+  const t = ts/1000;
+  document.querySelectorAll('.strip').forEach(el=>{
+    const drive = el.dataset.drive;
+    el.querySelectorAll('[data-m]').forEach((m,i)=>{
+      let s = state.get(m);
+      if(!s) state.set(m, s = {v:0, peak:0, peakAt:0});
+      const target = mpos(level(drive, t, i));
+      s.v = target > s.v ? target : s.v + (target - s.v)*0.10;
+      if (s.v >= s.peak){ s.peak = s.v; s.peakAt = t; }
+      else if (t - s.peakAt > 1.4) s.peak = Math.max(s.v, s.peak - 0.009);
+      m.querySelector('.meter-cover').style.height = (100 - s.v*100) + '%';
+      m.querySelector('.peak').style.bottom = (s.peak*100) + '%';
+    });
+  });
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>

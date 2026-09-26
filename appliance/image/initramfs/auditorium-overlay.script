@@ -1,0 +1,81 @@
+#!/bin/sh
+# initramfs-tools boot script — installed as /etc/initramfs-tools/scripts/overlay
+#
+# Selected by "boot=overlay" on the kernel command line. Mounts the real root
+# (root=PARTUUID=…) read-only exactly as the standard "local" script would, then
+# lifts it into an overlayfs whose upper layer is a tmpfs. Writes to / land in
+# RAM and are discarded at reboot (§4.3). Writable state lives on /data and
+# /srv/appliance, which are mounted from fstab as normal.
+#
+# Why our own script rather than `raspi-config nonint enable_overlayfs`:
+# raspi-config generates its hook against the *running* kernel (uname -r) and
+# edits the live /boot/firmware, so it cannot be run from a build host against a
+# slot that is not booted. This script is the same mechanism — about forty lines,
+# kept in the repository where a maintainer can read it — and it is installed
+# into the slot at build time, after which `update-initramfs` bakes it in.
+#
+# Escape hatch: remove "boot=overlay" from the slot's cmdline.txt and the root
+# mounts read-write with no overlay, for maintenance at a desk.
+#
+# After boot the two layers stay visible under /run:
+#   /run/auditorium/lower   the real root, read-only
+#   /run/auditorium/rw      the tmpfs holding everything written since boot
+# `df /run/auditorium/rw` shows how much RAM the overlay is using.
+
+PREREQ=""
+
+prereqs() {
+    echo "$PREREQ"
+}
+
+case "$1" in
+    prereqs)
+        prereqs
+        exit 0
+        ;;
+esac
+
+# shellcheck disable=SC1091  # provided by initramfs-tools inside the initramfs
+. /scripts/functions
+# shellcheck disable=SC1091
+. /scripts/local
+
+# initramfs-tools' /init calls these three hooks around mountroot; the "local"
+# script defines the underlying functions and we simply delegate.
+mount_top() {
+    local_top
+}
+
+mount_premount() {
+    local_premount
+}
+
+mount_bottom() {
+    local_bottom
+}
+
+# shellcheck disable=SC2154  # rootmnt is set by /init before mountroot is called
+mountroot() {
+    # Resolve root=, run fsck, mount read-only at ${rootmnt} ("ro" is on the
+    # command line, so local_mount_root passes -r).
+    local_mount_root
+
+    mkdir -p /run/auditorium/lower /run/auditorium/rw
+
+    # Move the real root out of the way. /run is moved wholesale into the new
+    # root by run-init, so both layers survive the switch.
+    if ! mount -o move "${rootmnt}" /run/auditorium/lower; then
+        # klibc's mount may lack "move"; a bind followed by an unmount is equivalent.
+        mount -o bind "${rootmnt}" /run/auditorium/lower || panic "overlay: cannot relocate root"
+        umount "${rootmnt}" || panic "overlay: cannot unmount original root"
+    fi
+
+    mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run/auditorium/rw \
+        || panic "overlay: cannot mount tmpfs upper layer"
+    mkdir -p /run/auditorium/rw/upper /run/auditorium/rw/work
+
+    mount -t overlay \
+        -o lowerdir=/run/auditorium/lower,upperdir=/run/auditorium/rw/upper,workdir=/run/auditorium/rw/work \
+        overlay "${rootmnt}" \
+        || panic "overlay: cannot mount overlay root"
+}

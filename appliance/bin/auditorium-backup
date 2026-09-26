@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# auditorium-backup — started nightly by auditorium-backup.timer (§13.1-§13.4;
+# contracts §5, Q3).
+#
+# This wrapper lives on the read-only root at /usr/local/bin, NOT under
+# /opt/auditorium, so it is still here after a bad update or a damaged
+# application directory (the same reasoning as avc-reset-password). The work
+# is done by proskenion.tools.backup, in the application's own environment;
+# auditorium-backup.service already runs this as the `auditorium` user, so
+# there is no privilege to drop here.
+
+set -euo pipefail
+
+VENV_PYTHON=/opt/auditorium/venv/bin/python
+
+if [[ ! -x "$VENV_PYTHON" ]]; then
+    cat >&2 <<MSG
+auditorium-backup: the application environment is missing.
+
+  Expected: ${VENV_PYTHON}
+  /opt/auditorium is a symlink to /data/app/current (§2.3). Either /data is
+  not mounted, or no application version has been installed there yet, or
+  the current version is damaged. Nothing was backed up tonight.
+
+  Check:   ls -l /opt/auditorium /data/app/
+           systemctl status data.mount auditorium-core.service
+MSG
+    exit 2
+fi
+
+exec "$VENV_PYTHON" -m proskenion.tools.backup --source scheduled

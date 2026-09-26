@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<GroupAddress-Export xmlns="http://knx.org/xml/ga-export/01">
+  <GroupRange Name="Lighting">
+    <GroupAddress Address="4/0/1" Name="Foyer Dimmer Level" Description="Foyer dimmer, 0-100%" DatapointType="DPST-5-1"/>
+    <GroupAddress Address="4/0/2" Name="Foyer Dimmer Status" Description="" DatapointType="DPST-5-1"/>
+  </GroupRange>
+</GroupAddress-Export>

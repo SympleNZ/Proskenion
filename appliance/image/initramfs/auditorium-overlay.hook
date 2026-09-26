@@ -1,0 +1,27 @@
+#!/bin/sh
+# initramfs-tools hook — installed as /etc/initramfs-tools/hooks/auditorium-overlay
+#
+# Makes sure the overlay filesystem module is available inside the initramfs.
+# On Raspberry Pi kernels overlayfs is normally built in, in which case this
+# is a no-op; on a port it may be a module, and without it boot=overlay panics.
+# See appliance/image/initramfs/auditorium-overlay.script for the mount logic.
+
+PREREQ=""
+
+prereqs() {
+    echo "$PREREQ"
+}
+
+case "$1" in
+    prereqs)
+        prereqs
+        exit 0
+        ;;
+esac
+
+# shellcheck disable=SC1091  # exists only inside the initramfs build
+. /usr/share/initramfs-tools/hook-functions
+
+manual_add_modules overlay
+
+exit 0

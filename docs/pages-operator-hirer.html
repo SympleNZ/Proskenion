@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en-NZ">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pages — Auditorium Controller</title>
+<style>
+:root{
+  --bg-base:#0A0F1A; --bg-surface:#111827; --bg-elevated:#1C2B3A; --bg-overlay:#243447;
+  --teal-500:#00B8A0; --teal-400:#00D4BC; --teal-300:#33DFC9;
+  --success:#22C55E; --warning:#F0A500; --danger:#EF4444;
+  --warning-text:#FFC24D; --danger-text:#FF7B7B;
+  --text-1:#F0F4F8; --text-2:#8A9BB0; --text-muted:#7589A0; --text-disabled:#4A5B6E;
+  --fader-track:#060C14; --rule:rgba(255,255,255,.06); --rule-strong:rgba(255,255,255,.11);
+  --font-b:'DM Sans',ui-sans-serif,system-ui,-apple-system,sans-serif;
+  --font-m:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,monospace;
+  --r-sm:4px; --r-md:8px;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg-base);color:var(--text-2);font-family:var(--font-b);
+  font-size:15px;-webkit-font-smoothing:antialiased;display:flex;flex-direction:column;
+  overflow:hidden}
+
+/* mockup-only control */
+.demo{background:#000;border-bottom:1px solid var(--rule);padding:9px 18px;
+  display:flex;align-items:center;gap:12px;font-size:12.5px;color:var(--text-disabled)}
+.demo b{color:var(--text-muted);font-weight:500}
+.demo button{background:var(--bg-surface);border:1px solid var(--rule);color:var(--text-2);
+  border-radius:6px;padding:6px 14px;font-family:var(--font-b);font-size:12.5px;cursor:pointer}
+.demo button.on{background:var(--bg-elevated);color:var(--teal-300);
+  border-color:rgba(0,184,160,.45)}
+
+/* ── status bar ─────────────────────────────────────── */
+.status{display:flex;align-items:center;gap:20px;padding:10px 20px;
+  background:var(--bg-surface);border-top:1px solid var(--rule);flex:none;order:99}
+.clock{font-family:var(--font-m);font-size:15px;color:var(--text-1);letter-spacing:-.01em}
+.clock i{font-style:normal;font-size:11px;color:var(--text-muted);margin-left:6px}
+.timer{display:flex;align-items:center;gap:9px}
+.timer .t{font-family:var(--font-m);font-size:15px;color:var(--teal-300);
+  letter-spacing:-.01em;min-width:74px;text-align:right}
+.timer .t.stop{color:var(--text-2)}
+.timer button{width:34px;height:34px;border-radius:var(--r-sm);background:var(--bg-elevated);
+  border:1px solid var(--rule-strong);color:var(--text-1);font-size:12px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center}
+.timer button:hover{background:var(--bg-overlay)}
+.timer button.run{background:rgba(0,184,160,.14);border-color:rgba(0,184,160,.5);
+  color:var(--teal-300)}
+.sep{width:1px;height:20px;background:var(--rule-strong)}
+.dev{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-2)}
+.dev.click{cursor:pointer}
+.dev.click:hover{color:var(--text-1)}
+.led{width:10px;height:10px;border-radius:50%;flex:none}
+.led.g{background:radial-gradient(circle at 35% 35%,#AFFFEE,#22C55E 40%,#15803D 100%);
+  box-shadow:0 0 4px 2px rgba(34,197,94,.8),0 0 10px 4px rgba(34,197,94,.4)}
+.led.a{background:radial-gradient(circle at 35% 35%,#FFF3AA,#F0A500 40%,#B45309 100%);
+  box-shadow:0 0 4px 2px rgba(240,165,0,.9),0 0 10px 4px rgba(240,165,0,.45)}
+.led.o{background:radial-gradient(circle at 35% 35%,#6B7E94,#2D3D4F 40%,#1C2B3A 100%);
+  box-shadow:inset 0 1px 2px rgba(0,0,0,.5)}
+.spacer{flex:1}
+.acct{width:34px;height:34px;border-radius:50%;background:var(--bg-elevated);
+  border:1px solid var(--rule-strong);color:var(--text-1);font-size:12.5px;font-weight:600;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;flex:none}
+.acct:hover{background:var(--bg-overlay)}
+.menuwrap{position:relative}
+.menu{position:absolute;right:0;top:42px;min-width:186px;background:var(--bg-elevated);
+  border:1px solid var(--rule-strong);border-radius:var(--r-md);padding:6px;z-index:40;
+  box-shadow:0 10px 30px rgba(0,0,0,.6)}
+.menu .who{padding:8px 12px 10px;border-bottom:1px solid var(--rule);margin-bottom:5px}
+.menu .who b{display:block;color:var(--text-1);font-size:13.5px;font-weight:600}
+.menu .who span{font-family:var(--font-m);font-size:11px;color:var(--text-muted)}
+.menu a{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:10px 12px;border-radius:var(--r-sm);color:var(--text-2);font-size:13.5px;
+  cursor:pointer;min-height:40px}
+.menu a:hover{background:var(--bg-overlay);color:var(--text-1)}
+.menu a.out{color:var(--danger-text)}
+.menu a em{font-family:var(--font-m);font-size:11.5px;color:var(--text-disabled);
+  font-style:normal}
+.menu hr{border:0;border-top:1px solid var(--rule);margin:5px 0}
+
+.logout{background:var(--bg-surface);border:1px solid var(--rule-strong);color:var(--text-2);
+  border-radius:var(--r-md);padding:12px 22px;font-family:var(--font-b);font-size:15px;
+  font-weight:500;cursor:pointer;min-height:52px}
+.logout:hover{background:var(--bg-elevated);color:var(--text-1)}
+
+.scrim{position:fixed;inset:0;background:rgba(4,8,14,.72);z-index:60;
+  display:flex;align-items:center;justify-content:center;padding:24px}
+.dlg{background:var(--bg-surface);border:1px solid var(--rule-strong);border-radius:12px;
+  padding:26px 28px;max-width:420px;box-shadow:0 24px 60px rgba(0,0,0,.7)}
+.dlg h3{color:var(--text-1);font-size:18px;margin:0 0 10px;font-weight:600}
+.dlg p{margin:0 0 20px;font-size:14.5px;line-height:1.6}
+.dlg .row{display:flex;gap:10px;justify-content:flex-end}
+.dlg button{border-radius:var(--r-sm);padding:12px 20px;font-family:var(--font-b);
+  font-size:14px;font-weight:500;cursor:pointer;min-height:48px;
+  background:var(--bg-elevated);border:1px solid var(--rule-strong);color:var(--text-1)}
+.dlg button.go{background:#2A0A0A;border-color:#7F1D1D;color:var(--danger-text)}
+
+/* ── navigation ─────────────────────────────────────── */
+.nav{display:flex;gap:2px;padding:0 14px;background:var(--bg-surface);
+  border-bottom:1px solid var(--rule);flex:none;overflow-x:auto}
+.nav a{padding:13px 17px;color:var(--text-2);font-size:13.5px;font-weight:500;
+  border-bottom:2px solid transparent;cursor:pointer;white-space:nowrap}
+.nav a:hover{color:var(--text-1)}
+.nav a.on{color:var(--teal-300);border-bottom-color:var(--teal-500)}
+
+/* ── page tabs ──────────────────────────────────────── */
+.ptabs{display:flex;gap:9px;padding:14px 20px 0;flex:none;flex-wrap:wrap}
+.ptab{background:var(--bg-surface);border:1px solid var(--rule);color:var(--text-2);
+  border-radius:var(--r-md);padding:10px 20px;font-family:var(--font-b);font-size:13.5px;
+  font-weight:500;cursor:pointer;min-height:44px}
+.ptab:hover{background:var(--bg-elevated);color:var(--text-1)}
+.ptab.on{background:var(--bg-elevated);color:var(--teal-300);
+  border-color:rgba(0,184,160,.45);box-shadow:inset 3px 0 0 var(--teal-500)}
+
+/* ── surface ────────────────────────────────────────── */
+.surface{flex:1;display:flex;gap:14px;align-items:stretch;padding:16px 20px 22px;
+  overflow-x:auto;overflow-y:hidden;min-height:0}
+.strip,.panel{background:var(--bg-surface);border:1px solid var(--rule);
+  border-radius:var(--r-md);position:relative;padding:13px 9px 12px;overflow:hidden;
+  flex:none;align-self:stretch;min-height:0}
+.strip{width:150px;display:flex;flex-direction:column;align-items:center}
+/* The fader takes whatever height is left after the strip's furniture, so a
+   booth screen gets ~730px of travel and a small laptop still gets ~415px —
+   both past the 378px a 100mm physical fader gives. */
+.zone{min-height:180px}
+.accent{position:absolute;top:0;left:0;right:0;height:3px;opacity:.9}
+.name{font-size:13.5px;font-weight:500;color:var(--text-1);text-align:center;margin-top:6px;
+  line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%}
+.tag{font-family:var(--font-m);font-size:11px;color:var(--text-muted);min-height:15px;
+  margin-bottom:9px}
+.zone{flex:1;width:100%;position:relative;min-height:0}
+.scale{position:absolute;top:0;bottom:0;left:0;width:34px}
+.smark{position:absolute;right:0;width:34px;height:0;transform:translateY(-50%)}
+.smark i{position:absolute;right:0;top:-.5px;width:5px;height:1px;background:var(--rule-strong)}
+.smark.lab i{width:8px}
+.smark.unity i{width:12px;height:1.5px;background:rgba(255,255,255,.5)}
+.smark span{position:absolute;right:11px;top:50%;transform:translateY(-50%);
+  font-family:var(--font-m);font-size:11px;color:var(--text-muted)}
+.smark.unity span{color:var(--text-1);font-weight:600}
+.fader{position:absolute;top:0;bottom:0;left:52px;width:11px;background:var(--fader-track);
+  border-radius:6px;box-shadow:inset 0 2px 4px rgba(0,0,0,.8)}
+.fader-grad{position:absolute;inset:0;border-radius:6px;
+  background:linear-gradient(to top,#00B8A0 0%,#22C55E 62%,#F0A500 78%,#EF4444 92%,#CC1111 100%)}
+.fader-cover{position:absolute;left:0;right:0;top:0;background:var(--fader-track);
+  border-radius:6px 6px 0 0}
+.thumb{position:absolute;left:57px;transform:translate(-50%,-50%);width:52px;height:28px;
+  border-radius:4px;z-index:3;background:linear-gradient(to bottom,#FFF,#C8D8E8 58%,#9FB3C7);
+  box-shadow:0 2px 7px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.95)}
+.thumb::after{content:'';position:absolute;left:6px;right:6px;top:50%;height:1.5px;
+  background:rgba(0,0,0,.4);transform:translateY(-.75px)}
+.ghost{position:absolute;left:46px;width:22px;height:2px;border-radius:1px;
+  background:rgba(255,255,255,.34);z-index:2}
+.meters{position:absolute;top:0;bottom:0;right:0;width:32px}
+.mwrap{position:absolute;top:0;bottom:0;right:2px;display:flex;gap:3px}
+.meter{width:11px;background:var(--fader-track);border-radius:2px;position:relative;
+  overflow:hidden;box-shadow:inset 0 1px 3px rgba(0,0,0,.85)}
+.meter.slim{width:8px}
+.meter-grad{position:absolute;inset:0;background:linear-gradient(to top,
+  #0b5f53 0%,#22C55E 40%,#6FD34A 64%,#F0A500 71.4%,#FFC24D 80%,#EF4444 85.7%,#CC1111 100%)}
+.meter-cover{position:absolute;left:0;right:0;top:0;background:#060C14;transition:height 45ms linear}
+.peak{position:absolute;left:0;right:0;height:2px;background:var(--text-1);opacity:.9;
+  transition:bottom 200ms ease-out}
+.mline{position:absolute;right:2px;left:14px;height:1px;background:rgba(255,255,255,.14);z-index:2}
+.mline.zero{left:0;height:1.5px;background:rgba(255,194,77,.8);box-shadow:0 0 5px rgba(240,165,0,.5)}
+.mline span{position:absolute;right:100%;top:50%;transform:translateY(-50%);margin-right:4px;
+  font-family:var(--font-m);font-size:11px;color:var(--warning-text)}
+.db{font-family:var(--font-m);font-size:15px;color:var(--teal-500);text-align:center;
+  margin-top:11px}
+.db em{font-style:normal;color:var(--text-disabled);font-size:12.5px}
+.mute{margin-top:8px;width:100%;height:34px;border-radius:var(--r-sm);border:1px solid #1F2D3D;
+  background:#111827;color:var(--text-2);font-family:var(--font-b);font-size:12px;
+  font-weight:600;letter-spacing:.06em;box-shadow:inset 0 2px 4px rgba(0,0,0,.6);cursor:pointer}
+.mute.on{background:#2A0A0A;color:var(--danger-text);border-color:#7F1D1D;
+  box-shadow:0 0 6px 2px rgba(239,68,68,.5),inset 0 1px 0 rgba(255,255,255,.08)}
+
+/* group tray */
+.group{position:relative;display:flex;gap:0;padding:26px 11px 11px;border-radius:11px;
+  border:1px solid var(--gc-line);background:var(--gc-fill);flex:none;align-self:stretch}
+.group-name{position:absolute;top:7px;left:13px;font-size:11.5px;font-weight:600;
+  letter-spacing:.05em;text-transform:uppercase;color:var(--gc-text)}
+.members{display:flex;overflow:hidden;width:var(--w);opacity:1;
+  transition:width 300ms cubic-bezier(.2,0,0,1),opacity 190ms ease}
+.group:not(.open) .members{width:0;opacity:0}
+.members .strip{flex:0 0 150px;margin-right:12px}
+.strip.master{background:var(--gc-master)}
+.strip.master .accent{height:5px}
+.strip.master .name{color:var(--gc-text)}
+.expand{margin-top:7px;width:100%;height:26px;border-radius:var(--r-sm);
+  border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.035);
+  color:var(--gc-text);font-family:var(--font-b);font-size:11.5px;font-weight:600;
+  cursor:pointer}
+
+/* button panel */
+.panel{display:flex;flex-direction:column;padding:13px 12px 14px}
+.panel-title{font-size:13.5px;font-weight:500;color:var(--text-1);text-align:center;
+  margin:3px 0 11px}
+/* Buttons cap rather than stretching — a 280px button is absurd. The panel
+   card still fills the height, with its buttons bottom-aligned so they sit at
+   the same reach as the fader thumbs. */
+.grid{flex:1;display:grid;gap:14px;min-height:0;
+  grid-template-rows:repeat(3,minmax(64px,152px));align-content:end}
+.btn{position:relative;background:linear-gradient(to bottom,#1E2A3C,#161F2E 62%,#131B28);
+  border:1px solid #263346;border-top-color:#33445C;border-radius:9px;display:flex;
+  flex-direction:column;align-items:center;cursor:pointer;color:var(--text-2);
+  font-family:var(--font-b);font-size:14.5px;font-weight:500;line-height:1.28;
+  text-align:center;padding:14px 10px 12px;
+  box-shadow:0 2px 0 rgba(0,0,0,.55),0 4px 9px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.07);
+  transition:background 120ms,box-shadow 160ms,transform 90ms}
+.btn:hover{background:linear-gradient(to bottom,#243247,#1A2434 62%,#161F2E)}
+.btn:active{transform:translateY(2px)}
+.btn .bled{width:30px;height:7px;border-radius:3.5px;flex:none;margin-bottom:12px;
+  background:radial-gradient(circle at 40% 40%,#4A5B6E,#25303F 60%,#161F2B);
+  box-shadow:inset 0 1px 2px rgba(0,0,0,.7)}
+.btn .lbl{flex:1;display:flex;align-items:center;justify-content:center;width:100%;min-height:0}
+.btn .lbl span{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;
+  overflow:hidden}
+.btn.on{transform:translateY(2px);background:linear-gradient(to bottom,#131C29,#151E2B 60%,#16202D);
+  border-color:rgba(34,197,94,.42);
+  box-shadow:0 0 0 1px rgba(34,197,94,.34),0 0 16px 3px rgba(34,197,94,.13),
+  inset 0 3px 7px rgba(0,0,0,.5)}
+.btn.on .bled{background:radial-gradient(circle at 40% 40%,#AFFFEE,#22C55E 42%,#15803D 100%);
+  box-shadow:0 0 5px 2px rgba(34,197,94,.85),0 0 12px 4px rgba(34,197,94,.4)}
+.btn.amber{transform:translateY(2px);background:linear-gradient(to bottom,#1A1D24,#1B1E25 60%,#1C1F26);
+  border-color:rgba(240,165,0,.45);
+  box-shadow:0 0 0 1px rgba(240,165,0,.36),0 0 16px 3px rgba(240,165,0,.14),
+  inset 0 3px 7px rgba(0,0,0,.5)}
+.btn.amber .bled{background:radial-gradient(circle at 40% 40%,#FFF3AA,#F0A500 42%,#B45309 100%);
+  box-shadow:0 0 5px 2px rgba(240,165,0,.9);animation:pulse 1.5s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* hirer overrides — §24.6: 72px minimum, no configuration surfaces */
+body.hirer .strip{width:174px}
+body.hirer .mute{height:72px;font-size:14px}
+body.hirer .btn{font-size:16px}
+body.hirer .btn .bled{width:36px;height:8px}
+body.hirer .surface{padding:22px 26px 26px;gap:18px}
+body.hirer .name{font-size:15px}
+body.hirer .db{font-size:17px}
+body.hirer .thumb{height:38px;width:60px}
+
+.hbar{padding:14px 26px;background:var(--bg-surface);border-bottom:1px solid var(--rule);
+  display:flex;align-items:center;gap:16px;flex:none}
+.hbar b{color:var(--text-1);font-size:16px;font-weight:600}
+.hbar .sub{color:var(--text-muted);font-size:13px}
+/* Below this the panels stop competing with the strips for width. */
+@media (max-width:900px){
+  .surface{flex-wrap:wrap;overflow-y:auto}
+  .panel{align-self:auto;width:100%!important}
+  .panel .grid{grid-template-rows:repeat(3,minmax(64px,112px));
+    grid-template-columns:repeat(auto-fit,minmax(112px,1fr))!important}
+}
+@media (max-height:700px){
+  .zone{min-height:150px}
+  .grid{grid-template-rows:repeat(3,minmax(56px,116px))}
+}
+
+@media (prefers-reduced-motion:reduce){*{transition-duration:50ms!important;
+  animation-duration:50ms!important}}
+</style>
+</head>
+<body>
+
+<div class="demo">
+  <b>Mockup control — not part of the application:</b>
+  <button id="asStaff" class="on">View as staff</button>
+  <button id="asHirer">View as hirer</button>
+  <span id="demoNote"></span>
+</div>
+
+<div id="shell"></div>
+
+<script>
+const LAW=[{p:0,db:-Infinity,lab:'-\u221E'},{p:.088,db:-50},{p:.176,db:-40,lab:'-40'},
+ {p:.288,db:-30,lab:'-30'},{p:.424,db:-20,lab:'-20'},{p:.572,db:-10,lab:'-10'},
+ {p:.66,db:-5,lab:'-5'},{p:.766,db:0,lab:'0',unity:1},{p:.884,db:5,lab:'+5'},{p:1,db:10,lab:'+10'}];
+const dbToPos=db=>{if(db===-Infinity)return 0;
+  for(let i=0;i<LAW.length-1;i++){const a=LAW[i],b=LAW[i+1];
+    if(a.db===-Infinity)continue; if(db<=b.db)return a.p+(db-a.db)/(b.db-a.db)*(b.p-a.p);} return 1;};
+const MIN=-60,MAX=10,mpos=d=>Math.max(0,Math.min(1,(d-MIN)/(MAX-MIN)));
+const fmt=db=>db===-Infinity?'\u2212\u221E':(db<0?'\u2212'+Math.abs(db).toFixed(1)
+  :(db===0?'0.0':'+'+db.toFixed(1)));
+const scaleHTML=LAW.map(m=>`<div class="smark ${m.lab?'lab':''} ${m.unity?'unity':''}"
+  style="top:${(1-m.p)*100}%"><i></i>${m.lab?`<span>${m.lab}</span>`:''}</div>`).join('');
+const linesHTML=[{db:0,z:1},{db:-10},{db:-20},{db:-30},{db:-40}].map(m=>
+  `<div class="mline ${m.z?'zero':''}" style="bottom:${mpos(m.db)*100}%">${m.z?'<span>0</span>':''}</div>`).join('');
+
+function strip(c){
+  const p=c.lighting?c.level/100:dbToPos(LAW,c.db);
+  const eff=c.groupMul!=null?c.level*c.groupMul:null;
+  const meters=c.ch?`<div class="meters"><div class="mwrap">${
+    Array.from({length:c.ch}).map(()=>`<div class="meter ${c.ch===2?'slim':''}" data-m>
+      <div class="meter-grad"></div><div class="meter-cover" style="height:100%"></div>
+      <div class="peak" style="bottom:0"></div></div>`).join('')}</div>${linesHTML}</div>`:'';
+  return `<div class="strip ${c.master?'master':''}" data-drive="${c.drive||'silent'}">
+    <div class="accent" style="background:${c.accent}"></div>
+    <div class="name">${c.name}</div><div class="tag">${c.tag||''}</div>
+    <div class="zone">
+      ${c.lighting?'':`<div class="scale">${scaleHTML}</div>`}
+      <div class="fader" style="${c.lighting?'left:50%;transform:translateX(-50%)':''}">
+        <div class="fader-grad"></div>
+        <div class="fader-cover" style="height:${(1-p)*100}%"></div></div>
+      <div class="thumb" style="top:${(1-p)*100}%;${c.lighting?'left:50%':''}"></div>
+      ${eff!=null?`<div class="ghost" style="top:${100-eff}%"></div>`:''}
+      ${meters}</div>
+    <div class="db">${c.lighting?c.level.toFixed(0)+'%':fmt(c.db)}${
+      eff!=null?` <em>\u2192${eff.toFixed(0)}%</em>`:''}</div>
+    <button class="mute">${c.lighting?'BUMP':'MUTE'}</button>
+    ${c.master?`<button class="expand">\u25B4 Collapse</button>`:''}</div>`;
+}
+const rgb=h=>{const n=parseInt(h.slice(1),16);return [(n>>16)&255,(n>>8)&255,n&255]};
+function tray(g){
+  const [r,gg,b]=rgb(g.colour);
+  const v=`--gc-line:rgba(${r},${gg},${b},.30);--gc-fill:rgba(${r},${gg},${b},.055);`
+        +`--gc-text:${g.colour};--gc-master:linear-gradient(to bottom,rgba(${r},${gg},${b},.16),`
+        +`rgba(${r},${gg},${b},.05) 55%,var(--bg-surface))`;
+  const m=g.items.find(i=>i.master), mem=g.items.filter(i=>!i.master);
+  return `<div class="group open" style="${v};--w:${mem.length*162}px">
+    <div class="group-name">${g.name}</div>
+    <div class="members">${mem.map(i=>strip({...i,groupMul:m.level/100})).join('')}</div>
+    ${strip(m)}</div>`;
+}
+function panel(p){
+  const cells=p.w*3;
+  return `<div class="panel" style="width:${p.w*150+(p.w-1)*14}px">
+    <div class="panel-title">${p.title}</div>
+    <div class="grid" style="grid-template-columns:repeat(${p.w},1fr);
+      grid-template-rows:repeat(3,1fr)">${
+      Array.from({length:cells},(_,i)=>{const b=p.btns[i];
+        if(!b) return `<div class="btn" style="opacity:.25;border-style:dashed;box-shadow:none"></div>`;
+        return `<button class="btn ${b.on?'on':''}${b.amber?' amber':''}">
+          <span class="bled"></span><span class="lbl"><span>${b.lbl}</span></span></button>`;
+      }).join('')}</div></div>`;
+}
+
+const STAFF_PAGES=[
+ {name:'Performance', items:[
+   {t:'ch',name:'Wireless Mic 1',tag:'ip1',accent:'#E8C26C',db:-5,ch:1,drive:'speech'},
+   {t:'ch',name:'Wireless Mic 2',tag:'ip2',accent:'#E8C26C',db:-7.5,ch:1,drive:'silent'},
+   {t:'ch',name:'HDMI',tag:'st2',accent:'#00A5FE',db:-2,ch:2,drive:'music'},
+   {t:'ch',name:'Main',tag:'main',accent:'#E8EEF4',db:0,ch:2,drive:'music'},
+   {t:'panel',title:'Stage',w:1,btns:[{lbl:'Stage Bank 1',on:1},{lbl:'Stage Bank 2',on:1},
+     {lbl:'Stage Bank 3'}]},
+   {t:'panel',title:'Room',w:2,btns:[{lbl:'Projector',amber:1},{lbl:'Screen',on:1},
+     {lbl:'House Lights',on:1},{lbl:'Speakers',on:1},
+     {lbl:'HDMI: Side of Stage',on:1},{lbl:'HDMI: Back of House'}]}]},
+ {name:'Lighting', items:[
+   {t:'group',name:'Front of Stage',colour:'#E8C26C',items:[
+     {t:'ch',name:'Fixture 1',tag:'ch1',accent:'#E8C26C',lighting:1,level:85},
+     {t:'ch',name:'Fixture 2',tag:'ch2',accent:'#E8C26C',lighting:1,level:78},
+     {t:'ch',name:'Fixture 3',tag:'ch3',accent:'#E8C26C',lighting:1,level:92},
+     {t:'ch',name:'Bank 1',tag:'master',accent:'#E8C26C',lighting:1,level:65,master:1}]},
+   {t:'panel',title:'House',w:2,btns:[{lbl:'House Full Up',on:1},{lbl:'House to Half'},
+     {lbl:'House Down'},{lbl:'House Off'},{lbl:'Work Lights'},{lbl:'Cleaners Lights'}]}]}
+];
+const HIRER_PAGE={name:'Hire', items:[
+  {t:'ch',name:'Microphone',tag:'',accent:'#E8C26C',db:-5,ch:1,drive:'speech'},
+  {t:'ch',name:'Laptop / HDMI',tag:'',accent:'#00A5FE',db:-2,ch:2,drive:'music'},
+  {t:'panel',title:'Lighting',w:1,btns:[{lbl:'Stage Lights On',on:1},{lbl:'Stage Lights Off'},
+    {lbl:'House Lights',on:1}]}]};
+
+const DEVICES=[['KNX','g'],['DMX','g'],['Mixer','g'],['Projector','a'],['HDMI','g']];
+let mode='staff', page=0;
+// The timer is shared state on the server, not a per-client stopwatch — two
+// operators must see the same number. Simulated here.
+let tRun=false, tStart=0, tAcc=0;
+const elapsedMs=()=> tAcc + (tRun ? Date.now()-tStart : 0);
+function elapsedStr(){
+  const t=Math.floor(elapsedMs()/1000);
+  return String(Math.floor(t/3600))+':'+String(Math.floor(t/60)%60).padStart(2,'0')
+    +':'+String(t%60).padStart(2,'0');
+}
+// The clock is the appliance's time, not the browser's — it is the clock
+// scheduled rules fire against.
+function clockStr(){
+  const d=new Date();
+  return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+}
+
+function render(){
+  const isH = mode==='hirer';
+  document.body.classList.toggle('hirer', isH);
+  const devs = DEVICES.map(([n,s])=>
+    `<div class="dev ${isH?'':'click'}"><span class="led ${s}"></span>${n}</div>`).join('');
+  const pages = isH ? [HIRER_PAGE] : STAFF_PAGES;
+  const items = pages[isH?0:page].items;
+
+  document.getElementById('shell').innerHTML = isH ? `
+    <div class="hbar"><b>Auditorium</b>
+      <span class="sub">Speak to venue staff if you need anything changed.</span>
+      <div class="spacer"></div>
+      <button class="logout" id="hout">Log out</button></div>
+    <div class="surface">${items.map(r=>r.t==='ch'?strip(r):r.t==='group'?tray(r):panel(r)).join('')}</div>
+    <div class="status">${devs}<div class="spacer"></div>
+      <div class="clock">${clockStr()}<i>venue</i></div></div>
+  ` : `
+    <div class="nav">
+      <a class="on">Pages</a><a>Scenes</a><a>Mixer</a><a>Lighting</a>
+      <a>Stage Plan</a><a>Video</a><a>Projector</a>
+      <div class="spacer"></div>
+    <div class="menuwrap"><div class="acct" id="acct">OP</div>
+      <div class="menu" id="menu" style="display:none">
+        <div class="who"><b>Operator</b><span>signed in · 6 h 12 m left</span></div>
+        <a>Admin<em>config</em></a>
+        <a>Display scale<em>1.0×</em></a>
+        <hr>
+        <a class="out">Log out</a>
+      </div></div></div>
+    <div class="ptabs">${STAFF_PAGES.map((p,i)=>
+      `<button class="ptab ${i===page?'on':''}" data-i="${i}">${p.name}</button>`).join('')}</div>
+    <div class="surface">${items.map(r=>r.t==='ch'?strip(r):r.t==='group'?tray(r):panel(r)).join('')}</div>
+    <div class="status">${devs}<div class="spacer"></div>
+      <div class="timer">
+        <span class="t ${tRun?'':'stop'}" id="tval">${elapsedStr()}</span>
+        <button id="tgo" class="${tRun?'run':''}">${tRun?'❚❚':'▶'}</button>
+        <button id="trs">⟲</button>
+      </div>
+      <div class="sep"></div>
+      <div class="clock">${clockStr()}<i>venue</i></div>
+    </div>
+  `;
+  document.getElementById('demoNote').textContent = isH
+    ? 'No navigation, no page tabs, no account. Targets at 72px minimum.'
+    : 'Full shell. Faders fill the height; buttons cap and sit at thumb height.';
+  document.querySelectorAll('.ptab').forEach(t=>t.onclick=()=>{page=+t.dataset.i;render();});
+  document.querySelectorAll('.mute').forEach(m=>m.onclick=()=>m.classList.toggle('on'));
+  document.querySelectorAll('.panel .btn').forEach(b=>b.onclick=()=>{
+    if(b.classList.contains('amber'))return; b.classList.toggle('on');});
+  const acct=document.getElementById('acct'), menu=document.getElementById('menu');
+  if(acct) acct.onclick=e=>{e.stopPropagation();
+    menu.style.display = menu.style.display==='none' ? 'block' : 'none';};
+  document.addEventListener('click',()=>{ if(menu) menu.style.display='none'; });
+  const hout=document.getElementById('hout');
+  if(hout) hout.onclick=()=>{
+    // A hirer logging out mid-event has to find whoever holds the PIN, so an
+    // accidental tap must not do it.
+    const sc=document.createElement('div'); sc.className='scrim';
+    sc.innerHTML=`<div class="dlg"><h3>Log out?</h3>
+      <p>You will need the venue PIN to get back in. If you just want to put the
+      tablet down, you do not need to log out.</p>
+      <div class="row"><button id="no">Stay signed in</button>
+        <button class="go" id="yes">Log out</button></div></div>`;
+    document.body.appendChild(sc);
+    sc.querySelector('#no').onclick=()=>sc.remove();
+    sc.querySelector('#yes').onclick=()=>sc.remove();
+    sc.onclick=e=>{ if(e.target===sc) sc.remove(); };
+  };
+  const tgo=document.getElementById('tgo'), trs=document.getElementById('trs');
+  if(tgo) tgo.onclick=()=>{
+    if(tRun){ tAcc=elapsedMs(); tRun=false; } else { tStart=Date.now(); tRun=true; }
+    render();
+  };
+  if(trs) trs.onclick=()=>{ tAcc=0; tStart=Date.now(); render(); };
+  document.querySelectorAll('.expand').forEach(b=>b.onclick=()=>{
+    const t=b.closest('.group'); const o=t.classList.toggle('open');
+    b.innerHTML = o?'\u25B4 Collapse':'\u25BE 3 fixtures';});
+}
+document.getElementById('asStaff').onclick=e=>{mode='staff';
+  e.target.classList.add('on');document.getElementById('asHirer').classList.remove('on');render();};
+document.getElementById('asHirer').onclick=e=>{mode='hirer';
+  e.target.classList.add('on');document.getElementById('asStaff').classList.remove('on');render();};
+render();
+
+const st=new WeakMap();
+const lvl=(d,t,s)=>{const o=s*.35;
+  if(d==='speech'){const p=(t*1.6+o)%3.2;
+    return p>2.1?-58:-14+10*Math.abs(Math.sin(p*7.5))*(.6+.4*Math.sin(p*2.1));}
+  if(d==='music')return -11+5*Math.sin(t*2.3+o)+3*Math.sin(t*7.1+o*2)+1.5*Math.sin(t*17+o);
+  return -57;};
+setInterval(()=>{
+  const v=document.getElementById('tval'); if(v) v.textContent=elapsedStr();
+  document.querySelectorAll('.clock').forEach(c=>{
+    c.innerHTML=clockStr()+'<i>venue</i>'; });
+}, 1000);
+
+(function tick(ts){const t=ts/1000;
+  document.querySelectorAll('.strip').forEach(el=>{const d=el.dataset.drive;
+    el.querySelectorAll('[data-m]').forEach((m,i)=>{
+      let s=st.get(m); if(!s)st.set(m,s={v:0,peak:0,at:0});
+      const tg=mpos(lvl(d,t,i));
+      s.v=tg>s.v?tg:s.v+(tg-s.v)*.10;
+      if(s.v>=s.peak){s.peak=s.v;s.at=t;} else if(t-s.at>1.4)s.peak=Math.max(s.v,s.peak-.009);
+      m.querySelector('.meter-cover').style.height=(100-s.v*100)+'%';
+      m.querySelector('.peak').style.bottom=(s.peak*100)+'%';});});
+  requestAnimationFrame(tick);})(0);
+</script>
+</body>
+</html>

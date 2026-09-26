@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en-NZ">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Operator views — Auditorium Controller</title>
+<style>
+:root{
+  --bg-base:#0A0F1A; --bg-surface:#111827; --bg-elevated:#1C2B3A; --bg-overlay:#243447;
+  --teal-500:#00B8A0; --teal-400:#00D4BC; --teal-300:#33DFC9;
+  --success:#22C55E; --warning:#F0A500; --danger:#EF4444;
+  --success-text:#5EE08A; --warning-text:#FFC24D; --danger-text:#FF7B7B;
+  --text-1:#F0F4F8; --text-2:#8A9BB0; --text-muted:#7589A0; --text-disabled:#4A5B6E;
+  --fader-track:#060C14; --rule:rgba(255,255,255,.06); --rule-strong:rgba(255,255,255,.11);
+  --g-amber:#E8C26C; --g-tangerine:#E17B1B; --g-ocean:#1CDAF1; --g-violet:#A482C9;
+  --g-azure:#00A5FE; --g-white:#E8EEF4; --g-fern:#93C896;
+  --font-b:'DM Sans',ui-sans-serif,system-ui,-apple-system,sans-serif;
+  --font-m:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,monospace;
+  --r-sm:4px; --r-md:8px;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg-base);color:var(--text-2);font-family:var(--font-b);
+  font-size:15px;-webkit-font-smoothing:antialiased;display:flex;flex-direction:column;
+  overflow:hidden}
+
+.nav{display:flex;gap:2px;padding:0 14px;background:var(--bg-surface);
+  border-bottom:1px solid var(--rule);flex:none;align-items:center;overflow-x:auto}
+.nav a{padding:14px 17px;color:var(--text-2);font-size:13.5px;font-weight:500;
+  border-bottom:2px solid transparent;cursor:pointer;white-space:nowrap}
+.nav a:hover{color:var(--text-1)}
+.nav a.on{color:var(--teal-300);border-bottom-color:var(--teal-500)}
+.sp{flex:1}
+.acct{width:34px;height:34px;border-radius:50%;background:var(--bg-elevated);
+  border:1px solid var(--rule-strong);color:var(--text-1);font-size:12.5px;font-weight:600;
+  display:flex;align-items:center;justify-content:center;flex:none;margin-left:10px}
+
+main{flex:1;min-height:0;overflow:auto;padding:20px 22px}
+h2{color:var(--text-1);font-size:15px;font-weight:600;margin:0 0 4px}
+.sub{color:var(--text-muted);font-size:12.5px;margin-bottom:15px}
+.bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+.mono{font-family:var(--font-m);font-size:12px;color:var(--text-muted)}
+.chip{background:var(--bg-surface);border:1px solid var(--rule);color:var(--text-2);
+  border-radius:99px;padding:8px 16px;font-size:13px;cursor:pointer;min-height:38px;
+  display:inline-flex;align-items:center}
+.chip.on{background:var(--bg-elevated);color:var(--teal-300);border-color:rgba(0,184,160,.45)}
+
+/* status bar — bottom */
+.status{display:flex;align-items:center;gap:18px;padding:10px 20px;background:var(--bg-surface);
+  border-top:1px solid var(--rule);flex:none}
+.d{display:flex;align-items:center;gap:7px;font-size:12.5px}
+.led{width:10px;height:10px;border-radius:50%;flex:none}
+.led.g{background:radial-gradient(circle at 35% 35%,#AFFFEE,#22C55E 40%,#15803D 100%);
+  box-shadow:0 0 4px 2px rgba(34,197,94,.8)}
+.led.a{background:radial-gradient(circle at 35% 35%,#FFF3AA,#F0A500 40%,#B45309 100%);
+  box-shadow:0 0 4px 2px rgba(240,165,0,.9)}
+.led.r{background:radial-gradient(circle at 35% 35%,#FFAAAA,#EF4444 40%,#991B1B 100%);
+  box-shadow:0 0 4px 2px rgba(239,68,68,.85)}
+.led.o{background:radial-gradient(circle at 35% 35%,#6B7E94,#2D3D4F 40%,#1C2B3A 100%)}
+.clock{font-family:var(--font-m);font-size:15px;color:var(--text-1)}
+.clock i{font-style:normal;font-size:11px;color:var(--text-muted);margin-left:6px}
+.tmr{font-family:var(--font-m);font-size:15px;color:var(--teal-300);min-width:72px;
+  text-align:right}
+.tbtn{width:34px;height:34px;border-radius:var(--r-sm);background:var(--bg-elevated);
+  border:1px solid var(--rule-strong);color:var(--text-1);font-size:12px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center}
+.sep{width:1px;height:20px;background:var(--rule-strong)}
+
+/* ── scenes ─────────────────────────────────────────── */
+.scenes{display:grid;grid-template-columns:repeat(auto-fill,minmax(248px,1fr));gap:14px}
+.sc{background:var(--bg-surface);border:1px solid var(--rule);border-radius:var(--r-md);
+  padding:18px 18px 16px;cursor:pointer;position:relative;transition:transform 120ms,
+  box-shadow 200ms,border-color 200ms;min-height:112px}
+.sc:hover{transform:translateY(-2px);background:var(--bg-elevated)}
+.sc .ic{font-size:21px;margin-bottom:9px;display:block}
+.sc b{display:block;color:var(--text-1);font-size:15px;font-weight:600;margin-bottom:3px}
+.sc span{font-size:12.5px;color:var(--text-muted)}
+.sc.crit{border-color:rgba(239,68,68,.55)}
+.sc.crit b{color:var(--danger-text)}
+.sc.prot::after{content:'protected';position:absolute;top:14px;right:14px;font-size:11px;
+  font-family:var(--font-m);color:var(--text-disabled)}
+.sc.run{border-color:var(--teal-500);animation:pulse 1.2s ease-in-out infinite}
+.sc.ok{border-color:rgba(34,197,94,.6);box-shadow:0 0 22px 4px rgba(34,197,94,.16)}
+.sc.part{border-color:rgba(240,165,0,.6);box-shadow:0 0 22px 4px rgba(240,165,0,.16)}
+.sc.fail{border-color:rgba(239,68,68,.6);box-shadow:0 0 22px 4px rgba(239,68,68,.16)}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(0,184,160,.45)}
+  50%{box-shadow:0 0 0 7px rgba(0,184,160,0)}}
+
+/* ── strips ─────────────────────────────────────────── */
+.row{display:flex;gap:13px;align-items:stretch;overflow-x:auto;padding-bottom:6px}
+.strip{width:150px;background:var(--bg-surface);border:1px solid var(--rule);
+  border-radius:var(--r-md);position:relative;padding:13px 9px 12px;flex:none;
+  display:flex;flex-direction:column;align-items:center;overflow:hidden}
+.strip.tall{height:430px}
+.accent{position:absolute;top:0;left:0;right:0;height:3px}
+.nm{font-size:13.5px;font-weight:500;color:var(--text-1);text-align:center;margin-top:6px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%}
+.tg{font-family:var(--font-m);font-size:11px;color:var(--text-muted);height:15px;
+  margin-bottom:9px}
+.zone{flex:1;width:100%;position:relative;min-height:130px}
+.scale{position:absolute;top:0;bottom:0;left:0;width:34px}
+.sm{position:absolute;right:0;width:34px;height:0;transform:translateY(-50%)}
+.sm i{position:absolute;right:0;top:-.5px;width:5px;height:1px;background:var(--rule-strong)}
+.sm.u i{width:12px;height:1.5px;background:rgba(255,255,255,.5)}
+.sm span{position:absolute;right:11px;top:50%;transform:translateY(-50%);
+  font-family:var(--font-m);font-size:11px;color:var(--text-muted)}
+.sm.u span{color:var(--text-1);font-weight:600}
+.fader{position:absolute;top:0;bottom:0;left:52px;width:11px;background:var(--fader-track);
+  border-radius:6px;box-shadow:inset 0 2px 4px rgba(0,0,0,.8)}
+.fader.mid{left:50%;transform:translateX(-50%)}
+.fg{position:absolute;inset:0;border-radius:6px;
+  background:linear-gradient(to top,#00B8A0 0%,#22C55E 62%,#F0A500 78%,#EF4444 92%,#CC1111 100%)}
+.fc{position:absolute;left:0;right:0;top:0;background:var(--fader-track);border-radius:6px 6px 0 0}
+.th{position:absolute;left:57px;transform:translate(-50%,-50%);width:52px;height:28px;
+  border-radius:4px;z-index:3;background:linear-gradient(to bottom,#FFF,#C8D8E8 58%,#9FB3C7);
+  box-shadow:0 2px 7px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.95)}
+.th.mid{left:50%}
+.mt{position:absolute;top:0;bottom:0;right:2px;display:flex;gap:3px}
+.m{width:11px;background:var(--fader-track);border-radius:2px;position:relative;overflow:hidden}
+.m.s{width:8px}
+.mg{position:absolute;inset:0;background:linear-gradient(to top,#0b5f53 0%,#22C55E 40%,
+  #6FD34A 64%,#F0A500 71.4%,#FFC24D 80%,#EF4444 85.7%,#CC1111 100%)}
+.mc{position:absolute;left:0;right:0;top:0;background:#060C14;transition:height 45ms linear}
+.z{position:absolute;left:0;right:2px;bottom:85.7%;height:1.5px;background:rgba(255,194,77,.8)}
+.db{font-family:var(--font-m);font-size:15px;color:var(--teal-500);text-align:center;
+  margin-top:11px}
+.mu{margin-top:8px;width:100%;height:34px;border-radius:var(--r-sm);border:1px solid #1F2D3D;
+  background:#111827;color:var(--text-2);font-size:12px;font-weight:600;letter-spacing:.06em;
+  box-shadow:inset 0 2px 4px rgba(0,0,0,.6);display:flex;align-items:center;
+  justify-content:center;cursor:pointer}
+.mu.on{background:#2A0A0A;color:var(--danger-text);border-color:#7F1D1D;
+  box-shadow:0 0 6px 2px rgba(239,68,68,.5)}
+.strip.main{border-color:rgba(255,255,255,.2)}
+
+/* ── video / projector ──────────────────────────────── */
+.big{display:flex;gap:14px;flex-wrap:wrap}
+.src{flex:1;min-width:210px;min-height:104px;background:var(--bg-surface);
+  border:1px solid var(--rule-strong);border-radius:10px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:8px;cursor:pointer;color:var(--text-1);
+  font-size:16px;font-weight:500;
+  box-shadow:0 2px 0 rgba(0,0,0,.5),0 4px 9px rgba(0,0,0,.4)}
+.src.on{background:rgba(0,184,160,.14);border-color:var(--teal-500);color:var(--teal-300);
+  box-shadow:0 0 0 1px rgba(0,184,160,.4),0 0 20px 4px rgba(0,184,160,.14),
+  inset 0 3px 7px rgba(0,0,0,.4);transform:translateY(2px)}
+.src small{font-family:var(--font-m);font-size:11.5px;color:var(--text-muted);font-weight:400}
+.pw{min-width:150px;min-height:64px;border-radius:9px;background:var(--bg-surface);
+  border:1px solid var(--rule-strong);color:var(--text-1);font-size:15px;font-weight:500;
+  display:flex;align-items:center;justify-content:center;cursor:pointer}
+.pw.dis{opacity:.4;cursor:not-allowed}
+.card{background:var(--bg-surface);border:1px solid var(--rule);border-radius:var(--r-md);
+  padding:17px 19px;margin-bottom:14px}
+.note{background:linear-gradient(90deg,rgba(240,165,0,.09),transparent);
+  border-left:3px solid var(--warning);border-radius:var(--r-md);padding:12px 15px;
+  margin:12px 0;font-size:13px}
+.note b{color:var(--warning-text)}
+.info{background:linear-gradient(90deg,rgba(0,184,160,.07),transparent);
+  border-left:3px solid var(--teal-500);border-radius:var(--r-md);padding:12px 15px;
+  margin:12px 0;font-size:13px}
+.info b{color:var(--teal-300)}
+.state{display:flex;align-items:center;gap:10px;font-size:14.5px;color:var(--text-1)}
+.state em{font-style:normal;color:var(--warning-text);font-family:var(--font-m);font-size:13px}
+
+/* ── stage plan ─────────────────────────────────────── */
+.plan{background:var(--bg-surface);border:1px solid var(--rule);border-radius:var(--r-md);
+  padding:16px}
+.fix{cursor:pointer}
+.fix:focus{outline:2px solid var(--teal-500);outline-offset:3px}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:12px;font-size:12.5px}
+.legend i{width:11px;height:11px;border-radius:3px;display:inline-block;margin-right:7px;
+  vertical-align:-1px}
+</style>
+</head>
+<body>
+
+<div class="nav" id="nav"></div>
+<main id="main"></main>
+<div class="status">
+  <div class="d"><span class="led g"></span>KNX</div>
+  <div class="d"><span class="led g"></span>DMX</div>
+  <div class="d"><span class="led g"></span>Mixer</div>
+  <div class="d"><span class="led a"></span>Projector</div>
+  <div class="d"><span class="led g"></span>HDMI</div>
+  <div class="sp"></div>
+  <span class="tmr" id="tval">0:00:00</span>
+  <div class="tbtn" id="tgo">▶</div><div class="tbtn" id="trs">⟲</div>
+  <div class="sep"></div>
+  <span class="clock" id="clk">19:42<i>venue</i></span>
+</div>
+
+<script>
+const LAW=[[0,'-∞'],[.176,'-40'],[.288,'-30'],[.424,'-20'],[.572,'-10'],[.66,'-5'],
+           [.766,'0',1],[.884,'+5'],[1,'+10']];
+const scaleHTML=LAW.map(([p,l,u])=>`<div class="sm ${u?'u':''}" style="top:${(1-p)*100}%">
+  <i></i><span>${l}</span></div>`).join('');
+const dbToPos=db=>{if(db===-Infinity)return 0;
+  for(let i=0;i<LAW.length-1;i++){const a=LAW[i],b=LAW[i+1];
+    if(a[1]==='-∞')continue;
+    const av=parseFloat(a[1]),bv=parseFloat(b[1]);
+    if(db<=bv) return a[0]+(db-av)/(bv-av)*(b[0]-a[0]);}
+  return 1;};
+const fmt=db=>db===-Infinity?'−∞':(db<0?'−'+Math.abs(db).toFixed(1):(db===0?'0.0':'+'+db.toFixed(1)));
+
+function strip(c){
+  const p = c.pct!=null ? c.pct/100 : dbToPos(c.db);
+  const mt = c.ch ? `<div class="mt">${Array.from({length:c.ch}).map(()=>
+    `<div class="m ${c.ch===2?'s':''}"><div class="mg"></div>
+     <div class="mc" data-mc style="height:70%"></div></div>`).join('')}
+     <div class="z"></div></div>` : '';
+  return `<div class="strip tall ${c.main?'main':''}" data-drive="${c.drive||'silent'}">
+    <div class="accent" style="background:${c.a}"></div>
+    <div class="nm">${c.n}</div><div class="tg">${c.t||''}</div>
+    <div class="zone">
+      ${c.pct!=null?'':`<div class="scale">${scaleHTML}</div>`}
+      <div class="fader ${c.pct!=null?'mid':''}"><div class="fg"></div>
+        <div class="fc" style="height:${(1-p)*100}%"></div></div>
+      <div class="th ${c.pct!=null?'mid':''}" style="top:${(1-p)*100}%"></div>${mt}</div>
+    <div class="db">${c.pct!=null?c.pct+'%':fmt(c.db)}</div>
+    <button class="mu ${c.muted?'on':''}">${c.pct!=null?'BUMP':'MUTE'}</button></div>`;
+}
+
+const VIEWS={
+
+scenes:()=>`
+<h2>Scenes</h2>
+<div class="sub">The primary operator view. Tap a card to run it; the result blooms on the card
+and a toast confirms.</div>
+<div class="scenes">
+  ${[['🎭','Performance Start','ran 2 h ago','ok'],
+     ['📽️','Film Screening','ran yesterday',''],
+     ['🎓','Lecture Setup','ran 2 h ago','run'],
+     ['🎤','Community Concert','never run',''],
+     ['🌅','Morning Reset','ran 09:02',''],
+     ['🌙','All Off','ran last night','part']]
+    .map(([i,n,w,st])=>`<div class="sc ${st}"><span class="ic">${i}</span>
+       <b>${n}</b><span>${w}</span></div>`).join('')}
+  <div class="sc crit"><span class="ic">🚨</span><b>Alarm — All Off</b>
+    <span>critical · KNX 0/5/0</span></div>
+  <div class="sc prot"><span class="ic">↩️</span><b>Restore Venue Default</b>
+    <span>ran after last hire</span></div>
+</div>
+<div class="info"><b>Critical scenes carry a red outline permanently</b> so the alarm scene is
+distinguishable at rest, not only while running. <b>Restore Venue Default</b> is protected and
+cannot be removed from this view — it is what the operator presses after a hire.</div>`,
+
+mixer:()=>`
+<h2>Mixer</h2>
+<div class="sub">Input channels fill the main area; Main Output is pinned right. Mix outputs
+live in a drawer.</div>
+<div class="bar">
+  <span class="mono" style="margin-right:4px">Desk scenes</span>
+  <span class="chip on">Lecture</span><span class="chip">Performance</span>
+  <span class="chip">Hire Setup</span><span class="chip">Venue Default</span>
+  <div class="sp"></div><span class="mono">Last: Lecture · 2 hrs</span>
+</div>
+<div class="bar" style="margin-bottom:12px">
+  <span class="chip on">1–4</span><span class="chip">5–8</span><span class="chip">9–12</span>
+  <div class="sp"></div><span class="chip">⊡ Outputs</span>
+</div>
+<div class="row">
+  ${strip({n:'Wireless Mic 1',t:'ip1',a:'var(--g-amber)',db:-6,ch:1,drive:'speech'})}
+  ${strip({n:'Wireless Mic 2',t:'ip2',a:'var(--g-amber)',db:-3,ch:1,drive:'silent'})}
+  ${strip({n:'AUX',t:'st1',a:'var(--g-azure)',db:-10,ch:2,drive:'silent'})}
+  ${strip({n:'HDMI',t:'st2',a:'var(--g-azure)',db:0,ch:2,drive:'music'})}
+  ${strip({n:'Stage Box L',t:'ip5',a:'var(--g-tangerine)',db:-Infinity,ch:1,muted:1})}
+  <div style="width:1px;background:var(--rule-strong);flex:none;margin:0 4px"></div>
+  ${strip({n:'Main',t:'main',a:'var(--g-white)',db:0,ch:2,drive:'music',main:1})}
+</div>
+<div class="info"><b>Metering comes from the mixer's native connection</b> (§7.3). Stage Box L
+is muted and at −∞; its meter still moves, because a muted channel can still be receiving
+signal — which is exactly the thing you want to know.</div>`,
+
+lighting:()=>`
+<h2>Lighting</h2>
+<div class="sub">Fade time and master, then the KNX bank state, groups and individual fixtures.</div>
+<div class="card">
+  <div class="bar" style="margin:0">
+    <span class="mono" style="width:52px">Fade</span>
+    <div style="width:190px;height:6px;border-radius:3px;background:var(--fader-track);
+      position:relative"><div style="position:absolute;inset:0 62% 0 0;border-radius:3px;
+      background:var(--teal-500)"></div>
+      <div style="position:absolute;left:38%;top:50%;width:16px;height:16px;border-radius:50%;
+      transform:translate(-50%,-50%);background:linear-gradient(to bottom,#FFF,#C8D8E8)"></div></div>
+    <span class="mono" style="color:var(--teal-300)">2.0 s</span>
+    <div class="sp"></div><span class="chip">Save look</span>
+  </div>
+  <div class="bar" style="margin:14px 0 0">
+    <span class="mono" style="width:52px">Master</span>
+    <div style="width:190px;height:6px;border-radius:3px;background:var(--fader-track);
+      position:relative"><div style="position:absolute;inset:0;border-radius:3px;
+      background:var(--teal-500)"></div>
+      <div style="position:absolute;left:100%;top:50%;width:16px;height:16px;border-radius:50%;
+      transform:translate(-50%,-50%);background:linear-gradient(to bottom,#FFF,#C8D8E8)"></div></div>
+    <span class="mono" style="color:var(--teal-300)">100%</span>
+    <div class="sp"></div>
+    <span class="d"><span class="led o"></span>External control</span>
+  </div>
+</div>
+<div class="bar">
+  <span class="mono" style="margin-right:4px">Stage banks</span>
+  <span class="d"><span class="led g"></span>1</span>
+  <span class="d"><span class="led o"></span>2</span>
+  <span class="d"><span class="led o"></span>3</span>
+  <span class="d"><span class="led g"></span>4</span>
+  <span class="mono">KNX panel state</span>
+</div>
+<h2 style="margin-top:18px">Groups</h2><div class="sub">Sets a multiplier, not a level.</div>
+<div class="row" style="margin-bottom:20px">
+  ${strip({n:'Row 1',t:'group',a:'var(--g-amber)',pct:85})}
+  ${strip({n:'Row 2',t:'group',a:'var(--g-tangerine)',pct:72})}
+  ${strip({n:'Row 3',t:'group',a:'var(--g-ocean)',pct:60})}
+  ${strip({n:'Row 4',t:'group',a:'var(--g-violet)',pct:0})}
+  ${strip({n:'All Stage',t:'group',a:'var(--g-white)',pct:72})}
+</div>
+<h2>Fixtures</h2><div class="sub">Group colour on the top edge.</div>
+<div class="row">
+  ${[1,2,3,4].map(i=>strip({n:'Fixture '+i,t:'ch'+i,a:'var(--g-amber)',pct:[85,78,92,70][i-1]})).join('')}
+  ${[9,10].map(i=>strip({n:'Fixture '+i,t:'ch'+i,a:'var(--g-ocean)',pct:40})).join('')}
+</div>`,
+
+plan:()=>`
+<h2>Stage plan</h2>
+<div class="sub">From the audience's perspective — proscenium at the bottom, upstage at the top,
+stage right on the left.</div>
+<div class="plan">
+  <svg viewBox="0 0 760 400" style="width:100%;height:auto" role="application"
+       aria-label="Stage lighting plan">
+    <rect x="0" y="0" width="760" height="400" fill="transparent"/>
+    <line x1="40" y1="352" x2="720" y2="352" stroke="rgba(255,255,255,.22)"
+          stroke-width="2" stroke-dasharray="7 6"/>
+    <text x="380" y="374" fill="#7589A0" font-size="13" font-family="DM Sans"
+          text-anchor="middle">proscenium</text>
+    <text x="30" y="200" fill="#4A5B6E" font-size="12" font-family="JetBrains Mono"
+          text-anchor="middle" transform="rotate(-90 30 200)">stage right</text>
+    ${[['Row 4 — upstage',60,'#A482C9',[0,0,0,0]],
+       ['Row 3',140,'#1CDAF1',[40,40,0,0]],
+       ['Row 2',220,'#E17B1B',[72,72,72,72]],
+       ['Row 1 — front of stage',300,'#E8C26C',[85,78,92,70]]]
+      .map(([lbl,y,col,lv])=>`
+      <line x1="90" y1="${y}" x2="670" y2="${y}" stroke="${col}" stroke-opacity=".28"
+            stroke-width="3"/>
+      <text x="80" y="${y+4}" fill="#7589A0" font-size="11.5" font-family="DM Sans"
+            text-anchor="end">${lbl}</text>
+      ${lv.map((v,i)=>{const x=170+i*150;
+        const op=v===0?0.16:0.28+v/100*0.72;
+        return `<g class="fix" tabindex="${y===300&&i===0?0:-1}" role="button"
+             aria-label="${lbl} fixture ${i+1}, at ${v} percent">
+          <circle cx="${x}" cy="${y}" r="21" fill="${col}" fill-opacity="${op}"
+                  stroke="${col}" stroke-opacity=".75" stroke-width="2"/>
+          <text x="${x}" y="${y+5}" fill="${v>45?'#0A0F1A':'#F0F4F8'}" font-size="12"
+                font-weight="600" font-family="JetBrains Mono"
+                text-anchor="middle">${v}</text></g>`;}).join('')}`).join('')}
+  </svg>
+  <div class="legend">
+    ${[['Row 1','#E8C26C'],['Row 2','#E17B1B'],['Row 3','#1CDAF1'],['Row 4','#A482C9']]
+      .map(([n,c])=>`<span><i style="background:${c}"></i>${n}</span>`).join('')}
+    <span style="color:var(--text-disabled)">Fixture opacity tracks level</span>
+  </div>
+</div>
+<div class="info"><b>The plan is one tab stop, not sixteen.</b> A roving tabindex gives exactly
+one fixture focus at a time; arrow keys move within the plan and Tab leaves it. Level changes
+are announced on fade completion, not during — <i>“Stage Wash 3 faded to 75 percent.”</i></div>`,
+
+video:()=>`
+<h2>Video</h2>
+<div class="sub">One destination — “The room” — covering both outputs. Choosing a source
+switches them together in a single command.</div>
+<div class="big">
+  <div class="src on">Side of Stage<small>input 1</small></div>
+  <div class="src">Back of House<small>input 2</small></div>
+</div>
+<div class="info"><b>Both outputs follow one choice</b> because they are one destination
+(§7.5). If the matrix reports them disagreeing — someone used the front panel or the IR
+remote — a divergence notice appears and selecting either source re-converges them.</div>
+
+<h2 style="margin-top:26px">Projector</h2>
+<div class="sub">Power and input, with the live state.</div>
+<div class="card">
+  <div class="state"><span class="led a"></span>WARMING
+    <em>&nbsp;— ready in about 48 s</em></div>
+</div>
+<div class="big" style="margin-bottom:14px">
+  <div class="pw dis">Power on</div>
+  <div class="pw dis">Power off</div>
+</div>
+<div class="bar">
+  <span class="mono" style="margin-right:4px">Input</span>
+  <span class="chip on">HDMI 1</span><span class="chip">HDMI 2</span><span class="chip">VGA</span>
+</div>
+<div class="note"><b>Buttons are disabled while warming or cooling</b>, with the reason and the
+remaining time. An earlier revision left them active and queued the command — a power-on
+pressed during cool-down would have fired ninety seconds later, possibly into an empty room.
+To express “turn it on once it has cooled”, use a scene with a delay.</div>`
+};
+
+const NAV=[['pages','Pages'],['scenes','Scenes'],['mixer','Mixer'],['lighting','Lighting'],
+           ['plan','Stage Plan'],['video','Video & Projector']];
+let view='scenes';
+function render(){
+  document.getElementById('nav').innerHTML =
+    NAV.map(([k,l])=>`<a data-v="${k}" class="${k===view?'on':''}">${l}</a>`).join('')
+    + '<div class="sp"></div><div class="acct">OP</div>';
+  document.getElementById('main').innerHTML =
+    VIEWS[view] ? VIEWS[view]() :
+    `<h2>Pages</h2><div class="sub">The everyday surface — see the pages mockup.</div>`;
+  document.querySelectorAll('.nav a').forEach(a=>a.onclick=()=>{view=a.dataset.v;render();});
+  document.querySelectorAll('.mu').forEach(m=>m.onclick=()=>m.classList.toggle('on'));
+  document.querySelectorAll('.sc').forEach(c=>c.onclick=()=>{
+    c.classList.remove('ok','part','fail','run'); c.classList.add('run');
+    setTimeout(()=>{c.classList.remove('run');c.classList.add('ok');},1300);
+    setTimeout(()=>c.classList.remove('ok'),3200);});
+  document.querySelectorAll('.src').forEach(b=>b.onclick=()=>{
+    document.querySelectorAll('.src').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on');});
+  document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{
+    const sibs=[...c.parentElement.querySelectorAll('.chip')];
+    if(sibs.length>1){sibs.forEach(x=>x.classList.remove('on'));c.classList.add('on');}});
+}
+render();
+
+// timer + clock — shared server state in the real thing, simulated here
+let tRun=false, tStart=0, tAcc=0;
+const ms=()=> tAcc + (tRun ? Date.now()-tStart : 0);
+function tstr(){
+  const t=Math.floor(ms()/1000);
+  return Math.floor(t/3600)+':'+String(Math.floor(t/60)%60).padStart(2,'0')
+    +':'+String(t%60).padStart(2,'0');
+}
+const tgo=document.getElementById('tgo'), trs=document.getElementById('trs');
+tgo.onclick=()=>{
+  if(tRun){ tAcc=ms(); tRun=false; tgo.textContent='▶'; }
+  else { tStart=Date.now(); tRun=true; tgo.textContent='❚❚'; }
+};
+trs.onclick=()=>{ tAcc=0; tStart=Date.now(); };
+setInterval(()=>{
+  document.getElementById('tval').textContent=tstr();
+  const d=new Date();
+  document.getElementById('clk').innerHTML=
+    String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')
+    +'<i>venue</i>';
+}, 500);
+
+// meter animation
+const st=new WeakMap();
+const lvl=(d,t,i)=>{const o=i*0.35;
+  if(d==='speech'){const p=(t*1.6+o)%3.2;
+    return p>2.1?-58:-14+10*Math.abs(Math.sin(p*7.5))*(0.6+0.4*Math.sin(p*2.1));}
+  if(d==='music') return -11+5*Math.sin(t*2.3+o)+3*Math.sin(t*7.1+o*2);
+  return -57;};
+const mpos=db=>Math.max(0,Math.min(1,(db+60)/70));
+(function tick(ts){
+  const t=ts/1000;
+  document.querySelectorAll('.strip').forEach(el=>{
+    const d=el.dataset.drive;
+    el.querySelectorAll('[data-mc]').forEach((m,i)=>{
+      let s=st.get(m); if(!s) st.set(m,s={v:0});
+      const tg=mpos(lvl(d,t,i));
+      s.v = tg>s.v ? tg : s.v+(tg-s.v)*0.10;
+      m.style.height=(100-s.v*100)+'%';
+    });
+  });
+  requestAnimationFrame(tick);
+})(0);
+</script>
+</body>
+</html>
