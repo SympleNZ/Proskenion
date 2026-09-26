@@ -115,6 +115,12 @@ _SHORT_FORM_MASK = knx_dpt.SHORT_FORM_MASK
 #: §7.1 *Outgoing writes*: the global telegram budget.
 RATE_LIMIT_PER_SECOND = 15
 RATE_LIMIT_WINDOW_S = 1.0
+#: Admission is counted when a telegram is released, but the budget is about
+#: what reaches the bus, and scheduling or network jitter can bunch releases up
+#: on the way. Admitting 15 per window plus this margin keeps any one second of
+#: delivery within 15 for up to this much jitter, at the cost of a sustained
+#: ceiling of about 13.6 per second.
+RATE_LIMIT_MARGIN_S = 0.1
 
 #: Backoff, exactly the shape every other client in the system uses (§5.3):
 #: starts here, doubles, caps below, resets only after a successful probe.
@@ -308,7 +314,7 @@ class _RateLimiter:
     def __init__(
         self,
         rate: int = RATE_LIMIT_PER_SECOND,
-        window_s: float = RATE_LIMIT_WINDOW_S,
+        window_s: float = RATE_LIMIT_WINDOW_S + RATE_LIMIT_MARGIN_S,
         *,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,

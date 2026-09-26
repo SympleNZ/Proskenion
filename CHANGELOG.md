@@ -706,6 +706,9 @@ All notable changes to this project are recorded here, per release.
     check that skips where 127.0.0.2 will not bind on loopback follows
     `tests/unit/core/dmx/test_artnet_handoff.py`'s own.
 - v0.1.7, from the first run of the suite on Linux (GitHub Actions):
+  - The KNX telegram budget admits 15 per 1.1 s of release time, so up to
+    100 ms of delivery jitter can't put 16 on the bus in any one second
+    (§7.1). A slower runner showed release-side counting let jitter through.
   - **A root-side write to a missing `boot-state.json` failed and left an
     empty file behind** (`appliance/lib/auditorium_bootstate.py`, image-level).
     To lock a document that does not exist yet, `locked()` creates it empty,

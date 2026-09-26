@@ -360,6 +360,33 @@ class TestBudget:
             in_window = sum(1 for other in timestamps if t <= other < t + 1.0)
             assert in_window <= 15, f"more than 15 telegrams left within one second of {t}"
 
+    @pytest.mark.parametrize("seed", range(20))
+    async def test_delivery_jitter_never_puts_sixteen_on_the_bus_in_one_second(
+        self, seed: int
+    ) -> None:
+        """What the bus sees, not what the limiter admitted: each telegram
+        reaches the gateway up to RATE_LIMIT_MARGIN_S after its release, and
+        no one-second window of arrivals may hold more than 15."""
+        import random
+
+        rng = random.Random(seed)
+        now = [0.0]
+
+        async def fake_sleep(delay: float) -> None:
+            # A real clock always moves on; a float sum can swallow a tiny delay.
+            now[0] += max(delay, 1e-6)
+
+        limiter = knx_module._RateLimiter(clock=lambda: now[0], sleep=fake_sleep)
+        arrivals = []
+        for _ in range(60):
+            await limiter.acquire()
+            arrivals.append(now[0] + rng.uniform(0.0, knx_module.RATE_LIMIT_MARGIN_S))
+            now[0] += rng.uniform(0.0, 0.02)
+        arrivals.sort()
+        for t in arrivals:
+            in_window = sum(1 for other in arrivals if t <= other < t + 1.0)
+            assert in_window <= knx_module.RATE_LIMIT_PER_SECOND
+
     async def test_alarm_overtakes_a_fade_step_backlog(
         self, running: KnxSubsystem, registry: InMemoryAddressRegistry, stub: KnxdStub
     ) -> None:
