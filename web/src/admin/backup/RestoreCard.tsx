@@ -27,6 +27,7 @@ import { Card } from "@/components/ui/Card";
 import { Field, Input } from "@/components/ui/Input";
 import { ConfirmDialog, Sheet, SheetContent } from "@/components/ui/Sheet";
 import { useProgress } from "@/live/store";
+import { formatTime } from "@/lib/time";
 
 import {
   backupKeys,
@@ -70,10 +71,6 @@ function ReplacesNotice() {
   );
 }
 
-function formatTime(at: Date): string {
-  return at.toLocaleTimeString("en-NZ", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "Pacific/Auckland" });
-}
-
 /**
  * Whether the appliance is back is asked of `/health` (`useRestartWatch`),
  * never read off the live socket. The socket was the signal once, and the
@@ -88,7 +85,7 @@ function formatTime(at: Date): string {
 function RestartBanner({ back, restartedAt, certificateChanged }: { back: boolean; restartedAt: Date | null; certificateChanged: boolean }) {
   if (back) {
     return (
-      <Banner tone="success" title={`Restore complete — the controller restarted at ${restartedAt ? formatTime(restartedAt) : "just now"}`}>
+      <Banner tone="success" title={`Restore complete — the controller restarted at ${restartedAt ? formatTime(restartedAt, { seconds: true }) : "just now"}`}>
         Sign in again if asked: the restored database carries the passwords it was backed up with.
       </Banner>
     );

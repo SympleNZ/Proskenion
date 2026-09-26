@@ -22,6 +22,7 @@ import { LEVEL_WORDS } from "@/components/ui/levels";
 import { ConfirmDialog } from "@/components/ui/Sheet";
 import { useProgress } from "@/live/store";
 import { saveOnShortcut } from "@/lib/keyboard";
+import { formatDate } from "@/lib/time";
 
 import { useCertificateHistory, useIssueCertificate, useSetToken, useTestToken, useTokenState, useUseSelfSigned } from "./api";
 import { certificateLevel } from "./certLevel";
@@ -29,12 +30,6 @@ import { CERT_ISSUE_OPERATION, CERT_PROGRESS_STEPS, type RenewalRecord } from ".
 
 function statusLine(error: unknown): string | undefined {
   return error instanceof ApiError ? `${error.status} ${error.code}` : undefined;
-}
-
-function formatDate(iso: string): string {
-  const at = Date.parse(iso);
-  if (Number.isNaN(at)) return iso;
-  return new Date(at).toLocaleDateString("en-NZ", { day: "numeric", month: "long", year: "numeric" });
 }
 
 function ResultWord({ result }: { result: RenewalRecord["result"] }) {

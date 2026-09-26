@@ -108,5 +108,16 @@ export default defineConfig({
     include: ["src/**/*.test.{ts,tsx}"],
     css: false,
     restoreMocks: true,
+    // Every test worker runs in UTC, whatever zone the machine running them
+    // is in — the appliance's own zone is Pacific/Auckland (§4.9), always
+    // twelve or thirteen hours ahead, so a formatter that quietly fell back
+    // to the runtime's own zone (the bug `web/src/lib/time.ts` exists to
+    // prevent) fails here exactly as it would on a UTC CI runner, rather
+    // than passing by accident on a developer's own NZ machine.
+    // `test.env` sets this in the worker's environment before any test file
+    // (or `Date`) runs, so it works the same on Windows and Linux without a
+    // shell-specific `TZ=UTC` prefix or an extra dependency such as
+    // cross-env.
+    env: { TZ: "UTC" },
   },
 });

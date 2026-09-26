@@ -1,4 +1,5 @@
 /* Formatting for the Updates screen: byte counts, and Pacific/Auckland dates and clocks (CONVENTIONS.md). */
+import { formatDate as formatDateShared, formatDateTime as formatDateTimeShared } from "@/lib/time";
 
 const UNITS = ["B", "KB", "MB", "GB"] as const;
 
@@ -16,26 +17,10 @@ export function formatBytes(bytes: number): string {
 }
 
 export function formatDate(iso: string): string {
-  const at = Date.parse(iso);
-  if (Number.isNaN(at)) return iso;
-  return new Date(at).toLocaleDateString("en-NZ", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    timeZone: "Pacific/Auckland",
-  });
+  return formatDateShared(iso);
 }
 
 /** Date and 24-hour clock together, for a deadline that might not be today. */
 export function formatDateTime(iso: string): string {
-  const at = Date.parse(iso);
-  if (Number.isNaN(at)) return iso;
-  const date = new Date(at).toLocaleDateString("en-NZ", { day: "numeric", month: "short", timeZone: "Pacific/Auckland" });
-  const clock = new Date(at).toLocaleTimeString("en-NZ", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-    timeZone: "Pacific/Auckland",
-  });
-  return `${date}, ${clock}`;
+  return formatDateTimeShared(iso);
 }

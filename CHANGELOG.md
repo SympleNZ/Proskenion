@@ -720,6 +720,26 @@ All notable changes to this project are recorded here, per release.
     that is not JSON is still refused. Hidden on Windows, where the lock is a
     no-op and nothing is created before the read. The image seeds the file at
     build time, so a normally built appliance never had it absent.
+  - **The web app formatted several dates and times in the browser's own zone
+    instead of the appliance's, Pacific/Auckland (§4.9)** — `UsersScreen.tsx`'s
+    "Password last changed" date, `CertificatesScreen.tsx`'s issued/expiry
+    dates, `web/src/lib/time.ts`'s status bar clock (`formatClock`, via
+    `getHours()`/`getMinutes()`) and its `formatRelative` date fallback, and
+    `admin/backup/format.ts`'s Today/Yesterday day-boundary check
+    (`toLocaleDateString`/`toLocaleTimeString` with no `timeZone`, or
+    `setHours(0, 0, 0, 0)` against the runtime's own midnight). The UTC CI
+    runner showed 7 April for a password changed at `2026-04-08T09:00:00+12:00`
+    (`UsersScreen.test.tsx`), a day early — the same class of bug the operator
+    status bar clock (§21.7) exists to avoid: it is deliberately the
+    appliance's own time, not the viewing device's. Every date and time in
+    the app now goes through `web/src/lib/time.ts`'s formatters, which fix
+    the zone to Pacific/Auckland regardless of the runtime's own; an ESLint
+    rule (`no-restricted-properties` in `eslint.config.js`) bans
+    `toLocaleDateString`/`toLocaleTimeString`/`toLocaleString` and a `Date`'s
+    local-zone accessors everywhere else, and Vitest now runs under UTC
+    (`vite.config.ts`'s `test.env.TZ`) so this class of regression fails
+    locally exactly as it does on CI, rather than passing by accident on an
+    NZ machine.
 - Packages are written as pax, not ustar: a wheel name over 100 bytes made
   `tools/package.py build` fail.
 - Every installed version now gets `config.toml -> /data/config/auditorium.toml`

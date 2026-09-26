@@ -13,6 +13,7 @@ import { Banner } from "@/components/ui/Banner";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { ErrorState, Skeleton } from "@/components/ui/EmptyState";
+import { formatDate } from "@/lib/time";
 import { useSession } from "@/session/context";
 
 import { useChangeOperatorPassword, useChangeOwnPassword, usePasswordStatus } from "./api";
@@ -28,7 +29,7 @@ function formatChangedAt(iso: string | null): string {
   if (!iso) return "Not recorded";
   const at = Date.parse(iso);
   if (Number.isNaN(at)) return "Not recorded";
-  return new Date(at).toLocaleDateString("en-NZ", { day: "numeric", month: "long", year: "numeric" });
+  return formatDate(iso);
 }
 
 export function UsersScreen() {

@@ -17,6 +17,7 @@ import { ConfirmDialog } from "@/components/ui/Sheet";
 import { ErrorState, Skeleton } from "@/components/ui/EmptyState";
 import { Field, Input } from "@/components/ui/Input";
 import { HelpButton } from "@/help/HelpButton";
+import { formatTime } from "@/lib/time";
 
 import { useApplyNetwork, useConfirmNetwork, useNetworkConfig, useNetworkState } from "./api";
 import {
@@ -47,15 +48,8 @@ function formValuesFrom(config: NetworkConfig | undefined): NetworkFormValues {
 
 function formatClock(iso: string | null): string {
   if (!iso) return "";
-  const at = Date.parse(iso);
-  if (Number.isNaN(at)) return iso;
-  // Pacific/Auckland, 24-hour (CONVENTIONS.md), regardless of the runtime's own zone.
-  return new Date(at).toLocaleTimeString("en-NZ", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-    timeZone: "Pacific/Auckland",
-  });
+  // Pacific/Auckland, 24-hour (CONVENTIONS.md), regardless of the viewing device's own zone.
+  return formatTime(iso);
 }
 
 /** Merge the server's `validation_failed` field errors into the same slots the client-side check uses. */
