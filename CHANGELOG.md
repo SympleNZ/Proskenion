@@ -705,7 +705,11 @@ All notable changes to this project are recorded here, per release.
     routes (`configureDesk`/`emitDesk` in `fixtures/stubs.ts`); the platform
     check that skips where 127.0.0.2 will not bind on loopback follows
     `tests/unit/core/dmx/test_artnet_handoff.py`'s own.
+- v0.1.8: v0.1.7 plus the first-run wizard's detected timezone reading
+  /etc/localtime first (below); the v0.1.7 tag's CI run found it.
 - v0.1.7, from the first run of the suite on Linux (GitHub Actions):
+  - The first-run wizard's detected timezone reads /etc/localtime before the
+    older /etc/timezone, which `timedatectl set-timezone` leaves stale.
   - The KNX telegram budget admits 15 per 1.1 s of release time, so up to
     100 ms of delivery jitter can't put 16 on the bus in any one second
     (§7.1). A slower runner showed release-side counting let jitter through.

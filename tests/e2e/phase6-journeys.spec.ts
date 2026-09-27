@@ -184,6 +184,10 @@ test.describe("§22.5 — a network change, its handover and its confirmation (�
     await fill("10.2.30.47");
     await page.getByRole("button", { name: "Apply", exact: true }).click();
     await page.getByRole("button", { name: "Apply and reconnect" }).click();
+    // Let the app's own handover navigation land before navigating away from
+    // it: going straight to /admin/network races that navigation, and one of
+    // the two is aborted (seen on a slower CI runner).
+    await page.waitForURL(/\/reconnect/);
 
     await page.goto("/admin/network");
     await expect(page.getByText(/reverts at .* unless confirmed/)).toBeVisible();

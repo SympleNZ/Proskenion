@@ -167,12 +167,11 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Set the system timezone
-        # ubuntu-24.04's runners default to Etc/UTC. proskenion.core.setup's
-        # first-run wizard (§10.4) reads /etc/timezone for the Welcome step's
-        # "detected" value, which step 2 then only accepts as Pacific/Auckland
-        # (§4.9); on the real appliance /etc/timezone already reads that,
-        # baked in at image build time, so the two never disagree there. This
-        # makes the runner's OS match what a real appliance's own OS has.
+        # ubuntu-24.04's runners default to Etc/UTC. The first-run wizard
+        # (§10.4) shows the OS zone as its "detected" value, which step 2 only
+        # accepts as Pacific/Auckland (§4.9); the real appliance's image sets
+        # it. It reads /etc/localtime first, which timedatectl re-points (the
+        # older /etc/timezone can be left stale, as it is on these runners).
         run: sudo timedatectl set-timezone Pacific/Auckland
 
       - name: End-to-end tests

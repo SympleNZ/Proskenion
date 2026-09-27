@@ -506,3 +506,38 @@ async def test_detect_environment_reports_the_platform_and_timezone() -> None:
     assert environment.to_json()["timezone"] == environment.timezone
     # The address is whatever the routing table offers; it may be absent.
     assert environment.address is None or environment.address.count(".") == 3
+
+
+# -- the detected timezone (§10.4) ---------------------------------------------
+
+
+def _link_or_skip(link: Path, target: Path) -> None:
+    try:
+        os.symlink(target, link)
+    except (OSError, NotImplementedError):
+        pytest.skip("this machine cannot create symbolic links")
+
+
+def test_localtime_wins_over_a_stale_etc_timezone(tmp_path: Path) -> None:
+    """``timedatectl set-timezone`` re-points /etc/localtime and leaves the
+    older /etc/timezone as it was, so the link is the truth."""
+    localtime = tmp_path / "localtime"
+    _link_or_skip(localtime, Path("/usr/share/zoneinfo/Pacific/Auckland"))
+    stale = tmp_path / "timezone"
+    stale.write_text("Etc/UTC\n", encoding="utf-8")
+    assert setup._detected_timezone(localtime=localtime, etc_timezone=stale) == "Pacific/Auckland"
+
+
+def test_etc_timezone_is_the_fallback_when_localtime_is_not_a_link(tmp_path: Path) -> None:
+    copy = tmp_path / "localtime"
+    copy.write_bytes(b"TZif")
+    named = tmp_path / "timezone"
+    named.write_text("Pacific/Auckland\n", encoding="utf-8")
+    assert setup._detected_timezone(localtime=copy, etc_timezone=named) == "Pacific/Auckland"
+
+
+def test_nothing_readable_means_the_supported_zone(tmp_path: Path) -> None:
+    assert (
+        setup._detected_timezone(localtime=tmp_path / "absent", etc_timezone=tmp_path / "absent2")
+        == setup.SUPPORTED_TIMEZONE
+    )

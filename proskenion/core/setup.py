@@ -376,24 +376,33 @@ def _detected_locale() -> str:
     return DEFAULT_LOCALE
 
 
-def _detected_timezone() -> str:
-    """The OS timezone, shown for confirmation (§10.4); Pacific/Auckland if unknown."""
-    etc_timezone = Path("/etc/timezone")
+def _detected_timezone(
+    *,
+    localtime: Path = Path("/etc/localtime"),
+    etc_timezone: Path = Path("/etc/timezone"),
+) -> str:
+    """The OS timezone, shown for confirmation (§10.4); Pacific/Auckland if unknown.
+
+    ``/etc/localtime`` is read first: it is what the system actually uses, and
+    ``timedatectl set-timezone`` changes it without touching the older
+    ``/etc/timezone``, which can then be stale. ``/etc/timezone`` is the
+    fallback for a system whose localtime is a copy rather than a link.
+    """
+    try:
+        target = Path(os.readlink(localtime))
+    except OSError:
+        target = None
+    if target is not None:
+        parts = target.parts
+        if "zoneinfo" in parts:
+            zone = "/".join(parts[parts.index("zoneinfo") + 1 :])
+            if zone:
+                return zone
     try:
         text = etc_timezone.read_text(encoding="utf-8").strip()
     except OSError:
         text = ""
-    if text:
-        return text
-    localtime = Path("/etc/localtime")
-    try:
-        target = Path(os.readlink(localtime))
-    except OSError:
-        return SUPPORTED_TIMEZONE
-    parts = target.parts
-    if "zoneinfo" in parts:
-        return "/".join(parts[parts.index("zoneinfo") + 1 :]) or SUPPORTED_TIMEZONE
-    return SUPPORTED_TIMEZONE
+    return text or SUPPORTED_TIMEZONE
 
 
 def primary_address() -> str | None:
