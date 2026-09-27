@@ -39,6 +39,18 @@
  * they aim the driver at replies to whichever port the poll came from, which
  * is always this appliance's own.
  *
+ * Every appliance also gets `PROSKENION_TEST_PLATFORM=development`, the same
+ * hook, forcing platform detection (`proskenion/core/platform.py`) to
+ * `DevelopmentPlatform` wherever it runs. On Windows detection already picks
+ * that platform, so `state_dir`/`data_dir` above are already honoured; on
+ * Linux, detection deliberately ignores them and uses the real
+ * `/srv/appliance` and `/data` instead (§5.4) — correct for the appliance,
+ * wrong for a CI runner, where two Playwright workers' applications would
+ * then share one real `/data`: certificates, helper requests, backups. This
+ * is the e2e harness's equivalent of `tests/conftest.py`'s own
+ * `_the_test_machine_is_not_an_appliance` fixture, for the one application
+ * process pytest never starts itself.
+ *
  * Teardown stops both processes and deletes the temporary directory.
  */
 import { execFile, spawn, type ChildProcess } from "node:child_process";
@@ -297,10 +309,15 @@ export const test = base.extend<{
         cwd: REPO_ROOT,
         stdio: ["ignore", "pipe", "pipe"],
         detached: process.platform !== "win32",
-        // The Art-Net override applies to every launch, `launch` fixtures'
-        // own entries (e.g. av.ts's, mixer.ts's) included; none of them sets
-        // this key, so it is never overridden by mistake.
-        env: { ...process.env, PROSKENION_TEST_ARTNET_PORT: String(artnetPort), ...launch?.env },
+        // The Art-Net and platform overrides apply to every launch, `launch`
+        // fixtures' own entries (e.g. av.ts's, mixer.ts's) included; none of
+        // them sets either key, so neither is ever overridden by mistake.
+        env: {
+          ...process.env,
+          PROSKENION_TEST_ARTNET_PORT: String(artnetPort),
+          PROSKENION_TEST_PLATFORM: "development",
+          ...launch?.env,
+        },
       });
       app.stdout?.on("data", (chunk: Buffer) => (appLog += chunk.toString()));
       app.stderr?.on("data", (chunk: Buffer) => (appLog += chunk.toString()));

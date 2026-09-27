@@ -295,6 +295,70 @@ def test_apply_test_hooks_does_nothing_without_the_variable(
     assert ArtNetEndpoint.default_port == before
 
 
+# -- §5.4: the e2e platform-detection hook, development-only -------------------
+
+
+def test_apply_test_hooks_forces_development_platform_in_development(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both call sites the production boot sequence uses — ``lifecycle`` and
+    ``setup`` (the first-run wizard's own platform lookup) — start returning
+    ``DevelopmentPlatform`` once this hook has run, exactly as
+    ``tests/conftest.py`` arranges for every pytest test (§5.4)."""
+    from proskenion.api import setup as setup_module
+    from proskenion.core import lifecycle as lifecycle_module
+    from proskenion.core.platform import DevelopmentPlatform
+
+    # tests/conftest.py's own autouse fixture already points both call sites
+    # at an empty machine root, so every test's detect_platform() already
+    # returns DevelopmentPlatform regardless of this hook — an isinstance
+    # check alone would pass whether or not apply_test_hooks did anything.
+    # The identity check below is what actually proves this hook replaced
+    # them itself.
+    before_lifecycle = lifecycle_module.detect_platform
+    before_setup = setup_module.detect_platform
+    monkeypatch.setenv(entry.PLATFORM_ENV, "development")
+    config = parse_config({**MINIMAL, "app": {"environment": "development"}})
+    entry.apply_test_hooks(config)
+    assert lifecycle_module.detect_platform is not before_lifecycle
+    assert setup_module.detect_platform is not before_setup
+    assert isinstance(lifecycle_module.detect_platform(), DevelopmentPlatform)
+    assert isinstance(setup_module.detect_platform(), DevelopmentPlatform)
+
+
+def test_apply_test_hooks_leaves_platform_detection_alone_in_production(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Production is the default when [app] is absent, exactly as a real
+    # appliance's config.toml has it: the variable being set in the
+    # environment must never be enough on its own (§4.14).
+    from proskenion.api import setup as setup_module
+    from proskenion.core import lifecycle as lifecycle_module
+
+    before_lifecycle = lifecycle_module.detect_platform
+    before_setup = setup_module.detect_platform
+    monkeypatch.setenv(entry.PLATFORM_ENV, "development")
+    config = parse_config(MINIMAL)
+    entry.apply_test_hooks(config)
+    assert lifecycle_module.detect_platform is before_lifecycle
+    assert setup_module.detect_platform is before_setup
+
+
+def test_apply_test_hooks_does_nothing_without_the_platform_variable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from proskenion.api import setup as setup_module
+    from proskenion.core import lifecycle as lifecycle_module
+
+    before_lifecycle = lifecycle_module.detect_platform
+    before_setup = setup_module.detect_platform
+    monkeypatch.delenv(entry.PLATFORM_ENV, raising=False)
+    config = parse_config({**MINIMAL, "app": {"environment": "development"}})
+    entry.apply_test_hooks(config)
+    assert lifecycle_module.detect_platform is before_lifecycle
+    assert setup_module.detect_platform is before_setup
+
+
 def test_main_applies_the_artnet_hook_before_serving(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

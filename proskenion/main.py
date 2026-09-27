@@ -22,8 +22,10 @@ import asyncio
 import logging
 import os
 import sys
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import uvicorn
 
@@ -38,6 +40,7 @@ from proskenion.config import (
 )
 from proskenion.core.dmx.endpoint import ArtNetEndpoint
 from proskenion.core.lifecycle import MountUnavailable, preflight
+from proskenion.core.platform import Platform, detect_platform
 from proskenion.db.migrations import MigrationError
 from proskenion.logging import configure_logging
 
@@ -51,6 +54,28 @@ log = logging.getLogger(__name__)
 #: development-only escape hatch must be inert whenever ``environment`` is
 #: ``production``, whatever the environment holds).
 ARTNET_PORT_ENV = "PROSKENION_TEST_ARTNET_PORT"
+
+#: Forces platform detection (``proskenion.core.platform.detect_platform``)
+#: to :class:`~proskenion.core.platform.DevelopmentPlatform`, wherever it is
+#: called from, for the lifetime of this process.
+#:
+#: On Linux, detection deliberately ignores ``config.app.state_dir`` and
+#: ``config.app.data_dir`` and uses the real ``/srv/appliance`` and ``/data``
+#: whatever the configuration says (§5.4) — correct for an appliance, where
+#: those are the mounts nginx and the root-side scripts read, but not for two
+#: Playwright workers on the same Linux runner, whose applications would
+#: otherwise share one real ``/data``: certificates, helper requests,
+#: backups. ``tests/conftest.py`` solves the same problem for pytest by
+#: pointing detection at an empty machine root; this variable does the same
+#: for the e2e appliance, a subprocess pytest never sees
+#: (tests/e2e/fixtures/appliance.ts). On Windows this is a no-op in
+#: substance — detection already picks ``DevelopmentPlatform`` there — but is
+#: still set for every launch so the two platforms are exercised identically.
+#:
+#: Honoured only in development, exactly like ``ARTNET_PORT_ENV`` above: a
+#: variable left set in a shell can never reach a production appliance.
+PLATFORM_ENV = "PROSKENION_TEST_PLATFORM"
+_FORCE_DEVELOPMENT_PLATFORM = "development"
 
 # Exit statuses. systemd reads these to decide what happened (§15.2).
 EXIT_OK = 0
@@ -126,6 +151,38 @@ def apply_test_hooks(config: Config) -> None:
     port = os.environ.get(ARTNET_PORT_ENV)
     if port:
         ArtNetEndpoint.default_port = int(port)
+    if os.environ.get(PLATFORM_ENV) == _FORCE_DEVELOPMENT_PLATFORM:
+        _force_development_platform()
+
+
+def _force_development_platform() -> None:
+    """Make every ``detect_platform()`` call site return ``DevelopmentPlatform``.
+
+    ``proskenion.core.lifecycle`` and ``proskenion.api.setup`` each did
+    ``from proskenion.core.platform import detect_platform``, binding their
+    own reference at import time; patching
+    ``proskenion.core.platform.detect_platform`` itself would not reach
+    either. ``tests/conftest.py``'s ``_the_test_machine_is_not_an_appliance``
+    fixture replaces those same two references with ``pytest``'s
+    ``monkeypatch``, restored after each test; there is no pytest here, so
+    this assigns the replacement directly and nothing restores it — the
+    process this runs in is the one thing this single e2e test started, and
+    is thrown away with it.
+    """
+    from proskenion.api import setup as setup_module
+    from proskenion.core import lifecycle as lifecycle_module
+
+    empty_root = Path(tempfile.mkdtemp(prefix="proskenion-test-platform-"))
+
+    def detect(*, root: Path | None = None, **kwargs: Any) -> Platform:
+        return detect_platform(root=empty_root if root is None else root, **kwargs)
+
+    # setattr, not a plain attribute assignment: neither module's own
+    # ``from proskenion.core.platform import detect_platform`` is an
+    # explicit re-export, so mypy --strict refuses to see ``detect_platform``
+    # as an attribute of either module at all.
+    setattr(lifecycle_module, "detect_platform", detect)  # noqa: B010
+    setattr(setup_module, "detect_platform", detect)  # noqa: B010
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:

@@ -166,17 +166,25 @@ jobs:
         working-directory: web
         run: npx playwright install --with-deps chromium
 
-      - name: Provide /data
-        # §10.4 step 6 writes the certificate under the platform layer's data
-        # directory, which is /data and has no configuration key (§5.4). The
-        # appliance mounts it; a runner has to be given one, or the wizard
-        # cannot reach step 7.
-        run: sudo install -d -m 0755 -o "$USER" /data
+      - name: Set the system timezone
+        # ubuntu-24.04's runners default to Etc/UTC. proskenion.core.setup's
+        # first-run wizard (§10.4) reads /etc/timezone for the Welcome step's
+        # "detected" value, which step 2 then only accepts as Pacific/Auckland
+        # (§4.9); on the real appliance /etc/timezone already reads that,
+        # baked in at image build time, so the two never disagree there. This
+        # makes the runner's OS match what a real appliance's own OS has.
+        run: sudo timedatectl set-timezone Pacific/Auckland
 
       - name: End-to-end tests
         working-directory: web
         # Builds the frontend once, then starts the real application per test
-        # over a database that does not exist yet (§22.5).
+        # over a database that does not exist yet (§22.5). Each appliance runs
+        # with PROSKENION_TEST_PLATFORM=development (tests/e2e/fixtures/appliance.ts,
+        # proskenion.main.apply_test_hooks), which forces platform detection to
+        # DevelopmentPlatform so each worker's application keeps its state and
+        # data under its own temporary directory (§5.4) instead of the real
+        # /data GenericLinuxPlatform would otherwise insist on — this runner
+        # is given no /data at all, and none is expected to appear.
         run: npm run test:e2e
 
       - name: Keep the failures

@@ -750,3 +750,37 @@ All notable changes to this project are recorded here, per release.
   any install or update.
 - `auditorium-core` runs `venv/bin/python -m proskenion.main`: the console
   script's `#!` named the staging directory the environment was built in.
+- v0.1.7:
+  - **The Playwright e2e suite was not safe to run on Linux, as GitHub CI
+    does.** Each test starts a real appliance over its own temporary
+    directories, and `detect_platform()` (`proskenion/core/platform.py`)
+    honours those on Windows — a developer's own machine — by picking
+    `DevelopmentPlatform`, but on Linux it deliberately picks
+    `GenericLinuxPlatform`, which uses the real `/srv/appliance` and `/data`
+    whatever the configuration says (§5.4): two Playwright workers on the
+    same Linux runner would then share one real `/data` — certificates,
+    helper requests, backups. `tests/conftest.py` already solves this for
+    pytest by pointing detection at an empty machine root; a new
+    `PROSKENION_TEST_PLATFORM=development` hook
+    (`proskenion.main.apply_test_hooks`, honoured only in development, like
+    every other `PROSKENION_TEST_` hook) does the same for the e2e
+    appliance, a subprocess pytest never sees. Set for every launch in
+    `tests/e2e/fixtures/appliance.ts`, `bridged_app.py` included since it
+    hands over to the same entry point. CI's "Provide /data" step is gone
+    with it. `tools/e2e-linux.sh` (a sibling of `tools/test-linux.sh`) runs
+    the full suite in a container built from Microsoft's own Playwright
+    image, as a non-root user with no `/data` on the machine at all, and
+    checks afterwards that nothing created one.
+  - Running that suite on Linux for the first time also found the first-run
+    wizard's Welcome step (§10.4) failing on any host whose OS timezone is
+    not already Pacific/Auckland: `_detected_timezone()`
+    (`proskenion/core/setup.py`) reads the real `/etc/timezone`, which on the
+    appliance's own image is already Pacific/Auckland at build time, but on
+    a bare Ubuntu runner or container defaults to `Etc/UTC`, disagreeing with
+    what step 2 alone accepts (§4.9). Not an application bug — a real
+    appliance never has this file wrong — so the fix is in the two places
+    that stand in for it: `tools/e2e-linux.Dockerfile` re-points
+    `/etc/localtime`/`/etc/timezone` at Pacific/Auckland, and the tag-triggered
+    `e2e` job in `.github/workflows/ci.yml` runs `timedatectl set-timezone
+    Pacific/Auckland` first, since GitHub's `ubuntu-24.04` runners default to
+    UTC and would have hit the identical failure on the first `v*` tag.
