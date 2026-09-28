@@ -171,6 +171,8 @@ EXPECTED: Final[dict[tuple[str, str], frozenset[str]]] = {
     ("POST", "/mixer/channels"): ADMIN,
     ("PUT", "/mixer/channels/{channel_id}"): ADMIN,
     ("DELETE", "/mixer/channels/{channel_id}"): ADMIN,
+    ("GET", "/mixer/devices/{device_id}/missing-channels"): ADMIN,
+    ("POST", "/mixer/devices/{device_id}/missing-channels"): ADMIN,
     ("GET", "/mixer/desk-scenes"): ADMIN,
     ("GET", "/mixer/desk-scenes/{scene_id}"): ADMIN,
     ("POST", "/mixer/desk-scenes"): ADMIN,

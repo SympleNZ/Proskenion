@@ -54,12 +54,14 @@ from proskenion.core.devices import DeviceManager
 from proskenion.core.events import MixerConfigChanged
 from proskenion.core.helper import HelperClient
 from proskenion.core.mixer import service as mixer_service
+from proskenion.core.mixer.desk_channels import add_missing_channels
 from proskenion.core.platform import Platform, detect_platform
 from proskenion.core.ratelimit import LockedOut, RateLimiter, Scope
 from proskenion.core.secrets import DEFAULT_SECRET_PATH, DeviceSecret, generate_secret_if_missing
 from proskenion.core.setup import FirstRunFlag, SetupAlreadyComplete, Step, StepRejected
 from proskenion.db.connection import Database
 from proskenion.db.crud import devices as devices_crud
+from proskenion.db.crud import mixer as mixer_crud
 from proskenion.db.crud import users as users_crud
 
 log = logging.getLogger(__name__)
@@ -186,18 +188,20 @@ async def _platform(request: Request) -> Platform:
     )
 
 
-async def _ensure_mixer_main_channels(request: Request, db: Database) -> None:
-    """The wizard's own half of §7.3's "a Main channel is always present":
-    every configured mixer gets one if it has none yet.
+async def _ensure_mixer_channels(request: Request, db: Database) -> None:
+    """The wizard's own half of giving a mixer its channels (§7.3): every
+    desk channel for a mixer with none yet besides Main, and at least a Main
+    channel for every other mixer.
 
-    ``POST /devices`` already creates it at the moment a mixer device is
+    ``POST /devices`` already creates them at the moment a mixer device is
     made (``proskenion/api/devices.py``), which is how step 4 normally
-    configures one; this is the defensive second call the phase-4 contract
-    asks for — a mixer that already existed before this wizard run (a
-    database that was reset and re-run, say) still gets a Main channel here,
-    without the admin ever visiting the device again. A device manager not
-    yet built (an application embedded without one) or with no mixer
-    configured is a silent no-op.
+    configures one; this is the defensive second call — a mixer that already
+    existed before this wizard run (a database that was reset and re-run,
+    say) still gets its channels here, without the admin ever visiting the
+    device again. A mixer that already has channels of its own is given only
+    a Main, if it lacks one: the rest is the admin's "Add missing channels".
+    A device manager not yet built (an application embedded without one) or
+    with no mixer configured is a silent no-op.
     """
     manager: DeviceManager | None = getattr(request.app.state, "devices", None)
     if manager is None:
@@ -205,10 +209,14 @@ async def _ensure_mixer_main_channels(request: Request, db: Database) -> None:
     bus: EventBus | None = getattr(request.app.state, "bus", None)
     created = False
     for device in await devices_crud.list_all(db, category="mixer"):
-        if await mixer_service.ensure_main_channel(db, manager, device) is not None:
+        existing = await mixer_crud.list_channels(db, device_id=device.id)
+        if all(channel.channel_kind == "main" for channel in existing):
+            if await add_missing_channels(db, manager, device):
+                created = True
+        elif await mixer_service.ensure_main_channel(db, manager, device) is not None:
             created = True
     if created and bus is not None:
-        bus.emit(MixerConfigChanged(reason="main_channel_created"))
+        bus.emit(MixerConfigChanged(reason="desk_channels_created"))
 
 
 def _reload_hook(request: Request) -> certs.ReloadHook | None:
@@ -500,10 +508,10 @@ async def _dispatch(
             record = await setup.submit_devices(
                 db, device_ids=devices.device_ids, skipped=devices.skipped
             )
-            # §7.3: a mixer always has a Main channel once configured — see
-            # _ensure_mixer_main_channels's docstring for why this call is
-            # a defensive second one, not the primary path.
-            await _ensure_mixer_main_channels(request, db)
+            # §7.3: a mixer has its channels once configured — see
+            # _ensure_mixer_channels's docstring for why this call is a
+            # defensive second one, not the primary path.
+            await _ensure_mixer_channels(request, db)
             return record
         case Step.OPERATOR_PASSWORD:
             operator = _parse(PasswordBody, body)

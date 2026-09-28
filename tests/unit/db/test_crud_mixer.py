@@ -49,6 +49,39 @@ async def test_bad_channel_kind_is_refused_on_create_and_update(db: Database) ->
         await mixer.update_channel(db, channel.id, channel.updated_at, channel_kind="dj")
 
 
+async def test_create_channels_is_all_or_nothing(db: Database) -> None:
+    device = await _mixer_device(db)
+    created = await mixer.create_channels(
+        db,
+        device.id,
+        [
+            mixer.NewChannel("input", "Input 1", ("ip1",), 0),
+            mixer.NewChannel("main", "Main LR", ("main",), 1),
+        ],
+    )
+    assert [(c.channel_kind, c.name, c.sort_order) for c in created] == [
+        ("input", "Input 1", 0),
+        ("main", "Main LR", 1),
+    ]
+    assert all(c.visible_staff and c.tracked and c.hirer_max_db is None for c in created)
+    assert [r.driver_ref for r in await mixer.get_channel_refs(db, created[0].id)] == ["ip1"]
+
+    # A second Main anywhere in the batch refuses the whole batch.
+    with pytest.raises(ConstraintError):
+        await mixer.create_channels(
+            db,
+            device.id,
+            [
+                mixer.NewChannel("input", "Input 2", ("ip2",), 2),
+                mixer.NewChannel("main", "Another Main", ("main",), 3),
+            ],
+        )
+    assert [c.name for c in await mixer.list_channels(db, device_id=device.id)] == [
+        "Input 1",
+        "Main LR",
+    ]
+
+
 async def test_list_channels_by_device_and_sort_order(db: Database) -> None:
     device = await _mixer_device(db)
     other_device = await _mixer_device(db, name="Second desk")

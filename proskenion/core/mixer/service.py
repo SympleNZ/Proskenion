@@ -1000,7 +1000,7 @@ def _clamp(db: float | None, min_db: float, max_db: float) -> float | None:
     return min(max(db, min_db), max_db)
 
 
-# -- Main channel creation (§7.3; used by the wizard and POST /devices) --------
+# -- Main channel creation (§7.3; used by the wizard) ---------------------------
 
 
 async def ensure_main_channel(
@@ -1009,8 +1009,9 @@ async def ensure_main_channel(
     """Create ``device``'s Main channel if it is a mixer with none yet (§7.3).
 
     Called from the first-run wizard's device step
-    (:mod:`proskenion.api.setup`) and from ``POST /devices``
-    (:mod:`proskenion.api.devices`) once a mixer device row exists. Uses the
+    (:mod:`proskenion.api.setup`) for a mixer that already has channels of
+    its own; a mixer with none is given every desk channel, Main among them,
+    by :func:`proskenion.core.mixer.desk_channels.add_missing_channels`. Uses the
     driver's own advertised reference of kind ``"main"`` — whatever it is
     named, the stub's own ref included, so this makes no assumption about a
     real desk's vocabulary (§5.5, B59). Returns the created channel, or

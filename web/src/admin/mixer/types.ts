@@ -78,6 +78,20 @@ export interface DeviceRefsResponse {
   refs: ChannelRef[];
 }
 
+// -- GET/POST /mixer/devices/{id}/missing-channels (§7.3) -------------------
+// The desk channels no channel covers, in the driver's order; adding them
+// creates one channel each and never touches an existing one.
+
+export interface MissingChannelsResponse {
+  device_id: number;
+  missing: ChannelRef[];
+}
+
+export interface AddedChannelsResponse {
+  device_id: number;
+  created: MixerChannel[];
+}
+
 // -- GET /devices/{id}/fader-law (§5.5 "The fader law is published as data") --
 
 export interface FaderLawResponse {

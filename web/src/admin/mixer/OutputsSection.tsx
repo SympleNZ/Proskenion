@@ -120,7 +120,7 @@ export function OutputsSection({ deviceId, outputs, refs, faderLaw }: OutputsSec
 
       {unmappedCount > 0 ? (
         <Banner tone="warning">
-          {unmappedCount} output{unmappedCount === 1 ? "" : "s"} lost its reference in a driver change and needs
+          {unmappedCount} output{unmappedCount === 1 ? " has" : "s have"} lost {unmappedCount === 1 ? "its" : "their"} reference in a driver change and need{unmappedCount === 1 ? "s" : ""}
           remapping (Devices → Re-map references). An unmapped output is not controllable until it is re-mapped (§5.5).
         </Banner>
       ) : null}

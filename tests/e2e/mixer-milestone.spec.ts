@@ -174,4 +174,28 @@ test.describe("Phase 4 milestone: the stub mixer (§5.5)", () => {
       })
       .toBe(1);
   });
+
+  test("Add missing channels gives a desk channel with none its channel back, and touches nothing else", async ({ page }) => {
+    const { mic } = await buildStubMixerRoom(page.request);
+    type Row = { id: number; name: string; driver_refs: string[]; updated_at: string };
+    const list = async (): Promise<Row[]> =>
+      ((await (await page.request.get("/api/v1/mixer/channels")).json()) as { channels: Row[] }).channels;
+    const before = await list();
+    const input6 = before.find((row) => row.driver_refs[0] === "in6");
+    if (!input6) throw new Error("no channel was created for in6");
+    expect((await page.request.delete(`/api/v1/mixer/channels/${input6.id}`)).status()).toBe(204);
+
+    await page.goto("/admin/mixer");
+    await expect(page.getByText("1 desk channel has no channel here")).toBeVisible();
+    await page.getByRole("button", { name: "Add missing channels", exact: true }).click();
+    await expect(page.getByText(/Added 1 channel\./)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Add missing channels", exact: true })).toHaveCount(0);
+
+    const after = await list();
+    const kept = before.filter((row) => row.id !== input6.id);
+    expect(after.filter((row) => row.id !== input6.id && kept.some((k) => k.id === row.id))).toEqual(kept);
+    const added = after.filter((row) => !kept.some((k) => k.id === row.id));
+    expect(added.map((row) => [row.name, row.driver_refs])).toEqual([["Input 6", ["in6"]]]);
+    expect(after.find((row) => row.id === mic)?.name).toBe("Mic 1");
+  });
 });

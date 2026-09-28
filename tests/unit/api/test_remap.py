@@ -338,6 +338,61 @@ async def test_a_driver_swap_invalidates_references_and_keeps_everything_else(
         assert foyer.status_code == 404  # unmapped is not controllable
 
 
+async def test_a_driver_swap_adds_no_channels_and_the_remap_offers_the_missing_ones(
+    config: Config, db: Database, tokens: TokenService, limiter: RateLimiter
+) -> None:
+    """A driver change never creates channels by itself: the re-mapping owns
+    that moment, and its answer says how many desk channels no mapped channel
+    covers, for the screen to offer "Add missing channels"."""
+    ids = await mixer_rig(db)
+    async with running(config, db, tokens, limiter) as (client, _service, _app):
+        before = {c.id for c in await mixer_crud.list_channels(db, device_id=ids["device"])}
+        assert (await swap(client, ids["device"], "altmixer")).status_code == 200
+        assert {c.id for c in await mixer_crud.list_channels(db)} == before
+
+        applied = await client.post(
+            f"{DEVICES}/{ids['device']}/remap",
+            json={
+                "mappings": [
+                    {"holder": "mixer_channel", "id": ids["main"], "new_refs": ["master"]},
+                    {"holder": "mixer_channel", "id": ids["mic"], "new_refs": ["ch2"]},
+                    {"holder": "mixer_channel", "id": ids["pair"], "new_refs": ["in1", "ch3"]},
+                    {"holder": "mixer_channel", "id": ids["foyer"], "new_refs": None},
+                ]
+            },
+        )
+
+        assert applied.status_code == 200, applied.text
+        # Master, in1, ch2 and ch3 are covered; "out1" is held only by the
+        # unmapped Foyer, which covers nothing, and "bus1" by nothing.
+        assert applied.json()["missing_channels"] == 2
+        assert {c.id for c in await mixer_crud.list_channels(db)} == before
+
+        added = await client.post(f"{MIXER}/devices/{ids['device']}/missing-channels")
+        assert added.status_code == 200, added.text
+        assert [(c["name"], c["driver_refs"]) for c in added.json()["created"]] == [
+            ("Aux 1", ["out1"]),
+            ("Bus 1", ["bus1"]),
+        ]
+        listed = await client.get(f"{DEVICES}/{ids['device']}/remap")
+        assert listed.json()["missing_channels"] == 0
+        assert await refs_of(db, ids["foyer"]) == ["out1"]  # still unmapped, untouched
+        foyer = await mixer_crud.get_channel(db, ids["foyer"])
+        assert foyer is not None and foyer.unmapped
+
+
+async def test_a_matrix_remap_reports_no_missing_channels(
+    config: Config, db: Database, tokens: TokenService, limiter: RateLimiter
+) -> None:
+    device = await devices_crud.create(
+        db, category="video_matrix", driver_key="stub", name="Matrix", config=LOOPBACK
+    )
+    async with running(config, db, tokens, limiter) as (client, _service, _app):
+        listed = await client.get(f"{DEVICES}/{device.id}/remap")
+        assert listed.status_code == 200, listed.text
+        assert listed.json()["missing_channels"] == 0
+
+
 async def test_a_reverted_driver_change_restores_the_mapping(
     config: Config, db: Database, tokens: TokenService, limiter: RateLimiter
 ) -> None:

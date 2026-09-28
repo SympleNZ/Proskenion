@@ -778,3 +778,164 @@ async def test_delete_mixer_desk_scene_unknown_is_not_found(
 
             assert response.status_code == 404
             assert code(response) == "not_found"
+
+
+# -- desk channels no channel covers (§7.3, §21.21) ----------------------------------
+
+
+async def _surface(
+    db: Database, device_id: int
+) -> list[tuple[mixer_crud.MixerChannel, list[str]]]:
+    return [
+        (c.channel, [r.driver_ref for r in c.refs])
+        for c in await mixer_crud.list_channels_with_refs(db, device_id)
+    ]
+
+
+async def test_add_missing_channels_adds_only_what_is_missing_and_touches_nothing_else(
+    config: Config, db: Database, tokens: TokenService, limiter: RateLimiter
+) -> None:
+    device = await _mixer_device(db)
+    channels = await _seed_channels(db, device.id)
+    await mixer_crud.update_channel(
+        db,
+        channels["input"].id,
+        channels["input"].updated_at,
+        hirer_max_db=-6.0,
+        visible_staff=False,
+        sort_order=7,
+    )
+    before = await _surface(db, device.id)
+    async with _running_app(config, db, tokens, limiter, device_id=device.id) as app:
+        async with make_client(app) as client:
+            await login(client)
+            url = f"{MIXER}/devices/{device.id}/missing-channels"
+
+            listed = await client.get(url)
+            assert listed.status_code == 200, listed.text
+            assert [m["ref"] for m in listed.json()["missing"]] == [f"in{n}" for n in range(2, 7)]
+            assert listed.json()["missing"][0] == {
+                "ref": "in2",
+                "label": "Input 2",
+                "kind": "input",
+                "stereo": False,
+            }
+
+            added = await client.post(url)
+
+            assert added.status_code == 200, added.text
+            created = added.json()["created"]
+            assert [(c["name"], c["driver_refs"], c["sort_order"]) for c in created] == [
+                (f"Input {n}", [f"in{n}"], 8 + n - 2) for n in range(2, 7)
+            ]
+            assert all(c["visible_staff"] and c["tracked"] for c in created)
+            assert all(c["hirer_max_db"] is None and c["channel_kind"] == "input" for c in created)
+            # Nothing that existed was renamed, reordered, re-pointed or edited.
+            existing = {c.id for c, _ in before}
+            assert [row for row in await _surface(db, device.id) if row[0].id in existing] == before
+
+            # The mixer service takes them on without a restart.
+            service: MixerService = app.state.mixer
+            for _ in range(300):
+                if all(service.is_configured(c["id"]) for c in created):
+                    break
+                await asyncio.sleep(0.01)
+            assert all(service.is_configured(c["id"]) for c in created)
+
+            # Idempotent: a second run adds nothing, and nothing is missing.
+            again = await client.post(url)
+            assert again.status_code == 200, again.text
+            assert again.json()["created"] == []
+            assert (await client.get(url)).json()["missing"] == []
+            assert len(await _surface(db, device.id)) == 8
+
+
+async def test_add_missing_channels_does_not_count_an_unmapped_channel_as_covering(
+    config: Config, db: Database, tokens: TokenService, limiter: RateLimiter
+) -> None:
+    """An unmapped channel's references are the old driver's, kept to say what
+    it was: one that happens to read "in2" does not stand for the desk's in2.
+    An unmapped Main still counts: there is only ever one Main."""
+    device = await _mixer_device(db)
+    channels = await _seed_channels(db, device.id)
+    old = await mixer_crud.create_channel(db, device_id=device.id, name="Old desk ch2")
+    await mixer_crud.set_channel_refs(db, old.id, ["in2"])
+    await mixer_crud.update_channel(db, old.id, old.updated_at, unmapped=True)
+    main = channels["main"]
+    await mixer_crud.update_channel(db, main.id, main.updated_at, unmapped=True)
+    async with _running_app(config, db, tokens, limiter, device_id=device.id) as app:
+        async with make_client(app) as client:
+            await login(client)
+
+            added = await client.post(f"{MIXER}/devices/{device.id}/missing-channels")
+
+            assert added.status_code == 200, added.text
+            refs = [c["driver_refs"] for c in added.json()["created"]]
+            assert refs == [[f"in{n}"] for n in range(2, 7)]
+
+
+async def test_add_missing_channels_on_a_cq20b_honours_linked_pairs_and_stereo(
+    config: Config, db: Database, tokens: TokenService, limiter: RateLimiter
+) -> None:
+    """A channel on the linked pair ``out12`` covers Out 1 and Out 2; ST1 is
+    one stereo reference, so a channel on it covers it whole; Main exists, so
+    no second Main is made."""
+    async with CqMidiStub() as stub:
+        device = await _cq_device(db, stub)
+        main = await mixer_crud.create_channel(
+            db, device_id=device.id, channel_kind="main", name="PA"
+        )
+        await mixer_crud.set_channel_refs(db, main.id, ["main"])
+        monitors = await mixer_crud.create_channel(
+            db, device_id=device.id, channel_kind="output", name="Monitors", sort_order=1
+        )
+        await mixer_crud.set_channel_refs(db, monitors.id, ["out12"])
+        playback = await mixer_crud.create_channel(
+            db, device_id=device.id, name="Playback", sort_order=2
+        )
+        await mixer_crud.set_channel_refs(db, playback.id, ["st1"])
+        async with _running_app(config, db, tokens, limiter, device_id=device.id) as app:
+            async with make_client(app) as client:
+                await login(client)
+
+                added = await client.post(f"{MIXER}/devices/{device.id}/missing-channels")
+
+                assert added.status_code == 200, added.text
+                created = added.json()["created"]
+                assert [c["driver_refs"][0] for c in created] == [
+                    *(f"ip{n}" for n in range(1, 17)),
+                    "st2",
+                    "usb",
+                    "bt",
+                    "out3",
+                    "out4",
+                    "out5",
+                    "out6",
+                ]
+                assert created[0]["sort_order"] == 3
+                kinds = [c.channel_kind for c in await mixer_crud.list_channels(db)]
+                assert kinds.count("main") == 1
+
+
+async def test_missing_channels_is_admin_only_and_mixer_only(
+    config: Config, db: Database, tokens: TokenService, limiter: RateLimiter
+) -> None:
+    device = await _mixer_device(db)
+    matrix = await devices_crud.create(
+        db, category="video_matrix", driver_key="stub", name="Matrix", config=STUB_CONFIG
+    )
+    async with _running_app(config, db, tokens, limiter, device_id=device.id) as app:
+        async with make_client(app) as client:
+            await login(client, OPERATOR_PASSWORD)
+            refused = await client.post(f"{MIXER}/devices/{device.id}/missing-channels")
+            assert refused.status_code == 403, refused.text
+            assert await mixer_crud.list_channels(db) == []
+
+            await login(client)
+            for device_id in (matrix.id, 404):
+                for method in ("GET", "POST"):
+                    response = await client.request(
+                        method, f"{MIXER}/devices/{device_id}/missing-channels"
+                    )
+                    assert response.status_code == 404, response.text
+                    assert code(response) == "not_found"

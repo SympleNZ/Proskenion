@@ -32,6 +32,8 @@ describe("Shell — the ? sheet reaches every tier", () => {
   it("admin: shortcuts, version, build ID, recovery summary and all four documents", async () => {
     renderWithProviders(<Shell tier="admin" manifest="staff" />, { route: "/admin/pages", status: "authenticated", tier: "admin" });
     const dialog = openHelp();
+    expect(within(dialog).getByRole("heading", { name: "On this screen" })).toBeInTheDocument();
+    expect(within(dialog).getByText(/button panels operators and hirers use/)).toBeInTheDocument();
     expect(within(dialog).getByText("Keyboard shortcuts")).toBeInTheDocument();
     expect(within(dialog).getByText("Ctrl/Cmd+S")).toBeInTheDocument();
     expect(within(dialog).getByText("Version")).toBeInTheDocument();

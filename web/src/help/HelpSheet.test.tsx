@@ -5,16 +5,24 @@
  */
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 
 import { HelpSheet } from "./HelpSheet";
 
+/** A route each tier can plausibly be on — `HelpContent`'s "On this screen" section reads the current location. */
+const ROUTE_FOR_TIER: Record<"admin" | "operator" | "hirer", string> = {
+  admin: "/admin/devices",
+  operator: "/app/pages",
+  hirer: "/hire/1",
+};
+
 function renderWithTrigger(tier: "admin" | "operator" | "hirer" = "admin") {
   return render(
-    <>
+    <MemoryRouter initialEntries={[ROUTE_FOR_TIER[tier]]}>
       <button type="button">Before</button>
       <HelpSheet tier={tier} />
-    </>,
+    </MemoryRouter>,
   );
 }
 

@@ -293,8 +293,58 @@ All notable changes to this project are recorded here, per release.
     destructive/confirm-gated button the wider rule newly caught across
     Backup, Updates, Email, HDMI, KNX, Lighting, Mixer, Pages, Rules, Scenes
     and the stage plan's fixture/group sheets.
+- v0.1.9:
+  - The `?` help sheet gains an "On this screen" section at the top (Simon's
+    request): a short summary of the open screen, then every inline help
+    (ⓘ) entry actually rendered on it, in the order the controls appear, then
+    — where one exists — a link into the matching section of the bundled
+    documentation. The entries are read from the rendered DOM
+    (`[data-help-trigger]`, the same marker `help/coverage.ts` already uses)
+    rather than a second, hand-maintained "screen -> help ids" list, so they
+    can never drift out of step with what a control's own `helpId` says —
+    `help/onScreen.ts`'s module doc explains the choice. The per-screen
+    summaries (`help/onScreen.ts`'s `ADMIN_SCREEN_HELP`/`OPERATOR_SCREEN_HELP`)
+    cover every admin and operator screen `navigation.ts` declares, plus the
+    hirer shell's one page-surface screen; a coverage test fails if a screen
+    is ever added there without one. Respects tier exactly as the rest of the
+    sheet does — a hirer sees only their own screen's help, an operator only
+    operator screens.
+  - The login screen now shows the build version discreetly below both
+    forms ("Proskenion v0.1.8") — already public at `/health`, so nothing new
+    is disclosed; it just saves reading it out over the phone from somewhere
+    else.
+  - Every mixer channel exists by default (§7.3). Adding a mixer — through
+    Admin → Devices or the first-run wizard — creates one channel per desk
+    channel the driver declares, in its order, named from the desk's labels,
+    visible to staff, with no hirer ceiling, tracked. On the CQ-20B that is
+    Input 1-16, ST1, ST2, USB and Bluetooth (each stereo source one
+    channel), Main LR and Out 1-6; a channel pointed at a linked pair
+    (Out 1/2) covers both outputs. What a hirer sees is still decided by
+    their pages. "Add missing channels" on Admin → Mixer
+    (`GET`/`POST /mixer/devices/{id}/missing-channels`) adds a channel for
+    each desk channel none covers, never renaming, reordering, re-pointing
+    or deleting an existing one — how a mixer configured before this gets
+    the rest. A driver change adds nothing by itself: once references are
+    re-mapped, the sheet offers to add the new driver's uncovered channels
+    (`missing_channels` on the re-map response).
 
 ### Fixed
+- v0.1.9 (image-level): ending emergency mode after a first install also
+  resets the rollback unit that failed on the no-application boot, so the
+  system reads `running` rather than `degraded` until a reboot.
+- v0.1.9: a second, page-level scrollbar behind the shell's intended one
+  (§21.6, §21.7), reported on the real appliance with a system banner up
+  (§21.26's "No Venue Default desk scene is set"). `.shell-main` (`#main`)
+  had `overflow: auto` but no `position` of its own, so it was never the
+  containing block for a `position: absolute` descendant with no closer
+  positioned ancestor — a visually-hidden `.sr-only` status label, in the
+  reported case. That descendant was placed against the document instead
+  of `#main`, escaping its clip; with a banner narrowing the space on offer,
+  a row near the bottom of a list could sit close enough to the fold that
+  its own label landed past the viewport, growing the document and pushing
+  the bottom status bar off-screen. `.shell-main` now has `position:
+  relative`, containing every descendant where the one intended scrollbar
+  already is, for every shell and every banner.
 - v0.1.1, from commissioning the real appliance on 24 September 2026 (P6-T22):
   - Local backups and system images go to `/srv/local/backups` and
     `/srv/local/images`, the directories the image makes the application's;

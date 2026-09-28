@@ -211,6 +211,15 @@ REFS: dict[str, RefInfo] = {
     )
 }
 
+#: Each linked-pair reference and the two outputs it addresses (§7.3 *Linked
+#: stereo outputs*). A pair is another way of addressing outputs the desk
+#: already has, not a desk channel of its own.
+LINKED_PAIRS: dict[str, tuple[str, str]] = {
+    "out12": ("out1", "out2"),
+    "out34": ("out3", "out4"),
+    "out56": ("out5", "out6"),
+}
+
 INPUT_COUNT = sum(1 for info in REFS.values() if info.kind == "input")  # 20
 OUTPUT_COUNT = 6  # Out 1-6 (§7.3 *Hardware*); the pairs are the same six outputs
 

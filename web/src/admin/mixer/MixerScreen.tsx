@@ -19,6 +19,7 @@ import { useDeviceRefs, useFaderLaw, useMixerChannels, useMixerDeskScenes, useMi
 import { ChannelsSection } from "./ChannelsSection";
 import { DeskScenesSection } from "./DeskScenesSection";
 import { MainPanel } from "./MainPanel";
+import { MissingChannelsBanner } from "./MissingChannels";
 import { OutputsSection } from "./OutputsSection";
 import type { ChannelRef, MixerChannel, MixerDeskScene } from "./types";
 
@@ -108,6 +109,7 @@ export function MixerScreen() {
         />
       ) : (
         <>
+          <MissingChannelsBanner deviceId={deviceId} />
           <div role="tablist" aria-label="Mixer configuration" className="tab-strip" onKeyDown={handleKeyDown}>
             {TABS.map((tab) => (
               <button

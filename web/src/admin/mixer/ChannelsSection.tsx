@@ -122,13 +122,13 @@ export function ChannelsSection({ deviceId, channels, refs, faderLaw }: Channels
 
       {unmappedCount > 0 ? (
         <Banner tone="warning">
-          {unmappedCount} channel{unmappedCount === 1 ? "" : "s"} lost its reference in a driver change and needs remapping. An unmapped channel is
+          {unmappedCount} channel{unmappedCount === 1 ? " has" : "s have"} lost {unmappedCount === 1 ? "its" : "their"} reference in a driver change and need{unmappedCount === 1 ? "s" : ""} remapping. An unmapped channel is
           not controllable and is excluded from hirer access until fixed (§5.5).
         </Banner>
       ) : null}
 
       {rows.length === 0 ? (
-        <p className="metric-note">No channels yet. A venue exposing four of twenty inputs should add those four, not delete the other sixteen.</p>
+        <p className="metric-note">No input channels. Add missing channels, above, gives each of the desk&apos;s inputs one.</p>
       ) : (
         <Card className="device-card" compact>
           <div className="table-scroll">

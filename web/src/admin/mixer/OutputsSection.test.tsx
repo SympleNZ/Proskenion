@@ -40,7 +40,7 @@ describe("OutputsSection", () => {
       { route: "/admin/mixer" },
     );
 
-    expect(screen.getByText(/1 output lost its reference in a driver change/)).toBeInTheDocument();
+    expect(screen.getByText(/1 output has lost its reference in a driver change/)).toBeInTheDocument();
     const rows = screen.getAllByRole("row").slice(1); // drop the header row
     expect(rows[0]).toHaveTextContent("Stage monitors");
     expect(rows[0]).toHaveTextContent("Unmapped");

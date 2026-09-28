@@ -164,6 +164,7 @@ from proskenion.core.drivers.base import (
 from proskenion.core.drivers.capabilities import (
     ChannelRef,
     ChannelState,
+    DeskChannel,
     LawPoint,
     MixerCapabilities,
     MixerChange,
@@ -171,6 +172,7 @@ from proskenion.core.drivers.capabilities import (
 from proskenion.core.drivers.categories import Category
 from proskenion.core.drivers.cq20b_midi import (
     INPUT_COUNT,
+    LINKED_PAIRS,
     MAX_DB,
     MIN_DB,
     OUTPUT_COUNT,
@@ -608,6 +610,26 @@ class CQ20BDriver(Driver):
 
     def available_refs(self) -> list[ChannelRef]:
         return [ChannelRef(i.ref, i.label, i.kind, i.stereo) for i in REFS.values()]
+
+    def desk_channels(self) -> list[DeskChannel]:
+        """The desk's channels, in :meth:`available_refs` order: sixteen mono
+        inputs, ST1, ST2, USB and Bluetooth (each one stereo reference), Main
+        LR, and Out 1-6 individually.
+
+        The linked pairs are left out: whether a pair is linked is the
+        admin's statement (§7.3), so each output starts as a channel of its
+        own, and a channel the admin points at ``out12`` covers Out 1 and
+        Out 2 both.
+        """
+        covered_by: dict[str, list[str]] = {}
+        for pair, outputs in LINKED_PAIRS.items():
+            for output in outputs:
+                covered_by.setdefault(output, []).append(pair)
+        return [
+            DeskChannel(ref, tuple(covered_by.get(ref.ref, ())))
+            for ref in self.available_refs()
+            if ref.ref not in LINKED_PAIRS
+        ]
 
     def fader_law(self) -> list[LawPoint]:
         """The law from cq20b.md §4 (PDF p.15), unity a detent. Whether the desk

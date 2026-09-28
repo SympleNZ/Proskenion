@@ -1195,23 +1195,21 @@ async def test_the_stub_mixer_degrades_to_its_declared_capabilities(
     await wait_for_status(client, device["id"], "connected")
     refs = ok(await client.get(f"{DEVICES}/{device['id']}/refs"))["refs"]
     assert len(refs) == 8
-    (main,) = ok(await client.get(f"{MIXER}/channels"))["channels"]
+    # Every one of its eight references became a channel, Main among them.
+    listed = ok(await client.get(f"{MIXER}/channels"))["channels"]
+    assert [row["driver_refs"] for row in listed] == [[ref["ref"]] for ref in refs]
+    (main,) = [row for row in listed if row["channel_kind"] == "main"]
     assert (main["channel_kind"], main["driver_refs"]) == ("main", ["main"])
     law = ok(await client.get(f"{DEVICES}/{device['id']}/fader-law"))["fader_law"]
     assert law[0]["db"] is None and any(p.get("detent") for p in law)
 
+    (input_1,) = [row for row in listed if row["driver_refs"] == ["in1"]]
     mic = ok(
-        await client.post(
-            f"{MIXER}/channels",
-            json={
-                "device_id": device["id"],
-                "channel_kind": "input",
-                "name": "Mic 1",
-                "driver_refs": ["in1"],
-                "show_pan": True,
-            },
-        ),
-        201,
+        await client.put(
+            f"{MIXER}/channels/{input_1['id']}",
+            json={"name": "Mic 1", "show_pan": True},
+            headers={"If-Unmodified-Since-Version": input_1["updated_at"]},
+        )
     )
     desk_scene = ok(
         await client.post(
@@ -1231,7 +1229,7 @@ async def test_the_stub_mixer_degrades_to_its_declared_capabilities(
         "metering_reason": "unsupported",
     }
     assert state["connected"] is True
-    (strip_,) = state["inputs"]
+    (strip_,) = [entry for entry in state["inputs"] if entry["channel_id"] == mic["id"]]
     assert (strip_["show_pan"], strip_["pan"]) == (True, None)
     # Retained, not deleted, when the driver cannot recall them (§15.6).
     assert [s["name"] for s in state["desk_scenes"]] == ["Venue Default"]

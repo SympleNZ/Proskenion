@@ -182,6 +182,8 @@ export interface RemapResponse {
   as_connected: boolean;
   mappings: RemapRow[];
   available: { refs?: ChannelRef[]; inputs?: ChannelRef[]; outputs?: ChannelRef[] };
+  /** Desk channels no mapped channel covers (a mixer only; 0 otherwise), offered once applied (§5.5). */
+  missing_channels: number;
 }
 
 /** What `POST /devices/{id}/remap` takes for one row; `null` leaves it unmapped. */

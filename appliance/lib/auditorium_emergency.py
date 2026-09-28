@@ -341,6 +341,8 @@ def switch_nginx_to_normal(
 
 #: The unit this responder runs as.
 EMERGENCY_UNIT = "auditorium-emergency.service"
+#: The unit whose failure on a no-application boot entered not_installed.
+ROLLBACK_UNIT = "auditorium-update-rollback.service"
 
 #: ``argv -> exit status``: how :func:`end_not_installed` runs systemctl. The
 #: helper hands over its own runner so its tests can watch every call.
@@ -408,6 +410,11 @@ def end_not_installed(
         log.warning("nginx did not take auditorium.conf back; staying in emergency mode")
         return _back_to_emergency(sites_enabled, sites_available, run)
     run_clear_stale(reason_path, marker_path)
+    # The rollback unit failed on the no-application boot that entered
+    # not_installed; left failed, the system reads "degraded" until a reboot
+    # although nothing is wrong any more (seen on the rebuilt appliance,
+    # 28 September 2026).
+    run(["systemctl", "reset-failed", ROLLBACK_UNIT])
     log.info("emergency mode (not_installed) ended: an application is installed and healthy")
     return "ended"
 

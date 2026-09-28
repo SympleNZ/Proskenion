@@ -83,11 +83,17 @@ test.describe("§22.5 driver swap: the stub mixer and back, re-mapping reference
     await picker(dialog, "Wireless 1").selectOption("in1");
     await picker(dialog, "Lectern").selectOption("in2");
     await picker(dialog, "Foldback").selectOption("out1");
-    // Stage monitors is left unmapped: the stub has one output.
-    await expect(dialog.getByText("1 channel will be left unmapped", { exact: false })).toBeVisible();
+    // Stage monitors is left unmapped (the stub has one output), and so is
+    // every desk channel the room never named: 26 channels, 4 mapped.
+    await expect(dialog.getByText("22 channels will be left unmapped", { exact: false })).toBeVisible();
     await dialog.getByRole("button", { name: "Apply re-mapping", exact: true }).click();
+    // The stub's in3-in6 have no channel. They are offered, not added silently.
+    await expect(dialog.getByText(/The new driver has 4 desk channels that no channel of CQ-20B points at/)).toBeVisible();
+    const beforeOffer = (await channels(page.request)).size;
+    await dialog.getByRole("button", { name: "Not now", exact: true }).click();
     await expect(dialog).toBeHidden();
-    await expect(page.getByText("CQ-20B's references are re-mapped; 1 channel is left unmapped.")).toBeVisible();
+    await expect(page.getByText("CQ-20B's references are re-mapped; 22 channels are left unmapped.")).toBeVisible();
+    expect((await channels(page.request)).size).toBe(beforeOffer);
 
     const onStub = await channels(page.request);
     expect(onStub.get(room.wireless)?.driver_refs).toEqual(["in1"]);
@@ -98,9 +104,11 @@ test.describe("§22.5 driver swap: the stub mixer and back, re-mapping reference
       expect([now?.name, now?.sort_order, now?.hirer_max_db]).toEqual([row.name, row.sort_order, row.hirer_max_db]);
     }
 
-    // The mixer screen says what is left to do.
+    // The mixer screen says what is left to do: Out 1 (now the monitors'
+    // pair) and Out 4-6 are unmapped, and the stub's in3-in6 have no channel.
     await page.goto("/admin/mixer");
-    await expect(page.getByText(/1 output lost its reference in a driver change/)).toBeVisible();
+    await expect(page.getByText(/4 outputs have lost their reference in a driver change/)).toBeVisible();
+    await expect(page.getByText("4 desk channels have no channel here")).toBeVisible();
 
     // -- 2. the interface degrades to what the stub declares (§5.5) -------------
     await page.goto("/app/mixer");

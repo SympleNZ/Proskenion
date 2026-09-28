@@ -6,6 +6,10 @@ export const mixer = {
     term: "Add channel",
     body: "Adds a surface channel mapped to one of the desk's physical inputs.",
   },
+  "mixer.channels.add-missing": {
+    term: "Add missing channels",
+    body: "Adds a channel for every channel on the desk that has none here, named from the desk and visible to staff. Channels you already have are left exactly as they are. Rename the new ones, or untick Staff on any operators shouldn't see; what a hirer sees is set by their pages.",
+  },
   "mixer.outputs.add": {
     term: "Add output",
     body: "Adds a surface channel mapped to one of the desk's mix outputs.",

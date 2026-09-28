@@ -9,10 +9,12 @@ import { useMutation, useQuery, useQueryClient, type UseMutationResult, type Use
 import { api } from "@/api/client";
 
 import type {
+  AddedChannelsResponse,
   ChannelKind,
   DeviceRefsResponse,
   FaderLawResponse,
   MixerChannel,
+  MissingChannelsResponse,
   MixerDeskScene,
   MixerState,
 } from "./types";
@@ -26,6 +28,8 @@ export const mixerKeys = {
   deskScenes: ["mixer", "desk-scenes"] as const,
   refs: (deviceId: number) => ["devices", deviceId, "refs"] as const,
   faderLaw: (deviceId: number) => ["devices", deviceId, "fader-law"] as const,
+  allMissing: ["mixer", "missing-channels"] as const,
+  missing: (deviceId: number) => ["mixer", "missing-channels", deviceId] as const,
 };
 
 /** `device_id` (`null` with no mixer configured, §21.21) and the scene recall capability. */
@@ -88,6 +92,7 @@ export function useCreateChannel(): UseMutationResult<MixerChannel, unknown, Cha
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: mixerKeys.channels });
       void client.invalidateQueries({ queryKey: mixerKeys.state });
+      void client.invalidateQueries({ queryKey: mixerKeys.allMissing });
     },
   });
 }
@@ -106,6 +111,7 @@ export function useUpdateChannel(): UseMutationResult<MixerChannel, unknown, Upd
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: mixerKeys.channels });
       void client.invalidateQueries({ queryKey: mixerKeys.state });
+      void client.invalidateQueries({ queryKey: mixerKeys.allMissing });
     },
   });
 }
@@ -117,6 +123,32 @@ export function useDeleteChannel(): UseMutationResult<void, unknown, number> {
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: mixerKeys.channels });
       void client.invalidateQueries({ queryKey: mixerKeys.state });
+      void client.invalidateQueries({ queryKey: mixerKeys.allMissing });
+    },
+  });
+}
+
+// -- desk channels no channel covers (§7.3) -----------------------------------
+
+/** The desk channels this mixer has no channel for, in the driver's order. */
+export function useMissingChannels(deviceId: number | null): UseQueryResult<MissingChannelsResponse> {
+  return useQuery({
+    queryKey: mixerKeys.missing(deviceId ?? 0),
+    queryFn: () => api<MissingChannelsResponse>(`/mixer/devices/${deviceId}/missing-channels`),
+    enabled: deviceId !== null,
+  });
+}
+
+/** Adds a channel for each of them; existing channels are never touched. */
+export function useAddMissingChannels(): UseMutationResult<AddedChannelsResponse, unknown, number> {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (deviceId: number) =>
+      api<AddedChannelsResponse>(`/mixer/devices/${deviceId}/missing-channels`, { method: "POST" }),
+    onSettled: (_data, _error, deviceId) => {
+      void client.invalidateQueries({ queryKey: mixerKeys.channels });
+      void client.invalidateQueries({ queryKey: mixerKeys.state });
+      void client.invalidateQueries({ queryKey: mixerKeys.missing(deviceId) });
     },
   });
 }

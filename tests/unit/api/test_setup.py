@@ -554,15 +554,15 @@ async def test_step_two_writes_a_login_success_event_marked_from_the_wizard(
     assert '"source": "first_run"' in events[0].detail
 
 
-# -- the wizard's device step creates a mixer's Main channel (§7.3) ---------------
+# -- the wizard's device step creates a mixer's channels (§7.3) -------------------
 
 
-async def test_wizard_device_step_creates_the_mixers_main_channel(
+async def test_wizard_device_step_creates_the_mixers_channels(
     setup_app_with_devices: FastAPI, devices_client: AsyncClient, fresh_db: Database
 ) -> None:
     """``POST /devices`` (``proskenion/api/devices.py``) is the primary place
-    a mixer's Main channel is created; the wizard's device step is the
-    defensive second one (see ``_ensure_mixer_main_channels``'s docstring).
+    a mixer's channels are created; the wizard's device step is the
+    defensive second one (see ``_ensure_mixer_channels``'s docstring).
     This proves the wizard's own call, for a mixer device that exists in the
     database without ever having gone through that endpoint — a database
     reset and re-run, in the module's own words."""
@@ -581,10 +581,37 @@ async def test_wizard_device_step_creates_the_mixers_main_channel(
     response = await _post(devices_client, 4, {"device_ids": [device.id], "skipped": False})
     assert response.status_code == 200, response.text
 
+    channels = await mixer_crud.list_channels_with_refs(fresh_db, device.id)
+    assert [(c.channel.channel_kind, [r.driver_ref for r in c.refs]) for c in channels] == [
+        ("main", ["main"]),
+        *(("input", [f"in{n}"]) for n in range(1, 7)),
+        ("output", ["out1"]),
+    ]
+
+
+async def test_wizard_device_step_gives_a_configured_mixer_only_its_main(
+    setup_app_with_devices: FastAPI, devices_client: AsyncClient, fresh_db: Database
+) -> None:
+    """A mixer that already has channels of its own is given a Main if it
+    lacks one, and nothing else: the rest is the admin's to add."""
+    device = await devices_crud.create(
+        fresh_db,
+        category="mixer",
+        driver_key="stub",
+        name="Desk",
+        config={"transport": {"type": "loopback"}, "driver": {}},
+    )
+    await setup_app_with_devices.state.devices.reload(device.id)
+    mic = await mixer_crud.create_channel(fresh_db, device_id=device.id, name="Mic")
+    await mixer_crud.set_channel_refs(fresh_db, mic.id, ["in1"])
+
+    await _steps_one_and_two(devices_client)
+    assert (await _post(devices_client, 3, {"skipped": True})).status_code == 200
+    response = await _post(devices_client, 4, {"device_ids": [device.id], "skipped": False})
+    assert response.status_code == 200, response.text
+
     channels = await mixer_crud.list_channels(fresh_db, device_id=device.id)
-    assert [c.channel_kind for c in channels] == ["main"]
-    refs = await mixer_crud.get_channel_refs(fresh_db, channels[0].id)
-    assert [r.driver_ref for r in refs] == ["main"]
+    assert [(c.channel_kind, c.name) for c in channels] == [("input", "Mic"), ("main", "Main")]
 
 
 async def test_wizard_device_step_is_a_no_op_with_no_devices(

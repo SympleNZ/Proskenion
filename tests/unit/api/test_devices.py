@@ -714,21 +714,66 @@ async def test_testing_a_disconnected_mixer_still_opens_one_connection(
     assert body["connect"]["attempted"] is True
 
 
-# -- the Main channel (§7.3) ------------------------------------------------------
+# -- a mixer's channels are created with it (§7.3) ---------------------------------
 
 
-async def test_creating_a_mixer_device_creates_its_main_channel(
+async def _channels_with_refs(db: Database, device_id: int) -> list[tuple[str, str, list[str]]]:
+    return [
+        (c.channel.channel_kind, c.channel.name, [r.driver_ref for r in c.refs])
+        for c in await mixer_crud.list_channels_with_refs(db, device_id)
+    ]
+
+
+async def test_creating_a_mixer_device_creates_a_channel_per_desk_channel(
     client: AsyncClient, db: Database
 ) -> None:
+    """The stub declares eight references and no desk_channels(): one channel
+    each, in its order, Main among them, with the defaults of a hand-made one."""
     await login(client)
 
     created = await create(client, category="mixer", driver_key="stub", name="Desk")
 
+    assert await _channels_with_refs(db, created["id"]) == [
+        ("main", "Main", ["main"]),
+        *(("input", f"Input {n}", [f"in{n}"]) for n in range(1, 7)),
+        ("output", "Output 1", ["out1"]),
+    ]
     channels = await mixer_crud.list_channels(db, device_id=created["id"])
-    assert [c.channel_kind for c in channels] == ["main"]
-    assert channels[0].name == "Main"
-    refs = await mixer_crud.get_channel_refs(db, channels[0].id)
-    assert [r.driver_ref for r in refs] == ["main"]
+    assert [c.sort_order for c in channels] == list(range(8))
+    assert all(c.visible_staff and c.tracked for c in channels)
+    assert all(c.hirer_max_db is None and not c.show_pan and not c.unmapped for c in channels)
+
+
+async def test_creating_a_cq20b_creates_every_desk_channel_with_stereo_as_one(
+    client: AsyncClient, db: Database
+) -> None:
+    """The CQ-20B: sixteen mono inputs, ST1, ST2, USB and Bluetooth as one
+    stereo reference each, Main LR once, and Out 1-6 individually — never
+    the linked pairs, which address the same six outputs (§7.3)."""
+    await login(client)
+    async with CqMidiStub() as stub:
+        pass  # the desk need not answer: what it has is the driver's declaration
+
+    created = await create(
+        client,
+        category="mixer",
+        driver_key="cq20b",
+        name="CQ-20B",
+        config={
+            "transport": {"type": "tcp", "host": "127.0.0.1", "port": stub.port},
+            "driver": {"metering": False},
+        },
+    )
+
+    assert await _channels_with_refs(db, created["id"]) == [
+        *(("input", f"Input {n}", [f"ip{n}"]) for n in range(1, 17)),
+        ("input", "ST1", ["st1"]),
+        ("input", "ST2", ["st2"]),
+        ("input", "USB", ["usb"]),
+        ("input", "Bluetooth", ["bt"]),
+        ("main", "Main LR", ["main"]),
+        *(("output", f"Out {n}", [f"out{n}"]) for n in range(1, 7)),
+    ]
 
 
 async def test_creating_a_non_mixer_device_never_creates_a_channel(

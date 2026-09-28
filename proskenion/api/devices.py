@@ -58,12 +58,17 @@ from proskenion.core.drivers.fields import Field, is_encrypted_value
 from proskenion.core.drivers.registry import ConfigValidationError, DriverInfo, UnknownDriver
 from proskenion.core.events import MixerConfigChanged, VideoConfigChanged
 from proskenion.core.helper import HelperClient
-from proskenion.core.mixer.service import ensure_main_channel
+from proskenion.core.mixer.desk_channels import (
+    add_missing_channels,
+    declared_desk_channels,
+    uncovered,
+)
 from proskenion.core.remap import Available, RemapRejected, propose, resolve
 from proskenion.core.state import DeviceStatusRecord
 from proskenion.core.transport.serial import enumerate_serial_ports
 from proskenion.db.connection import Database
 from proskenion.db.crud import devices as devices_crud
+from proskenion.db.crud import mixer as mixer_crud
 from proskenion.db.crud import remap as remap_crud
 from proskenion.db.crud.base import ConflictError, InUseError, NotFoundError
 from proskenion.db.crud.devices import Device
@@ -243,6 +248,9 @@ class RemapResponse(BaseModel):
     as_connected: bool
     mappings: list[RemapRow]
     available: dict[str, Any]
+    #: Desk channels no mapped channel covers (a mixer only; 0 otherwise). The
+    #: re-mapping screen offers to add them once references are applied (§5.5).
+    missing_channels: int = 0
 
 
 class RemapChoice(BaseModel):
@@ -515,11 +523,11 @@ async def create_device(
     )
     await manager.reload(device.id)
     await _sync_firewall(db, config, helper)
-    # §7.3: a mixer always has a Main channel once configured. POST /devices
-    # and the first-run wizard's device step (proskenion/api/setup.py) are
-    # the two places that create one.
-    if await ensure_main_channel(db, manager, device) is not None:
-        bus.emit(MixerConfigChanged(reason="main_channel_created"))
+    # A mixer is given a channel for every desk channel, Main among them
+    # (§7.3). POST /devices and the first-run wizard's device step
+    # (proskenion/api/setup.py) are the two places that create them.
+    if await add_missing_channels(db, manager, device):
+        bus.emit(MixerConfigChanged(reason="desk_channels_created"))
     return device_model(device, manager)
 
 
@@ -881,6 +889,10 @@ async def _remap_response(db: Database, manager: DeviceManager, device: Device) 
     driver, as_connected = await _resolve(manager, device.id)
     refs = _available_refs(driver)
     holders = await remap_crud.list_holders(db, device.id)
+    missing = 0
+    if device.category == Category.MIXER.value:
+        existing = await mixer_crud.list_channels_with_refs(db, device.id)
+        missing = len(uncovered(declared_desk_channels(driver), existing))
     return RemapResponse(
         device_id=device.id,
         driver_key=device.driver_key,
@@ -898,6 +910,7 @@ async def _remap_response(db: Database, manager: DeviceManager, device: Device) 
             for proposal in propose(holders, Available.from_driver(refs))
         ],
         available=_available_model(refs),
+        missing_channels=missing,
     )
 
 

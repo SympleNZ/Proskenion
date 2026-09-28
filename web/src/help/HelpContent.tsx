@@ -14,13 +14,22 @@
  *    the version — no recovery summary, which is an admin's job;
  *  - admin: every shortcut, the version and build ID, the recovery summary,
  *    and all four bundled documents.
+ *
+ * "On this screen" (Simon's 28 Sep request) sits above all of that: it is
+ * specific to wherever the sheet was opened from, where the rest of this is
+ * the same on every screen. `docTarget` is the one piece of state this level
+ * owns — `OnScreenSection`'s own "Read more" link sets it, `DocsSection`
+ * consumes it to jump straight to a document and heading, and clears it once
+ * handled so setting the same target again still fires.
  */
-import { Fragment } from "react";
+import { Fragment, useState } from "react";
 
 import type { Tier } from "@/api/auth";
 import { BUILD_ID, BUILD_VERSION } from "@/version/buildVersion";
 
 import { DocsSection } from "./docs/DocsSection";
+import type { DocId } from "./docs/docs";
+import { OnScreenSection } from "./OnScreenSection";
 import { shortcutsForTier } from "./shortcuts";
 
 export interface HelpContentProps {
@@ -28,8 +37,12 @@ export interface HelpContentProps {
 }
 
 export function HelpContent({ tier }: HelpContentProps) {
+  const [docTarget, setDocTarget] = useState<{ id: DocId; heading: string } | null>(null);
+
   return (
     <div className="help-content">
+      <OnScreenSection tier={tier} onOpenDoc={(id, heading) => setDocTarget({ id, heading })} />
+
       <section aria-labelledby="help-shortcuts-heading">
         <h2 className="sect-label" id="help-shortcuts-heading">
           Keyboard shortcuts
@@ -69,7 +82,7 @@ export function HelpContent({ tier }: HelpContentProps) {
             <p className="technical text-fg-muted text-sm">Build {BUILD_ID}</p>
           </section>
 
-          <DocsSection tier={tier} />
+          <DocsSection tier={tier} openTarget={docTarget} onOpenTargetHandled={() => setDocTarget(null)} />
         </>
       )}
 

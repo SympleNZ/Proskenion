@@ -875,7 +875,24 @@
   min-height: 0;
 }
 
+/*
+ * `overflow: auto` alone does not make this the containing block a
+ * `position: absolute` descendant is laid out against — only a `position`
+ * of its own does that. Without it, an absolutely-positioned descendant
+ * with no positioned ancestor closer than this (a visually-hidden
+ * `.sr-only` status label, say) is placed against the document instead,
+ * escaping this element's clip entirely. Ordinarily invisible, but real:
+ * with a banner above shrinking the space on offer, a row near the bottom
+ * of a device list could sit close enough to the fold that its own
+ * `.sr-only` span landed past the viewport, growing the document itself by
+ * the difference — a second, page-level scrollbar behind the intended one
+ * on this element, pushing the status bar down and off the bottom of the
+ * window. `position: relative` (no offset, so no visual change of its own)
+ * makes this the containing block instead, so every descendant is clipped
+ * exactly where the single scrollbar already is.
+ */
 .shell-main {
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow: auto;

@@ -10,7 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/api/client";
 import { renderWithProviders } from "@/test/render";
 
-import { CQ20B_FADER_LAW, DEVICE_REFS, MAIN_CHANNEL, MIXER_CHANNELS, MIXER_DEVICE_ID, MIXER_STATE, NO_MIXER_STATE } from "./fixtures";
+import { CQ20B_FADER_LAW, DEVICE_REFS, INPUT_CHANNEL, MAIN_CHANNEL, MIXER_CHANNELS, MIXER_DEVICE_ID, MIXER_STATE, NO_MIXER_STATE } from "./fixtures";
 import { MixerScreen } from "./MixerScreen";
 
 const client = vi.hoisted(() => ({ api: vi.fn() }));
@@ -66,6 +66,50 @@ describe("MixerScreen", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
 
     expect(await screen.findByText(/Main cannot be deleted — it can be renamed/)).toBeInTheDocument();
+  });
+
+  it("offers the desk channels no channel covers and adds them in one call", async () => {
+    let missing = [
+      { ref: "ip3", label: "Input 3", kind: "input", stereo: false },
+      { ref: "usb", label: "USB", kind: "input", stereo: true },
+    ];
+    const added = vi.fn(() => {
+      missing = [];
+      return { device_id: MIXER_DEVICE_ID, created: [INPUT_CHANNEL, INPUT_CHANNEL] };
+    });
+    mockApi({
+      "GET /mixer/state": () => MIXER_STATE,
+      "GET /mixer/channels": () => ({ channels: MIXER_CHANNELS }),
+      "GET /mixer/desk-scenes": () => ({ desk_scenes: [] }),
+      [`GET /devices/${MIXER_DEVICE_ID}/refs`]: () => DEVICE_REFS,
+      [`GET /devices/${MIXER_DEVICE_ID}/fader-law`]: () => ({ fader_law: CQ20B_FADER_LAW }),
+      [`GET /mixer/devices/${MIXER_DEVICE_ID}/missing-channels`]: () => ({ device_id: MIXER_DEVICE_ID, missing }),
+      [`POST /mixer/devices/${MIXER_DEVICE_ID}/missing-channels`]: added,
+    });
+    renderWithProviders(<MixerScreen />, { route: "/admin/mixer" });
+
+    expect(await screen.findByText("2 desk channels have no channel here")).toBeInTheDocument();
+    expect(screen.getByText(/Input 3, USB\./)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add missing channels" }));
+
+    expect(await screen.findByText(/Added 2 channels\./)).toBeInTheDocument();
+    expect(added).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "Add missing channels" })).toBeNull();
+  });
+
+  it("shows no offer when every desk channel has a channel", async () => {
+    mockApi({
+      "GET /mixer/state": () => MIXER_STATE,
+      "GET /mixer/channels": () => ({ channels: MIXER_CHANNELS }),
+      "GET /mixer/desk-scenes": () => ({ desk_scenes: [] }),
+      [`GET /devices/${MIXER_DEVICE_ID}/refs`]: () => DEVICE_REFS,
+      [`GET /devices/${MIXER_DEVICE_ID}/fader-law`]: () => ({ fader_law: CQ20B_FADER_LAW }),
+      [`GET /mixer/devices/${MIXER_DEVICE_ID}/missing-channels`]: () => ({ device_id: MIXER_DEVICE_ID, missing: [] }),
+    });
+    renderWithProviders(<MixerScreen />, { route: "/admin/mixer" });
+
+    expect(await screen.findByRole("tab", { name: "Main and outputs" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add missing channels" })).toBeNull();
   });
 
   it("renders every tab once a mixer is configured", async () => {

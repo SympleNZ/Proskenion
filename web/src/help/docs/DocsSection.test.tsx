@@ -5,7 +5,7 @@
  */
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { DocsSection } from "./DocsSection";
 
@@ -40,5 +40,25 @@ describe("DocsSection — per tier", () => {
 
     await events.click(screen.getByRole("button", { name: /Back to Documentation/ }));
     expect(screen.getByRole("button", { name: "Hire handover" })).toBeInTheDocument();
+  });
+});
+
+describe("DocsSection — openTarget (the \"On this screen\" section's own \"Read more\" link)", () => {
+  it("opens the named document, past the admin's picker, and reports the target handled", () => {
+    const onOpenTargetHandled = vi.fn();
+    const { rerender } = render(<DocsSection tier="admin" openTarget={null} onOpenTargetHandled={onOpenTargetHandled} />);
+    expect(screen.getByRole("button", { name: "Operator quick reference" })).toBeInTheDocument();
+
+    rerender(<DocsSection tier="admin" openTarget={{ id: "hire-handover", heading: "Before a hire" }} onOpenTargetHandled={onOpenTargetHandled} />);
+
+    expect(screen.getByRole("heading", { name: "Hire handover" })).toBeInTheDocument();
+    expect(onOpenTargetHandled).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing when there is no matching heading, rather than throwing", () => {
+    const onOpenTargetHandled = vi.fn();
+    render(<DocsSection tier="admin" openTarget={{ id: "hire-handover", heading: "Not a real heading" }} onOpenTargetHandled={onOpenTargetHandled} />);
+    expect(screen.getByRole("heading", { name: "Hire handover" })).toBeInTheDocument();
+    expect(onOpenTargetHandled).toHaveBeenCalledTimes(1);
   });
 });

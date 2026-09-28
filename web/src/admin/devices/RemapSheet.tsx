@@ -32,6 +32,7 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState, ErrorState, Skeleton } from "@/components/ui/EmptyState";
 import { Select } from "@/components/ui/Select";
 import { Sheet, SheetContent } from "@/components/ui/Sheet";
+import { AddMissingOffer } from "@/admin/mixer/MissingChannels";
 import { HelpButton } from "@/help/HelpButton";
 
 import { useApplyRemap, useRemap, useUpdateDevice } from "./api";
@@ -383,6 +384,9 @@ export interface ChangeDriverSheetProps {
 export function ChangeDriverSheet({ open, onOpenChange, device, target, onFinished }: ChangeDriverSheetProps) {
   const [step, setStep] = useState<"settings" | "remap">(target ? "settings" : "remap");
   const [changedTo, setChangedTo] = useState<string | undefined>();
+  // Once applied, desk channels the new driver has that no channel covers
+  // are offered here rather than added silently: this sheet owns the moment.
+  const [offer, setOffer] = useState<{ count: number; message: string } | null>(null);
 
   const title =
     step === "settings" && target ? `Change ${device.name} to ${target.name}` : `Re-map ${device.name}'s references`;
@@ -395,12 +399,25 @@ export function ChangeDriverSheet({ open, onOpenChange, device, target, onFinish
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent title={title} description={description}>
         <div className="sheet-body">
-          {changedTo ? (
+          {offer ? (
+            <>
+              <Banner tone="success" title={offer.message} />
+              <AddMissingOffer
+                deviceId={device.id}
+                deviceName={device.name}
+                count={offer.count}
+                onDone={(added) => {
+                  onFinished(added ? `${offer.message} ${added}` : offer.message);
+                  onOpenChange(false);
+                }}
+              />
+            </>
+          ) : changedTo ? (
             <Banner tone="success" title={`${device.name} now uses ${changedTo}`}>
               It reconnected with the new settings. Its channels are unmapped until you apply a re-mapping below.
             </Banner>
           ) : null}
-          {step === "settings" && target ? (
+          {offer ? null : step === "settings" && target ? (
             <SettingsStep
               device={device}
               target={target}
@@ -421,11 +438,15 @@ export function ChangeDriverSheet({ open, onOpenChange, device, target, onFinish
               }}
               onApplied={(response) => {
                 const left = response.mappings.filter((row) => row.unmapped).length;
-                onFinished(
+                const message =
                   left === 0
                     ? `${device.name}'s references are re-mapped.`
-                    : `${device.name}'s references are re-mapped; ${left} channel${left === 1 ? " is" : "s are"} left unmapped.`,
-                );
+                    : `${device.name}'s references are re-mapped; ${left} channel${left === 1 ? " is" : "s are"} left unmapped.`;
+                if (response.missing_channels > 0) {
+                  setOffer({ count: response.missing_channels, message });
+                  return;
+                }
+                onFinished(message);
                 onOpenChange(false);
               }}
             />

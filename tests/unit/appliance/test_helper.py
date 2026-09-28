@@ -1193,6 +1193,9 @@ def test_a_healthy_first_install_ends_not_installed(
     assert (enabled / "auditorium.conf").resolve().name == "auditorium.conf"
     assert not reason.exists(), "the reason file would still say emergency"
     assert not (tmp_path / "emergency-alert-sent").exists()
+    assert ["systemctl", "reset-failed", "auditorium-update-rollback.service"] in units.calls, (
+        "the rollback unit stays failed and the system reads degraded"
+    )
 
 
 @pytest.mark.parametrize(

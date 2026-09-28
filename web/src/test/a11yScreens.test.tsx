@@ -25,7 +25,7 @@
  * populated branch (a filled table, a fader mid-scale); those already have
  * their own component tests, and are not what this sweep is for.
  */
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "vitest-axe/extend-expect";
 
@@ -51,6 +51,7 @@ import { HirerAccessScreen } from "@/admin/hirer/HirerAccessScreen";
 import { KnxLibraryScreen } from "@/admin/knx/KnxLibraryScreen";
 import { LightingScreen } from "@/admin/lighting/LightingScreen";
 import { LogsScreen } from "@/admin/logs/LogsScreen";
+import { CQ20B_FADER_LAW, DEVICE_REFS, MIXER_DEVICE_ID, MIXER_STATE } from "@/admin/mixer/fixtures";
 import { MixerScreen } from "@/admin/mixer/MixerScreen";
 import { NetworkScreen } from "@/admin/network/NetworkScreen";
 import { PagesScreen } from "@/admin/pages/PagesScreen";
@@ -406,6 +407,85 @@ describe("accessibility sweep — changing a driver and re-mapping (spec §24, �
       expect(blocking, describeViolations(blocking)).toEqual([]);
     });
   }
+});
+
+/*
+ * "Add missing channels" (§7.3): the Mixer screen's banner, for a configured
+ * mixer whose desk has channels no channel covers, and the re-mapping sheet's
+ * offer once a driver change is applied (§5.5).
+ */
+describe("accessibility sweep — adding missing mixer channels (spec §24, §7.3)", () => {
+  const missing = {
+    device_id: MIXER_DEVICE_ID,
+    missing: [
+      { ref: "ip3", label: "Input 3", kind: "input", stereo: false },
+      { ref: "usb", label: "USB", kind: "input", stereo: true },
+    ],
+  };
+
+  beforeEach(() => {
+    client.api.mockReset();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("the Mixer screen's offer: no serious or critical axe violations", async () => {
+    serve({
+      "/mixer/state": MIXER_STATE,
+      [`/mixer/devices/${MIXER_DEVICE_ID}/missing-channels`]: missing,
+      [`/devices/${MIXER_DEVICE_ID}/refs`]: DEVICE_REFS,
+      [`/devices/${MIXER_DEVICE_ID}/fader-law`]: { fader_law: CQ20B_FADER_LAW },
+    });
+    const { container } = renderWithProviders(<MixerScreen />, {
+      route: "/admin/mixer",
+      status: "authenticated",
+      tier: "admin",
+    });
+    await settle();
+    expect(container.textContent).toContain("2 desk channels have no channel here");
+
+    const { blocking } = await sweepA11y(container);
+    expect(blocking, describeViolations(blocking)).toEqual([]);
+  });
+
+  it("the re-mapping sheet's offer: no serious or critical axe violations", async () => {
+    const desk = {
+      id: 4,
+      category: "mixer",
+      driver_key: "stub",
+      name: "Desk",
+      enabled: true,
+      config: { transport: { type: "loopback" }, driver: {} },
+      created_at: "2026-09-01T09:00:00+12:00",
+      updated_at: "2026-09-10T19:42:11+12:00",
+      state_key: "mixer",
+      status: { status: "connected" as const, detail: null },
+    };
+    serve({
+      "/devices/4/remap": {
+        device_id: 4,
+        driver_key: "stub",
+        as_connected: true,
+        mappings: [{ holder: "mixer_channel", id: 1, name: "Main LR", kind: "main", unmapped: false, old_refs: ["main"], new_refs: ["main"] }],
+        available: { refs: [{ ref: "main", label: "Main", kind: "main", stereo: true }] },
+        missing_channels: 2,
+      },
+    });
+    renderWithProviders(<ChangeDriverSheet open onOpenChange={() => {}} device={desk} target={null} onFinished={() => {}} />, {
+      route: "/admin/devices",
+      status: "authenticated",
+      tier: "admin",
+    });
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "Apply re-mapping" }));
+    await settle();
+    expect(screen.getByRole("button", { name: "Add missing channels" })).toBeInTheDocument();
+
+    const { blocking } = await sweepA11y(document.body);
+    expect(blocking, describeViolations(blocking)).toEqual([]);
+  });
 });
 
 // A generic top-level render, outside the SCREENS loop, to prove `sweepA11y`

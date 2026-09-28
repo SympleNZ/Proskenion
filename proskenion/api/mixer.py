@@ -75,10 +75,12 @@ from proskenion.core.broadcast import RESYNC_SOURCE, filter_for_hirer
 from proskenion.core.bus import EventBus
 from proskenion.core.devices import DeviceManager, DeviceUnavailable
 from proskenion.core.drivers.capabilities import ChannelRef, MixerCapabilities
+from proskenion.core.drivers.categories import Category
 from proskenion.core.drivers.stub_mixer import MixerCapabilityError
 from proskenion.core.events import MixerConfigChanged
 from proskenion.core.hirer_enforcement import clamp_to_ceiling
 from proskenion.core.hirer_permissions import NO_PERMISSIONS, HirerPermissions
+from proskenion.core.mixer import desk_channels
 from proskenion.core.mixer.service import (
     ChannelLive,
     MixerOffline,
@@ -90,8 +92,10 @@ from proskenion.core.mixer.service import (
 )
 from proskenion.core.state import StateStore
 from proskenion.db.connection import Database
+from proskenion.db.crud import devices as devices_crud
 from proskenion.db.crud import mixer as mixer_crud
 from proskenion.db.crud.base import ConflictError, NotFoundError
+from proskenion.db.crud.devices import Device
 from proskenion.db.crud.refs import ConstraintError, InUseError
 
 router = APIRouter(tags=["mixer"])
@@ -767,6 +771,75 @@ async def delete_mixer_channel(
     # A channel's kind and its ceiling decide what a hirer reaches, and how far.
     await settle_hirer_permissions(request, "channel_deleted")
     return Response(status_code=204)
+
+
+# -- configuration: desk channels no channel covers (§7.3, §21.21) -----------------
+
+
+class MissingChannelModel(BaseModel):
+    ref: str
+    label: str
+    kind: str
+    stereo: bool
+
+
+class MissingChannelsResponse(BaseModel):
+    device_id: int
+    missing: list[MissingChannelModel]
+
+
+class AddedChannelsResponse(BaseModel):
+    device_id: int
+    created: list[MixerChannelModel]
+
+
+async def _mixer_device_or_404(db: Database, manager: DeviceManager, device_id: int) -> Device:
+    """The mixer device, once its driver can be resolved to say what the desk has."""
+    device = await devices_crud.get(db, device_id)
+    if device is None or device.category != Category.MIXER.value:
+        raise ApiError(ErrorCode.NOT_FOUND, "There is no mixer with that id")
+    try:
+        await manager.resolve_driver(device_id)
+    except DeviceUnavailable as exc:
+        raise _mixer_unavailable() from exc
+    return device
+
+
+@router.get("/mixer/devices/{device_id}/missing-channels", response_model=MissingChannelsResponse)
+async def list_missing_channels(
+    _: Admin, db: Db, manager: Devices, device_id: int
+) -> MissingChannelsResponse:
+    """The desk channels no channel on this mixer covers, in the driver's order."""
+    device = await _mixer_device_or_404(db, manager, device_id)
+    missing = await desk_channels.missing_channels(db, manager, device)
+    return MissingChannelsResponse(
+        device_id=device_id,
+        missing=[
+            MissingChannelModel(
+                ref=d.ref.ref, label=d.ref.label, kind=d.ref.kind, stereo=d.ref.stereo
+            )
+            for d in missing
+        ],
+    )
+
+
+@router.post("/mixer/devices/{device_id}/missing-channels", response_model=AddedChannelsResponse)
+async def add_missing_channels(
+    _: Admin, db: Db, bus: Bus, manager: Devices, device_id: int
+) -> AddedChannelsResponse:
+    """Add a channel for every desk channel no channel covers.
+
+    Adds only: an existing channel is never renamed, reordered, re-pointed or
+    deleted, so this takes no pre-change snapshot. Run again, it adds nothing.
+    """
+    device = await _mixer_device_or_404(db, manager, device_id)
+    created = await desk_channels.add_missing_channels(db, manager, device)
+    if created:
+        await _emit_config_changed(bus, "desk_channels_created")
+    return AddedChannelsResponse(
+        device_id=device_id,
+        created=[await _channel_config_model(db, channel) for channel in created],
+    )
 
 
 # -- configuration: desk scenes (§13.5, §15.6, §16.1) --------------------------------

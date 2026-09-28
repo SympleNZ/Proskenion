@@ -2,8 +2,11 @@
 ``mixer_desk_scene_observed`` (§15.6, §7.3, §13.5, migration 006).
 
 The virtual surface is configuration, not derivation (§7.3): a channel is a
-row created deliberately by an admin, named by the venue and ordered by
-``sort_order``, pointing at one or more opaque driver references. A ganged
+row named by the venue and ordered by ``sort_order``, pointing at one or more
+opaque driver references. A mixer is given one channel per desk channel when
+it is added (:mod:`proskenion.core.mixer.desk_channels`, through
+:func:`create_channels`); the admin renames, hides, re-points and deletes
+them from there. A ganged
 channel — a stereo pair presented as discrete mono outputs, or a group fader
 on a desk with no DCAs — has several references in ``mixer_channel_refs``;
 the first, by ``sort_order``, is authoritative for display. That list is
@@ -22,8 +25,8 @@ unique violation here. :func:`delete_channel` raises the same
 :class:`~proskenion.db.crud.refs.ConstraintError` outright for a channel of
 that kind, before it ever reaches the ``ON DELETE RESTRICT`` reference check
 — the Main channel cannot be deleted whether or not a scene action targets
-it. Nothing here creates the Main channel; that is the first-run wizard's
-job (§7.3), which the database cannot express as "at least one".
+it. Nothing here decides to create the Main channel; adding a mixer device
+does (§7.3), which the database cannot express as "at least one".
 
 **The Venue Default desk scene** works the same way in reverse: at most one
 ``mixer_desk_scenes`` row per device may have ``is_venue_default = 1``,
@@ -249,6 +252,64 @@ async def create_channel(
     if row is None:  # pragma: no cover - just inserted
         raise base.NotFoundError(CHANNELS_TABLE, row_id)
     return _channel_from_row(row)
+
+
+@dataclass(frozen=True, slots=True)
+class NewChannel:
+    """One channel for :func:`create_channels`: its kind, name, order and
+    references. Everything else takes the column defaults: visible to staff,
+    no hirer ceiling, pan hidden, tracked."""
+
+    channel_kind: str
+    name: str
+    driver_refs: tuple[str, ...]
+    sort_order: int
+
+
+async def create_channels(
+    db: Database, device_id: int, channels: list[NewChannel]
+) -> list[MixerChannel]:
+    """Create ``channels`` with their references on ``device_id``, all in one
+    transaction: every channel is created, or none is.
+
+    Raises :class:`ConstraintError` if this would give the device a second
+    Main channel — ``idx_mixer_channels_one_main`` (§7.3).
+    """
+    for spec in channels:
+        if spec.channel_kind not in CHANNEL_KINDS:
+            raise ValueError(f"unknown channel kind: {spec.channel_kind!r}")
+        if len(set(spec.driver_refs)) != len(spec.driver_refs):
+            raise ValueError("a driver reference cannot appear twice on the same channel")
+    now = base.now_iso()
+    created: list[MixerChannel] = []
+    async with db.write() as conn:
+        for spec in channels:
+            try:
+                row_id = await base.insert(
+                    conn,
+                    CHANNELS_TABLE,
+                    {
+                        "device_id": device_id,
+                        "channel_kind": spec.channel_kind,
+                        "name": spec.name,
+                        "created_at": now,
+                        "updated_at": now,
+                        "sort_order": spec.sort_order,
+                    },
+                )
+            except sqlite3.IntegrityError as exc:
+                raise _translate_unique_error("mixer_channels_one_main_per_device", exc) from exc
+            for index, driver_ref in enumerate(spec.driver_refs):
+                await base.insert(
+                    conn,
+                    CHANNEL_REFS_TABLE,
+                    {"channel_id": row_id, "driver_ref": driver_ref, "sort_order": index},
+                )
+            row = await base.get(conn, CHANNELS_TABLE, row_id)
+            if row is None:  # pragma: no cover - just inserted
+                raise base.NotFoundError(CHANNELS_TABLE, row_id)
+            created.append(_channel_from_row(row))
+    return created
 
 
 async def get_channel(db: Database, channel_id: int) -> MixerChannel | None:

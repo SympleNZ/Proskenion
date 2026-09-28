@@ -4,6 +4,11 @@
  * a wrong password keeps the field value; a wrong PIN shakes then clears and
  * leaves the staff field alone; rate limiting replaces the button label with
  * a live countdown and re-enables at zero.
+ *
+ * The build version shown discreetly below both forms (Simon's request)
+ * discloses nothing `/health` does not already answer unauthenticated —
+ * it just saves a school IT contact one extra request when reading it out
+ * over the phone.
  */
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
@@ -17,6 +22,7 @@ import { PasswordField } from "@/components/ui/Input";
 import { useCountdown } from "@/components/useCountdown";
 import { formatCountdown } from "@/lib/time";
 import { useSession } from "@/session/context";
+import { BUILD_VERSION } from "@/version/buildVersion";
 
 export const HIRER_DISABLED_MESSAGE = "Hire guest access is not currently available. Please contact venue staff.";
 
@@ -193,6 +199,8 @@ export function LoginPage() {
           )}
         </section>
       </div>
+
+      <p className="login-footer technical text-fg-muted text-xs text-center">Proskenion v{BUILD_VERSION}</p>
     </main>
   );
 }

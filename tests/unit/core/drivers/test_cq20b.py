@@ -804,6 +804,26 @@ def test_available_refs_label_every_reference() -> None:
     assert refs["out12"].stereo and not refs["out1"].stereo
 
 
+def test_desk_channels_are_every_channel_once_with_the_linked_pairs_as_cover() -> None:
+    """Twenty inputs, Main LR and six outputs, in ``available_refs()`` order;
+    each linked pair covers its two outputs and is not a channel itself."""
+    desk = make_driver(9).driver.desk_channels()
+    assert [d.ref.ref for d in desk] == [
+        *(f"ip{n}" for n in range(1, 17)),
+        "st1", "st2", "usb", "bt", "main",
+        *(f"out{n}" for n in range(1, 7)),
+    ]  # fmt: skip
+    covered = {d.ref.ref: d.covered_by for d in desk if d.covered_by}
+    assert covered == {
+        "out1": ("out12",),
+        "out2": ("out12",),
+        "out3": ("out34",),
+        "out4": ("out34",),
+        "out5": ("out56",),
+        "out6": ("out56",),
+    }
+
+
 def test_the_fader_law_is_published_with_a_unity_detent() -> None:
     law = make_driver(9).driver.fader_law()
     assert law[0].db is None and law[0].position == 0.0

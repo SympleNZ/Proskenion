@@ -4,7 +4,7 @@
  * picker and the hirer-ceiling control), Main, and the desk scene library
  * (including its Test recall control).
  */
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const client = vi.hoisted(() => ({ api: vi.fn() }));
@@ -20,6 +20,7 @@ import { ChannelsSection } from "./ChannelsSection";
 import { DeskScenesSection } from "./DeskScenesSection";
 import { CQ20B_FADER_LAW, CQ20B_REFS, DESK_SCENES, INPUT_CHANNEL, MAIN_CHANNEL, MIXER_DEVICE_ID, OUTPUT_CHANNEL } from "./fixtures";
 import { MainPanel } from "./MainPanel";
+import { AddMissingOffer, MissingChannelsBanner } from "./MissingChannels";
 import { OutputsSection } from "./OutputsSection";
 
 function assertCovered(): void {
@@ -53,6 +54,22 @@ describe("Mixer configuration gives every field and primary action help (spec §
       { route: "/admin/mixer" },
     );
     fireEvent.click(screen.getByRole("button", { name: "+ Add output" }));
+    assertCovered();
+  });
+
+  it("Add missing channels, on the Mixer screen and in the re-mapping sheet's offer", async () => {
+    client.api.mockResolvedValue({
+      device_id: MIXER_DEVICE_ID,
+      missing: [{ ref: "ip3", label: "Input 3", kind: "input", stereo: false }],
+    });
+    renderWithProviders(
+      <>
+        <MissingChannelsBanner deviceId={MIXER_DEVICE_ID} />
+        <AddMissingOffer deviceId={MIXER_DEVICE_ID} deviceName="CQ-20B" count={1} onDone={() => undefined} />
+      </>,
+      { route: "/admin/mixer" },
+    );
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Add missing channels" })).toHaveLength(2));
     assertCovered();
   });
 

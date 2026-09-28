@@ -9,8 +9,9 @@ Every clause of it starts from the same desk, configured the way an installer
 configures one — through the API, never by writing rows:
 
 1. a ``cq20b`` mixer device through ``POST /devices``, its TCP transport aimed
-   at :class:`~tests.stubs.cq_midi_stub.CqMidiStub`, which also creates the
-   Main channel (§7.3); metering on, the native client aimed at
+   at :class:`~tests.stubs.cq_midi_stub.CqMidiStub`, which also creates a
+   channel for every desk channel (§7.3), of which this venue keeps only
+   Main; metering on, the native client aimed at
    :class:`~tests.stubs.cq_native_stub.CqNativeStub` on the same host, with
    its meters coming back to a local UDP port of the test's choosing
 2. the channels a small venue exposes, through ``POST /mixer/channels``:
@@ -35,6 +36,7 @@ with the stub's own law for dB, so nothing here shares the driver's tables.
 
 from __future__ import annotations
 
+import asyncio
 import socket
 from dataclasses import dataclass
 from typing import Any
@@ -218,6 +220,25 @@ class MixerRoom:
         return self.main if key == "main" else self.channels[key]
 
 
+async def _delete_channel(client: AsyncClient, channel_id: int) -> None:
+    """``DELETE`` a channel, trying again while its pre-change snapshot fails.
+
+    The test database is in memory, in SQLite's shared-cache mode, where a
+    reader takes table locks that ``busy_timeout`` does not wait on: the
+    snapshot's ``VACUUM INTO`` can meet the mixer service still reading the
+    previous delete's configuration change and fail outright. An appliance's
+    database is a file in WAL mode, where readers never block it.
+    """
+    for _ in range(100):
+        response = await client.delete(f"{MIXER}/channels/{channel_id}")
+        if response.status_code == 204:
+            return
+        body = response.json()
+        assert body["error"]["detail"].get("reason") == "snapshot_failed", response.text
+        await asyncio.sleep(0.02)
+    raise AssertionError(f"mixer channel {channel_id} could not be deleted")
+
+
 async def configure_mixer(
     client: AsyncClient,
     app: FastAPI,
@@ -249,10 +270,25 @@ async def configure_mixer(
     device_id: int = device["id"]
     await wait_for_status(client, device_id, "connected")
 
-    # §7.3: POST /devices created Main; nothing else did.
+    # §7.3: POST /devices created a channel for every desk channel, Main
+    # among them. This small venue keeps Main and replaces the rest with its
+    # own few, below.
     listed = ok(await client.get(f"{MIXER}/channels"))["channels"]
-    (main,) = listed
+    assert len(listed) == 27, [row["driver_refs"] for row in listed]
+    (main,) = [row for row in listed if row["channel_kind"] == "main"]
     assert (main["channel_kind"], main["driver_refs"]) == ("main", ["main"]), main
+    # The service reads all of them from the desk once it sees the
+    # connection; let that finish before the configuration changes under it.
+    every_ref = [row["driver_refs"][0] for row in listed]
+
+    def all_read() -> bool:
+        driver = app.state.devices.running_driver(device_id)
+        return driver is not None and len(driver.known_state(every_ref)) == len(every_ref)
+
+    await until(all_read, "the mixer service to read every desk channel")
+    for row in listed:
+        if row["id"] != main["id"]:
+            await _delete_channel(client, row["id"])
 
     channels: dict[str, int] = {}
     for order, spec in enumerate(CHANNELS):

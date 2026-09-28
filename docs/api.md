@@ -296,6 +296,8 @@ not prose written for this file.
 | PUT | `/api/v1/mixer/desk-scenes/{scene_id}` | admin | Update Mixer Desk Scene |
 | POST | `/api/v1/mixer/desk-scenes/{scene_id}/recall` | admin/operator | Recall Desk Scene |
 | POST | `/api/v1/mixer/desk-scenes/{scene_id}/test` | admin | Test Desk Scene |
+| GET | `/api/v1/mixer/devices/{device_id}/missing-channels` | admin | List Missing Channels |
+| POST | `/api/v1/mixer/devices/{device_id}/missing-channels` | admin | Add Missing Channels |
 | GET | `/api/v1/mixer/state` | admin/operator/hirer | Get Mixer State |
 | GET | `/api/v1/pages` | admin/operator/hirer | List Pages |
 | POST | `/api/v1/pages` | admin | Create Page |

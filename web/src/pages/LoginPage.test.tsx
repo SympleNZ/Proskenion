@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "@/api/client";
 import { renderWithProviders } from "@/test/render";
+import { BUILD_VERSION } from "@/version/buildVersion";
 
 import { HIRER_DISABLED_MESSAGE, LoginPage } from "./LoginPage";
 
@@ -108,6 +109,11 @@ describe("LoginPage", () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(screen.getByRole("status")).toHaveTextContent(HIRER_DISABLED_MESSAGE);
+  });
+
+  it("shows the build version discreetly, below both forms", () => {
+    renderWithProviders(<LoginPage />, { route: "/login" });
+    expect(screen.getByText(`Proskenion v${BUILD_VERSION}`)).toBeInTheDocument();
   });
 
   it("redirects by tier after a successful sign-in", async () => {

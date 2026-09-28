@@ -1768,7 +1768,7 @@ class ChannelRef:
 </code></pre>
 <p><code>kind</code> comes from the driver rather than being declared by the admin. Picking "Out 1/2" tells the system it is a stereo output; nothing has to be entered twice or can be entered wrongly. A manual override exists for desks whose driver cannot tell, but it is an override rather than the primary path.</p>
 <h5 id="the-virtual-surface-is-configuration-not-derivation"><a class="anchor" href="#the-virtual-surface-is-configuration-not-derivation" aria-label="Link to this section">#</a>The virtual surface is configuration, not derivation</h5>
-<p><code>mixer_channels</code> (§15.6) <strong>is</strong> the virtual surface. Rows are created deliberately, named by the venue, and ordered by <code>sort_order</code>. A typical installation is four rows:</p>
+<p><code>mixer_channels</code> (§15.6) <strong>is</strong> the virtual surface. Rows are named by the venue and ordered by <code>sort_order</code>. When a mixer is added, one row is created for every channel the desk has, visible to staff; the venue then names, hides, re-orders or deletes them (Simon's decision, 28 September 2026: what hirers see is controlled by their pages, not by which rows exist). The virtual surface is still the venue's configuration, never re-derived from the desk: names and order are never read back. An installation might show only four of them to operators:</p>
 <table>
 <thead>
 <tr>
@@ -1802,7 +1802,7 @@ class ChannelRef:
 </table>
 <p>There is <strong>no expected correlation between a virtual channel's position and the desk's numbering.</strong> Adding an AUX between Mic 2 and HDMI is a new row at <code>sort_order</code> 2, pointing at whatever input the desk happens to have free. That is the normal case, not a deviation from one.</p>
 <p>This is why a swap is cheap: names, order, visibility, ceilings, scene actions and control surface assignments all survive, because none of them ever depended on the driver's numbering. Only <code>driver_ref</code> changes.</p>
-<p><strong>Channels are added individually by default.</strong> A bulk create-from-enumeration option exists on the Devices screen for commissioning a fully-patched desk, but a venue exposing four of twenty inputs should not start by creating sixteen rows to delete.</p>
+<p><strong>Every desk channel is created with the mixer.</strong> Hiding a channel from operators is a switch (<code>visible_staff</code>), and hirers see only what their pages carry, so a full set costs nothing to the people using the room. <strong>Add missing channels</strong> (Admin → Mixer) creates any desk channel no row covers (an existing mixer, or one whose new driver declares more) and never renames, re-orders, re-points or deletes a row. A driver swap never creates rows itself; the re-map offers it afterwards.</p>
 <p><strong><code>driver_ref</code> is shown in configuration views and never in operator views.</strong> The audio engineer needs it to talk about the same channel as someone holding MixPad; the operator does not.</p>
 <h5 id="naming-is-ours-not-the-desks"><a class="anchor" href="#naming-is-ours-not-the-desks" aria-label="Link to this section">#</a>Naming is ours, not the desk's</h5>
 <p>A channel's name comes from <strong>this system's configuration</strong>, never from the mixer.</p>
@@ -3211,13 +3211,13 @@ state.lighting.observed   what is on the wire         → display only
 <td>Inputs</td>
 <td>Up to 20</td>
 <td>Send to Main LR, mute, pan</td>
-<td>Admin-configured</td>
+<td>Created with the mixer, named and hidden by the admin</td>
 </tr>
 <tr>
 <td>Mix outputs</td>
 <td>6, linkable as pairs</td>
 <td>Master fader, mute</td>
-<td>Admin-configured</td>
+<td>Created with the mixer (Out 1–6 individually; linking a pair is the admin's choice)</td>
 </tr>
 <tr>
 <td>DCAs</td>
@@ -8736,7 +8736,7 @@ Rate limited          [ Sign in — try again in 12:34 ]
 <p><strong>The name field carries a live width preview.</strong> Names never wrap on a channel strip — a wrapped label is harder to scan than a shorter one — so a name that will not fit is visible while typing rather than discovered on the surface. About sixteen characters fit at the strip's width.</p>
 <p><strong>If a name does not fit, it is being used as a description</strong> (§5.5). <code>notes</code> is where a description belongs, and it shows in this table's expanded row.</p>
 <p><strong>The scribble line shows the truncation</strong> and offers an override. Truncation is usually fine — "Foldback" becomes "Foldbac" and nobody is confused — but two channels truncating to the same thing is blocked, because the discriminating part is exactly what truncation removes (§5.5). The configurator names the colliding channels rather than just refusing.</p>
-<p><strong>Create from device</strong> bulk-creates a row per reference the driver reports. It is there for commissioning a fully-patched desk; the default path is adding channels individually, because a venue exposing four of twenty inputs should not begin by deleting sixteen rows.</p>
+<p><strong>Add missing channels</strong> creates a row for every desk channel no row covers; when the mixer is added, every channel is created this way, visible to staff (§5.5). Rows are then named, hidden or deleted here. (Earlier revisions defaulted to adding channels individually, because a venue exposing four of twenty inputs should not begin by deleting sixteen rows; hiding is now a switch, so that no longer applies.)</p>
 <p><strong>A ganged channel</strong> maps to several references and drives them together under one ceiling, because it is one channel. If the references diverge — someone moved one side in MixPad — the fader shows the first reference's value with a divergence marker until the next write re-converges them.</p>
 <p><strong>Unmapped channels</strong> appear at the top of the list with a warning after a driver change, are not controllable, and are excluded from hirer access until remapped.</p>
 <p><strong>Non-MIDI notice</strong> at the foot of the tab, where it is actionable:</p>
@@ -10303,7 +10303,7 @@ End            Maximum
 <tr>
 <td>43</td>
 <td><strong>The virtual surface is configuration; it does not derive from the mixer</strong></td>
-<td><code>mixer_channels</code> describes what the venue chose to expose, in the order that suits the operator, mapped to whatever inputs the desk happens to have. A typical installation is four rows — two mics, HDMI, master — bearing no relation to the desk's numbering, and inserting an AUX mid-list is normal rather than a deviation. This is what makes a swap cheap: names, order, ceilings, scene actions and surface assignments never depended on the driver's numbering, so only the reference changes. The <code>number</code> column was removed for the same reason — it would have fought the first mid-list insertion.</td>
+<td><code>mixer_channels</code> describes what the venue chose to expose, in the order that suits the operator, mapped to whatever inputs the desk happens to have. A typical installation shows operators four rows — two mics, HDMI, master — bearing no relation to the desk's numbering (since 28 September 2026 every desk channel is created with the mixer and the rest are hidden, not absent), and inserting an AUX mid-list is normal rather than a deviation. This is what makes a swap cheap: names, order, ceilings, scene actions and surface assignments never depended on the driver's numbering, so only the reference changes. The <code>number</code> column was removed for the same reason — it would have fought the first mid-list insertion.</td>
 </tr>
 <tr>
 <td>44</td>

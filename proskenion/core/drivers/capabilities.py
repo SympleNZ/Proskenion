@@ -100,6 +100,26 @@ class ChannelRef:
 
 
 @dataclass(frozen=True)
+class DeskChannel:
+    """One channel the desk has, as a mixer channel is created for it.
+
+    A mixer is given one channel per desk channel when it is added, and an
+    admin can later add any that no channel covers. ``ref`` is the reference
+    the channel is created against; its ``label`` is the default name and its
+    ``kind`` the channel's kind. ``covered_by`` names the other references
+    that address the same desk channel — a linked output pair covers both of
+    its outputs — so a channel configured on one of those already covers it.
+
+    A driver declares these with an optional ``desk_channels()`` method. One
+    that does not is taken to have one desk channel per ``available_refs()``
+    entry, none covered by another.
+    """
+
+    ref: ChannelRef
+    covered_by: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class ChannelState:
     """What ``MixerDriver.read_state`` reports for one reference."""
 

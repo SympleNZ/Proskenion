@@ -1,6 +1,6 @@
 [project]
 name = "proskenion"
-version = "0.1.8"
+version = "0.1.9"
 description = "Auditorium AV control appliance — lighting (KNX, DMX), mixer, projector, HDMI matrix"
 readme = "README.md"
 requires-python = ">=3.13"

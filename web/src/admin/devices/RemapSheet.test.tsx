@@ -69,6 +69,7 @@ const BEFORE: RemapResponse = {
     row({ id: 3, name: "Stage pair", old_refs: ["ip2", "ip3"], new_refs: ["ip2", "ip3"] }),
   ],
   available: { refs: [] },
+  missing_channels: 0,
 };
 
 const AFTER: RemapResponse = {
@@ -88,6 +89,7 @@ const AFTER: RemapResponse = {
       { ref: "out1", label: "Output 1", kind: "output", stereo: false },
     ],
   },
+  missing_channels: 0,
 };
 
 interface Call {
@@ -194,6 +196,48 @@ describe("ChangeDriverSheet", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
+  it("offers the desk channels no channel covers once applied, and adds them only when asked", async () => {
+    const calls = serve({ post: () => Promise.resolve({ ...AFTER, missing_channels: 3 }) });
+    const { onFinished, onOpenChange } = renderSheet();
+
+    await toRemapStep();
+    fireEvent.click(screen.getByRole("button", { name: "Apply re-mapping" }));
+
+    // Not added silently: the sheet stays open and asks.
+    const add = await screen.findByRole("button", { name: "Add missing channels" });
+    expect(screen.getByText(/The new driver has 3 desk channels that no channel of Desk points at/)).toBeInTheDocument();
+    expect(onFinished).not.toHaveBeenCalled();
+    expect(calls.some((call) => call.path === "/mixer/devices/4/missing-channels")).toBe(false);
+
+    const serveAdded = client.api.getMockImplementation();
+    client.api.mockImplementation((path: string, options?: { method?: string; body?: unknown }) => {
+      if (path === "/mixer/devices/4/missing-channels" && options?.method === "POST") {
+        calls.push({ path, method: "POST", body: undefined });
+        return Promise.resolve({ device_id: 4, created: [{ id: 10 }, { id: 11 }, { id: 12 }] });
+      }
+      return serveAdded ? serveAdded(path, options) : Promise.resolve({});
+    });
+    fireEvent.click(add);
+
+    await waitFor(() =>
+      expect(onFinished).toHaveBeenCalledWith("Desk's references are re-mapped; 3 channels are left unmapped. Added 3 channels."),
+    );
+    expect(calls.filter((call) => call.path === "/mixer/devices/4/missing-channels")).toHaveLength(1);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("closes without adding anything when the offer is declined", async () => {
+    const calls = serve({ post: () => Promise.resolve({ ...AFTER, missing_channels: 2 }) });
+    const { onFinished } = renderSheet();
+
+    await toRemapStep();
+    fireEvent.click(screen.getByRole("button", { name: "Apply re-mapping" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Not now" }));
+
+    expect(onFinished).toHaveBeenCalledWith("Desk's references are re-mapped; 3 channels are left unmapped.");
+    expect(calls.some((call) => call.path === "/mixer/devices/4/missing-channels")).toBe(false);
+  });
+
   it("stays on the settings step, and says nothing changed, when the new driver cannot connect", async () => {
     const calls = serve({
       put: () =>
@@ -222,6 +266,7 @@ describe("ChangeDriverSheet", () => {
       as_connected: true,
       mappings: [row({ holder: "matrix_input", id: 9, name: "Stage feed", old_refs: ["1"] })],
       available: { inputs: [{ ref: "A", label: "In A", kind: "input", stereo: false }], outputs: [] },
+      missing_channels: 0,
     };
     client.api.mockImplementation((path: string, options?: { body?: unknown }) => {
       if (path === "/devices/4/remap" && options?.body === undefined) return Promise.resolve(matrix);

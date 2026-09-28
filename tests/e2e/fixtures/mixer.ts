@@ -114,8 +114,36 @@ async function deviceStatus(request: APIRequestContext, id: number): Promise<str
   return (await ok<{ status: { status: string } | null }>(await request.get(`${API}/devices/${id}`))).status?.status;
 }
 
-async function channel(request: APIRequestContext, data: Record<string, unknown>): Promise<number> {
-  return (await ok<{ id: number }>(await request.post(`${API}/mixer/channels`, { data }), 201)).id;
+interface ChannelRow {
+  id: number;
+  channel_kind: string;
+  driver_refs: string[];
+  updated_at: string;
+}
+
+async function listChannels(request: APIRequestContext): Promise<ChannelRow[]> {
+  return (await ok<{ channels: ChannelRow[] }>(await request.get(`${API}/mixer/channels`))).channels;
+}
+
+/**
+ * Names and sets up the channel adding the mixer created for `ref` (§7.3:
+ * every desk channel has one), the way an admin edits it on the Mixer screen.
+ */
+async function channel(
+  request: APIRequestContext,
+  rows: readonly ChannelRow[],
+  ref: string,
+  data: Record<string, unknown>,
+): Promise<number> {
+  const row = rows.find((candidate) => candidate.driver_refs.length === 1 && candidate.driver_refs[0] === ref);
+  if (!row) throw new Error(`no channel was created for ${ref}`);
+  await ok(
+    await request.put(`${API}/mixer/channels/${row.id}`, {
+      data,
+      headers: { "If-Unmodified-Since-Version": row.updated_at },
+    }),
+  );
+  return row.id;
 }
 
 /** Commission, then configure the CQ-20B, four channels and two desk scenes. */
@@ -142,40 +170,22 @@ export async function configureMixer(request: APIRequestContext, cq: CqStubs): P
   );
   await expect.poll(() => deviceStatus(request, device.id), { timeout: 30_000 }).toBe("connected");
 
-  // §7.3: POST /devices created Main.
-  const listed = await ok<{ channels: { id: number; channel_kind: string }[] }>(await request.get(`${API}/mixer/channels`));
-  const main = listed.channels.find((row) => row.channel_kind === "main");
+  // §7.3: POST /devices created a channel for every desk channel, Main among
+  // them. The room names the ones it uses; the rest keep the desk's names.
+  const listed = await listChannels(request);
+  expect(listed).toHaveLength(27);
+  const main = listed.find((row) => row.channel_kind === "main");
   if (!main) throw new Error("no Main channel was created");
 
-  const wireless = await channel(request, {
-    device_id: device.id,
-    channel_kind: "input",
-    name: "Wireless 1",
-    driver_refs: ["ip1"],
-    show_pan: true,
-    sort_order: 0,
-  });
-  const lectern = await channel(request, {
-    device_id: device.id,
-    channel_kind: "input",
-    name: "Lectern",
-    driver_refs: ["ip2"],
-    sort_order: 1,
-  });
-  const foldback = await channel(request, {
-    device_id: device.id,
-    channel_kind: "output",
-    name: "Foldback",
-    driver_refs: ["out3"],
-    sort_order: 2,
-  });
-  const monitors = await channel(request, {
-    device_id: device.id,
-    channel_kind: "output",
-    name: "Stage monitors",
-    driver_refs: ["out12"],
-    sort_order: 3,
-  });
+  const wireless = await channel(request, listed, "ip1", { name: "Wireless 1", show_pan: true, sort_order: 0 });
+  const lectern = await channel(request, listed, "ip2", { name: "Lectern", sort_order: 1 });
+  const foldback = await channel(request, listed, "out3", { name: "Foldback", sort_order: 2 });
+  // The stage monitors are Out 1/2, linked in MixPad (§7.3): Out 1's channel
+  // is pointed at the pair, and Out 2's, which the pair now covers, removed.
+  const monitors = await channel(request, listed, "out1", { name: "Stage monitors", driver_refs: ["out12"], sort_order: 3 });
+  const out2 = listed.find((row) => row.driver_refs[0] === "out2");
+  if (!out2) throw new Error("no channel was created for out2");
+  expect((await request.delete(`${API}/mixer/channels/${out2.id}`)).status()).toBe(204);
   await ok(
     await request.post(`${API}/mixer/desk-scenes`, {
       data: { device_id: device.id, scene_ref: "1", name: "Venue Default", is_venue_default: true, sort_order: 0 },
@@ -219,13 +229,10 @@ export async function buildStubMixerRoom(request: APIRequestContext): Promise<{ 
     201,
   );
   await expect.poll(() => deviceStatus(request, device.id), { timeout: 30_000 }).toBe("connected");
-  const mic = await channel(request, {
-    device_id: device.id,
-    channel_kind: "input",
-    name: "Mic 1",
-    driver_refs: ["in1"],
-    show_pan: true,
-  });
+  // The stub's eight references each became a channel (§7.3).
+  const listed = await listChannels(request);
+  expect(listed.map((row) => row.driver_refs)).toEqual([["main"], ...[1, 2, 3, 4, 5, 6].map((n) => [`in${n}`]), ["out1"]]);
+  const mic = await channel(request, listed, "in1", { name: "Mic 1", show_pan: true });
   await ok(
     await request.post(`${API}/mixer/desk-scenes`, {
       data: { device_id: device.id, scene_ref: "1", name: "Venue Default", is_venue_default: true },
