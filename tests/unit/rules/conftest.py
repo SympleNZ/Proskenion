@@ -354,10 +354,6 @@ class Rig:
         value = self.state.lighting.get_item("levels", self.venue.channels[name])
         return 0.0 if value is None else float(value)  # type: ignore[arg-type]
 
-    def multiplier(self, group: str) -> float | None:
-        value = self.state.lighting.get_item("group_multipliers", self.venue.groups[group])
-        return None if value is None else float(value)  # type: ignore[arg-type]
-
     def frame_slot(self, name: str) -> list[tuple[float, int]]:
         """``(time, DMX value)`` of every frame sent, for one fixture's slot."""
         address = PATCH[name]

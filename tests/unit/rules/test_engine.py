@@ -2,8 +2,9 @@
 
 §22.2's items, verbatim where they are the standard:
 
-* Binding rule recall, confirming the group multiplier is forced to 1.0 and the
-  result is exactly on_level with a group left at 40%
+* Binding rule recall, confirming the result is exactly on_level with a group
+  left at 40% (a group fader sets levels since the owner decision of
+  2026-09-30, so there is no multiplier to force)
 * Binding value mapping, confirming telegram value 1 applies on_level and 0
   applies off_level through a single rule
 * Selective suppression, confirming a run_scene rule fires during external
@@ -61,35 +62,34 @@ async def make_rule(rig: Rig, **values: Any) -> int:
 # -- binding recall (§8.2, §8.8, §22.2) -------------------------------------------
 
 
-async def test_binding_recall_forces_the_group_multiplier_and_lands_exactly_on_level(
+async def test_binding_recall_lands_exactly_on_level_from_a_group_left_at_40(
     rig: Rig,
 ) -> None:
-    """A group left at 40% from an evening show must not make the morning come up at
-    40%: the recall writes the multiplier to 1.0 and every member lands on on_level.
+    """A row fader left at 40% from an evening show must not make the morning come
+    up at 40%: the recall sets every member's level to on_level, exactly as the
+    row's fader would (a group fader sets levels — owner decision 2026-09-30).
     The master still applies (§8.8; Simon's Q1)."""
     lighting = rig.lighting
-    lighting.set_group_multiplier(rig.venue.groups["Row 1"], 0.4)
-    lighting.set_group_multiplier(rig.venue.groups["All Stage"], 0.4)
+    lighting.set_group_level(rig.venue.groups["Row 1"], 40.0)
+    lighting.set_level(rig.venue.channels["C"], 40.0)
     lighting.set_master(50.0)
     fixture_a = rig.venue.channels["A"]
-    assert lighting.composited_level(fixture_a) == 0.0
+    assert lighting.composited_level(fixture_a) == 20.0
 
     await rig.telegram("1/0/1", True)
 
-    assert rig.multiplier("Row 1") == 1.0  # forced, by a write
     assert rig.level("A") == 100.0 and rig.level("B") == 100.0  # exactly on_level
-    # max(Row 1 = 1.0, All Stage = 0.4) × 100 × master 50 %: the master still scales it.
-    assert lighting.composited_level(fixture_a) == 50.0
-    assert rig.multiplier("All Stage") == 0.4  # a one-time write to this group only
+    assert rig.level("C") == 40.0  # a one-time write to this group's members only
+    assert lighting.composited_level(fixture_a) == 50.0  # the master still scales it
     lighting.set_master(100.0)
     assert lighting.composited_level(fixture_a) == 100.0
 
 
-async def test_an_off_press_with_a_fade_from_a_group_left_below_full_does_not_jump_up(
+async def test_an_off_press_with_a_fade_starts_from_where_each_member_is(
     rig: Rig,
 ) -> None:
-    """Forcing the multiplier to 1.0 must not flash the bank up before it fades out:
-    each member is rebased to what it was showing first (§8.8, §9.4)."""
+    """With no multiplier to force there is nothing to rebase: each member fades
+    from its own level, so nothing jumps before the fade (§8.8, §9.4)."""
     rule_id = rig.venue.rules["Stage Bank 1"]
     current = await rules_crud.get_rule(rig.db, rule_id)
     assert current is not None
@@ -97,23 +97,19 @@ async def test_an_off_press_with_a_fade_from_a_group_left_below_full_does_not_ju
     await rig.reload()
     lighting = rig.lighting
     fixture_a = rig.venue.channels["A"]
-    lighting.set_level(fixture_a, 80.0)
-    lighting.set_group_multiplier(rig.venue.groups["Row 1"], 0.4)
-    lighting.set_group_multiplier(rig.venue.groups["All Stage"], 0.4)
-    assert lighting.composited_level(fixture_a) == 32.0
+    lighting.set_group_level(rig.venue.groups["Row 1"], 40.0)
+    lighting.set_level(fixture_a, 32.0)  # trimmed on its own fader
 
     await rig.telegram("1/0/1", False)
 
-    assert rig.multiplier("Row 1") == 1.0  # still forced, by a write
-    assert rig.level("A") == 32.0  # rebased to what it was showing
-    assert lighting.composited_level(fixture_a) == 32.0  # so nothing moved
+    assert rig.level("A") == 32.0 and rig.level("B") == 40.0  # nothing moved yet
     assert lighting.fades.level_destination(fixture_a) == 0.0  # and it fades out from there
 
 
-async def test_the_forced_multiplier_is_a_write_not_a_lock(rig: Rig) -> None:
+async def test_a_recall_is_a_write_not_a_lock(rig: Rig) -> None:
     await rig.telegram("1/0/1", True)
-    rig.lighting.set_group_multiplier(rig.venue.groups["Row 1"], 0.3)  # the operator again
-    assert rig.multiplier("Row 1") == 0.3
+    rig.lighting.set_group_level(rig.venue.groups["Row 1"], 30.0)  # the operator again
+    assert rig.level("A") == 30.0 and rig.level("B") == 30.0
 
 
 async def test_binding_value_mapping_one_rule_applies_on_for_one_and_off_for_zero(
@@ -531,6 +527,50 @@ async def test_a_device_state_rule_on_the_projector_honours_trigger_for_ms(rig: 
     await engine.handle_projector_state_changed(projector_status(device_id, "on", "off"))
     await rig.settle(lambda: len(alerts) == 1)
     assert alerts[0].message == "The projector has been on for a while"
+
+
+async def test_a_device_state_rule_using_on_or_warming_fires_once_across_the_transition(
+    rig: Rig,
+) -> None:
+    """model.py's new alias: entering either member state from outside the
+    set fires the trigger once; moving between warming and on, both inside
+    the set, does not re-fire it — the same entry/exit semantics
+    _match_device_state_rules already gives a rule naming a single state."""
+    device_id = await projector_device(rig)
+    rule_id = await make_rule(
+        rig,
+        name="Projector starting",
+        trigger_type="device_state",
+        trigger_device_id=device_id,
+        trigger_state="on_or_warming",
+        action_type="notify",
+        message="The projector is on or warming up",
+    )
+    alerts: list[RuleAlert] = []
+
+    async def on_alert(event: RuleAlert) -> None:
+        alerts.append(event)
+
+    rig.bus.subscribe(RuleAlert, on_alert, name="test:on-or-warming")
+    engine = rig.engine
+
+    await engine.handle_projector_state_changed(projector_status(device_id, "warming", "off"))
+    await rig.settle(lambda: len(alerts) == 1)  # entering the alias set fires once
+
+    await engine.handle_projector_state_changed(projector_status(device_id, "on", "warming"))
+    await asyncio.sleep(0.05)
+    assert len(alerts) == 1  # warming -> on: still inside the set, no re-fire
+
+    await engine.handle_projector_state_changed(projector_status(device_id, "cooling", "on"))
+    await asyncio.sleep(0.05)
+    assert len(alerts) == 1  # leaving the set fires nothing on its own
+
+    entries = await logged(rig, rule_id)
+    assert [e["triggered_by"] for e in entries] == [f"device_state:projector:{device_id}"]
+
+    rig.clock.advance(15 * 60 + 1)  # past notify's own rate limit (§8.9)
+    await engine.handle_projector_state_changed(projector_status(device_id, "warming", "cooling"))
+    await rig.settle(lambda: len(alerts) == 2)  # re-entering fires again
 
 
 # -- connection-status and projector-state dicts do not clobber each other ----------------------

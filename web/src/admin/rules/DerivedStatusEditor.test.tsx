@@ -44,6 +44,25 @@ describe("DerivedStatusEditor", () => {
     expect(screen.getByText(/On whenever external control is active/)).toBeInTheDocument();
   });
 
+  it("compares stored levels by default and can compare what the room sees (migration 011)", async () => {
+    const { onSave } = renderEditor();
+    const basis = screen.getByLabelText("Compare");
+    expect(basis).toHaveValue("level");
+    expect(screen.getByRole("option", { name: "Stored level" })).toBeInTheDocument();
+
+    fireEvent.change(basis, { target: { value: "output" } });
+    expect(screen.getByText(/the Master pulled down turns this off/)).toBeInTheDocument();
+    fireEvent.submit(basis.closest("form") as HTMLFormElement);
+    await vi.waitFor(() => expect(onSave).toHaveBeenCalled());
+    expect(onSave.mock.calls[0]?.[0]).toMatchObject({ source_type: "lighting_group_all_at", basis: "output" });
+
+    fireEvent.change(screen.getByLabelText("Reflects"), { target: { value: "external_control" } });
+    expect(screen.queryByLabelText("Compare")).not.toBeInTheDocument();
+    fireEvent.submit(screen.getByLabelText("Reflects").closest("form") as HTMLFormElement);
+    await vi.waitFor(() => expect(onSave).toHaveBeenCalledTimes(2));
+    expect(onSave.mock.calls[1]?.[0]).toMatchObject({ source_type: "external_control", basis: "level" });
+  });
+
   it("refuses an address a rule triggers on, as a field error on the address (§8.7)", () => {
     renderEditor({
       fieldErrors: {

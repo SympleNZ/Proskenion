@@ -32,6 +32,8 @@ export interface GroupSheetCreateProps {
 export interface GroupEditInput {
   name: string;
   colour: string;
+  /** Migration 011: no fader anywhere; kept for a panel status light. */
+  indicator_only: boolean;
   channel_ids: readonly number[];
 }
 
@@ -101,6 +103,7 @@ function GroupEditSheet({ open, onOpenChange, group, fixtures, saving, onSave, d
   const [name, setName] = useState(group.name);
   const [colour, setColour] = useState(group.colour || DEFAULT_COLOUR);
   const [memberIds, setMemberIds] = useState<ReadonlySet<number>>(new Set(group.channel_ids));
+  const [indicatorOnly, setIndicatorOnly] = useState(group.indicator_only === true);
   const idPrefix = useId();
 
   function toggle(id: number): void {
@@ -135,6 +138,18 @@ function GroupEditSheet({ open, onOpenChange, group, fixtures, saving, onSave, d
               onChange={(event) => setColour(event.currentTarget.value)}
               className="input"
             />
+          </div>
+        </div>
+
+        <div className="field">
+          <div className="field-label-row">
+            <Checkbox
+              id={`${idPrefix}-indicator-only`}
+              label="Indicator only — no fader; used for panel status lights"
+              checked={indicatorOnly}
+              onChange={(event) => setIndicatorOnly(event.currentTarget.checked)}
+            />
+            <HelpButton id="lighting.group.indicator-only" />
           </div>
         </div>
 
@@ -182,7 +197,7 @@ function GroupEditSheet({ open, onOpenChange, group, fixtures, saving, onSave, d
             helpId="lighting.group.save"
             loading={saving}
             disabled={name.trim().length === 0}
-            onClick={() => onSave({ name: name.trim(), colour, channel_ids: [...memberIds] })}
+            onClick={() => onSave({ name: name.trim(), colour, indicator_only: indicatorOnly, channel_ids: [...memberIds] })}
           >
             Save
           </Button>

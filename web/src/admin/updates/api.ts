@@ -12,6 +12,7 @@ import type {
   OsRollbackResult,
   OsStatus,
   RebootResult,
+  ShutdownResult,
   RestartResult,
   RollbackResult,
   UpdateStatus,
@@ -132,5 +133,18 @@ export function useRebootAppliance(): UseMutationResult<RebootResult, unknown, v
   return useMutation({
     mutationFn: () => api<RebootResult>("/system/reboot", { method: "POST" }),
     onSuccess: () => void invalidateUpdateQueries(client),
+  });
+}
+
+/**
+ * Through the privileged helper's `shutdown` verb (`systemctl poweroff`).
+ * Unlike restart and reboot the controller does not come back by itself, so
+ * `RestartRebootCard` never starts a reconnection wait for this one. Refused
+ * with `validation_failed` (`detail.reason === "os_trial"`) during an OS
+ * trial, as reboot is.
+ */
+export function useShutdownAppliance(): UseMutationResult<ShutdownResult, unknown, void> {
+  return useMutation({
+    mutationFn: () => api<ShutdownResult>("/system/shutdown", { method: "POST" }),
   });
 }

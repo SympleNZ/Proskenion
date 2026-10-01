@@ -78,6 +78,7 @@ root one-shot unit acts on it.
 |---|---|---|
 | `restart-core` | `watchdog_window_s` (optional integer, 1–300) | restarts `auditorium-core.service`, holding §4.7's watchdog drop-in for that long or until the unit is running, whichever is first |
 | `reboot` | `mode`: `normal` or `tryboot` | reboots |
+| `shutdown` | — (any argument refused) | writes its terminal status, then `systemctl poweroff`; refused during an OS trial, like `reboot` (added 1 Oct 2026, B76) |
 | `apply-network` | — | re-renders from `system.json` and reloads |
 | `apply-update` | `package`, `version` | **re-verifies**, then extracts, swaps and restarts |
 | `write-slot` | `slot`, `image`, `manifest` | **re-verifies**, writes the root image and boot tree |

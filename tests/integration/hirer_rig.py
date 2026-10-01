@@ -873,9 +873,8 @@ async def build_hirer_room(
     scenes["crew"] = crew
     # "Stage wash": the cyc wash up, lamped by a group of just the cyc — a
     # binding is KNX-triggered only (§8.2), so a page button's lighting look
-    # is a scene. Not the bank's fixtures: a channel's effective multiplier
-    # is the highest across its groups, so a second group over the bank
-    # would hold its members up whatever the bank's master said.
+    # is a scene. Not the bank's fixtures, so the wash look and the bank's
+    # group fader (which sets its members' levels) never move the same fixtures.
     wash = ok(await admin.post(SCENES, json={"name": "Stage wash"}), 201)["id"]
     ok(
         await admin.post(

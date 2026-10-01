@@ -77,6 +77,27 @@ describe("LightingView", () => {
     expect(screen.getByRole("slider", { name: "Wash 2 fader" })).toBeInTheDocument();
   });
 
+  it("gives an indicator-only group no fader (migration 011)", async () => {
+    mockApi({
+      channels: {
+        channels: CHANNELS.channels.map((channel) =>
+          channel.id === 1 ? { ...channel, group_ids: [1, 9], fader_group_ids: [1] } : { ...channel, group_ids: [9], fader_group_ids: [] },
+        ),
+      },
+      groups: {
+        groups: [
+          GROUPS.groups[0],
+          { id: 9, name: "Stage all", colour: "grey-group", sort_order: 1, indicator_only: true, channel_ids: [1, 2], updated_at: "" },
+        ],
+      },
+    });
+    renderWithProviders(<LightingView />);
+
+    expect(await screen.findByRole("slider", { name: "Row 1 fader" })).toBeInTheDocument();
+    expect(screen.queryByRole("slider", { name: "Stage all fader" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/held by/i)).not.toBeInTheDocument();
+  });
+
   it("shows the empty state when no fixtures are configured", async () => {
     mockApi({ channels: { channels: [] } });
     renderWithProviders(<LightingView />);

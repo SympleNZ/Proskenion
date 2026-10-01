@@ -22,6 +22,7 @@ import type { PageSummary } from "@/pagesurface/types";
 import { InstallPrompt } from "@/pwa/InstallPromptCard";
 
 import { HirerDeviceBanner } from "./HirerDeviceBanner";
+import { NavLabel } from "./NavLabel";
 import { Shell } from "./Shell";
 
 function statusLine(error: unknown): string | undefined {
@@ -36,26 +37,36 @@ function sortedPages(pages: readonly PageSummary[]): readonly PageSummary[] {
 function HirerPage({ pageId, pageName }: { pageId: number; pageName: string }) {
   const query = usePage(pageId);
 
-  if (query.isPending) {
-    return (
-      <div className="page-surface-flow" aria-busy="true" aria-label={`Loading ${pageName}`}>
-        <Skeleton className="h-touch-primary w-full" />
-      </div>
-    );
-  }
+  const body = (() => {
+    if (query.isPending) {
+      return (
+        <div className="page-surface-flow" aria-busy="true" aria-label={`Loading ${pageName}`}>
+          <Skeleton className="h-touch-primary w-full" />
+        </div>
+      );
+    }
+    if (query.isError) {
+      return (
+        <ErrorState
+          title="Something went wrong"
+          detail="Please speak to venue staff."
+          status={statusLine(query.error)}
+          onRetry={() => void query.refetch()}
+        />
+      );
+    }
+    return query.data ? <PageSurface page={query.data} hirer /> : null;
+  })();
 
-  if (query.isError) {
-    return (
-      <ErrorState
-        title="Something went wrong"
-        detail="Please speak to venue staff."
-        status={statusLine(query.error)}
-        onRetry={() => void query.refetch()}
-      />
-    );
-  }
-
-  return query.data ? <PageSurface page={query.data} hirer /> : null;
+  // The hirer surface shows no title of its own; the heading names the page
+  // for assistive technology and is where focus lands after choosing a page
+  // tab (`useRouteFocus`, §24.7).
+  return (
+    <>
+      <h1 className="sr-only">{pageName}</h1>
+      {body}
+    </>
+  );
 }
 
 export function HirerShell() {
@@ -105,7 +116,7 @@ export function HirerShell() {
           <nav className="tab-strip" aria-label="Pages">
             {pages.map((page) => (
               <NavLink key={page.id} to={`/hire/${page.id}`} className="tab h-touch-hirer min-w-touch-hirer justify-center">
-                {page.name}
+                {({ isActive }) => <NavLabel active={isActive}>{page.name}</NavLabel>}
               </NavLink>
             ))}
           </nav>

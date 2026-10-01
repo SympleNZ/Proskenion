@@ -1046,6 +1046,7 @@ blockquote>*:last-child{margin-bottom:0}
 <blockquote class="callout note">
 <p>The HDMI matrix is <strong>not on the network</strong>. The Lenkeng LKV422 is controlled over RS-232 through a USB-to-serial cable from the controller (§7.5), so it has no address and no firewall rules.</p>
 <p>The school's resolvers on this VLAN are 10.2.40.1 and 122.56.237.1. The addresses above 10.2.30.240 are the ones these devices already had on site — the DMX node, the mixer, the projector and the KNX gateway were not re-addressed to fit the rest of the plan (confirmed on site, 21 September 2026). The controller and the control surface keep theirs.</p>
+<p><strong>The old DMXking eDMX4 (10.2.30.220) stays off the network.</strong> Since the stage swap-over (29 September 2026) the eDMX8's port A feeds the eDMX4's DMX input, which drives the stage. The eDMX4 re-broadcasts its DMX input as Art-Net universe 0 and has no setting to stop it, so on the network it fed the controller's own output back into the eDMX8 and HTP held the stage at full. It runs unplugged from the network; its DMX input still passes to its outputs. To configure it, first unplug the eDMX8 port A cable from its input, then connect the network, configure, disconnect, and re-patch (<code>docs/hardware/network_map.md</code>, §7.2.7).</p>
 <p>The CQ-20B's Ethernet port operates as a DHCP client and its address is configured through MixPad rather than a front panel. Set the address in MixPad and add a matching DHCP reservation at the switch. This is on the pre-installation checklist (§17.4).</p>
 </blockquote>
 <h3 id="3.2-dns-and-tls"><a class="anchor" href="#3.2-dns-and-tls" aria-label="Link to this section">#</a>3.2 DNS and TLS</h3>
@@ -2183,6 +2184,8 @@ async def send_universe(self, universe: int, data: bytes) -&gt; None      # §7.
 <p><code>driver_ref</code> is opaque to the core — <code>"ip1"</code> to the CQ-20B driver, <code>"ch01"</code> to another. <strong>There is no automatic translation between vendor addressing schemes.</strong></p>
 <p>Changing a driver therefore invalidates every <code>driver_ref</code> for that device. The admin is shown a re-mapping screen listing the old reference, the channel's name, and a picker of the new driver's <code>available_refs()</code>. Names, hirer ceilings, visibility flags, group memberships and control surface assignments are all preserved; only the reference changes.</p>
 <p>A positional guess was considered and rejected — it would occasionally be silently wrong, which is worse than being asked.</p>
+<p><strong>The one pre-selection is identity.</strong> Where the new driver declares the <em>same</em> reference string with the same kind — swapping back to a driver the channel was configured against — the picker starts on it, and the Main channel starts on the new driver's Main (every desk has exactly one, and only Main may map to it). Everything else starts blank. A pre-selection is only a starting position: nothing is applied until the admin confirms the screen.</p>
+<p><strong>What is re-mapped, and what is not.</strong> Only <code>driver_ref</code> columns are re-mapped: <code>mixer_channel_refs</code>, <code>matrix_inputs.driver_ref</code> and <code>matrix_outputs.driver_ref</code>. Everything else reaches a device through one of those rows by id, which is why it survives. <code>mixer_desk_scenes.scene_ref</code> and <code>scene_actions.projector_input</code> are opaque device references too, but they are <strong>not re-mapped</strong>: a desk scene or projector input the new driver cannot use is capability degradation (listed, marked and skipped, above), and the admin edits it where it lives. A mixer channel left without an equivalent is marked <code>unmapped</code> and fails closed (§15.6); a matrix input or output has no unmapped state (§15.10), so a re-map that leaves one out is refused. The apply is all or nothing, behind a pre-change snapshot (§16.7).</p>
 <h4 id="multiple-instances"><a class="anchor" href="#multiple-instances" aria-label="Link to this section">#</a>Multiple instances</h4>
 <p>The schema permits several drivers per category. The interface assumes one and shows device pickers only when more than one is configured, so nothing is complicated for the normal installation while the schema does not need reworking to add a second projector later.</p>
 <h4 id="knx-is-a-subsystem-not-a-category"><a class="anchor" href="#knx-is-a-subsystem-not-a-category" aria-label="Link to this section">#</a>KNX is a subsystem, not a category</h4>
@@ -2205,7 +2208,7 @@ async def send_universe(self, universe: int, data: bytes) -&gt; None      # §7.
 <p><strong>Shape.</strong> Per-domain namespaces holding the current authoritative value of everything the application tracks:</p>
 <pre><code>state.devices    {knx, dmx, mixer, projector, hdmi, backup_media} → DeviceStatus
 state.lighting   levels {channel_id: float 0–100}, colour {channel_id: RGBW},
-                 group_multipliers, master, binding_states,
+                 master, binding_states,
                  external_control (manual | detected | off),
                  observed {channel_id: float}   ← display only, never composited
 state.timer      running, started_at, accumulated_ms — the shared show timer
@@ -2256,7 +2259,7 @@ bus.emit(LevelChanged(channel_id=7, level=82.5, source=&quot;fade&quot;))
 <li><strong>Continuous</strong> — level changes, fader movements, group and master changes. Accumulated into a dirty set and broadcast as a batched frame at 10–15 fps (§16.8). Never sent individually.</li>
 <li><strong>Discrete</strong> — device status transitions, scene start and completion, mute toggles, projector state changes, HDMI source changes. Broadcast immediately.</li>
 </ul>
-<p><strong>Persistence.</strong> A dirty-flag writer persists selected state to the <code>system_state</code> table. Rapidly-changing values — levels, fader positions, group multipliers — are written at most once per 500 ms. Static changes — external control toggle, device status — write immediately. All pending state is flushed on graceful shutdown.</p>
+<p><strong>Persistence.</strong> A dirty-flag writer persists selected state to the <code>system_state</code> table. Rapidly-changing values — levels, fader positions — are written at most once per 500 ms. Static changes — external control toggle, device status — write immediately. All pending state is flushed on graceful shutdown.</p>
 <p><strong>Ownership is enforced, not conventional.</strong> Writers acquire a domain-scoped handle once at startup, and the store records which owner may write which domain:</p>
 <pre><code class="language-python">levels = state.lighting.writer(&quot;fade_engine&quot;)     # issued at startup
 levels.set(channel_id, 82.5)                      # checked against the registry
@@ -2508,6 +2511,16 @@ detail       JSON — what was attempted, what was denied
 <pre><code>Application ←→ knxd socket ←→ knxd ←→ KNXnet/IP ←→ KNX gateway ←→ KNX bus
 </code></pre>
 <p>knxd owns the KNXnet/IP tunnel, keep-alive, and gateway reconnection. The application speaks to a local socket and never handles KNXnet/IP directly.</p>
+<p><strong>knxd's options</strong> live in <code>/data/config/knxd.conf</code> (reached from <code>/etc/knxd.conf</code> through a symlink, §4.3, so the gateway address changes without a rebuild; the shipped default is <code>appliance/etc/knxd.conf.default</code>):</p>
+<pre><code>KNXD_OPTS=&quot;-e 0.0.1 -E 0.0.2:8 --arg=delay=40 -B pace -B single -b ipt:10.2.30.252&quot;
+
+-e 0.0.1 / -E 0.0.2:8   knxd's own address and the client range — local only
+--arg=delay=40 -B pace  space outgoing telegrams 40 ms apart
+-B single               rewrite every outgoing source to the address the gateway
+                        assigned the tunnel (1.1.3 at this installation)
+-b ipt:HOST             KNXnet/IP tunnelling to the gateway (§3.1)
+</code></pre>
+<p><strong><code>-B pace</code></strong> was added on site (30 September 2026): the gateway dropped telegrams from a burst — the panel's status lamps, re-sent together after a press — so the last rows missed their updates. Pacing at 40 ms sits inside the 15 telegrams/second budget below. <strong><code>-B single</code></strong> (29 September 2026) means no <code>0.0.x</code> source and no client range ever reaches the bus, so nothing the controller sends can clash with an undocumented device on the installation's line; the tunnel's address is the one recorded on the §17.4 checklist. Do not add <code>-u</code>, <code>-i</code> or <code>-d</code>: socket units provide the sockets and the unit runs knxd in the foreground.</p>
 <h4 id="group-address-library"><a class="anchor" href="#group-address-library" aria-label="Link to this section">#</a>Group address library</h4>
 <p>Every group address the system touches, in either direction, is registered in the database before use. No raw group address strings appear anywhere in scene configuration.</p>
 <pre><code>KNXGroupAddress
@@ -2630,8 +2643,8 @@ detail       JSON — what was attempted, what was denied
 <p><strong>This is specified as rules, in §8</strong>, not here and not as scenes. Modelling it as scenes would fill the execution log with daily traffic, duplicate status feedback into every scene, and bury the mapping between group addresses and fixture groups where nobody can see it. What follows is the KNX-side summary; §8.8 has the full rule set.</p>
 <p><strong>On receipt of a bank command telegram:</strong></p>
 <ol>
-<li>The rule sets every member channel's level store entry to <code>on_level</code> or <code>off_level</code>, over <code>fade_ms</code></li>
-<li>The group's multiplier is <strong>forced to 1.0</strong> for the recall (§8.8)</li>
+<li>The rule sets every member channel's level store entry to <code>on_level</code> or <code>off_level</code>, over <code>fade_ms</code> — a group-level write, the same as moving the group's fader (§9.4)</li>
+<li>Nothing else needs forcing: groups set levels and no longer multiply (§9.4, B73), so the recall's result is exactly <code>on_level</code> × the master</li>
 <li>Once the frame carrying the final value has been sent, every derived status is recomputed and any whose value changed is written</li>
 </ol>
 <p><strong>Step 3 is derived, not edge-triggered.</strong> Every binding's status is recomputed after any change, not only the one that fired — which is what makes an <em>All</em> button go red when one bank is switched off individually, and what makes the panel follow a fader dragged in the web interface. See §8.6.</p>
@@ -2660,6 +2673,9 @@ software        Application sends stepped values at 5–10 per second
 <li><strong>Disarmed (0)</strong> — Morning Reset: strategic access lighting on over KNX only. <strong>DMX fixtures stay at zero</strong> and are not brought up</li>
 </ul>
 <p>These are ordinary KNX-triggered rules running scenes (§8.8). The armed scene must be marked <code>critical</code> priority (§8.14), which also disables external control before its DMX actions (§7.2.7) so the blackout cannot be defeated by a visiting desk.</p>
+<blockquote class="callout note">
+<p><strong>At this installation (October 2026).</strong> The alarm panel sends no KNX itself: it closes a relay that a KNX I/O module reads (high armed, low disarmed), and that module sends the telegrams the house lights already respond to. The module is not in the site's ETS project, so the arm and disarm group addresses are to be captured from the bus (<code>docs/hardware/network_map.md</code>). Since the stage moved to this controller (29 September 2026) nothing turns the stage DMX off on arming until the armed rule above is bound to the captured address.</p>
+</blockquote>
 <h5 id="why-dmx-stays-down-until-someone-raises-it"><a class="anchor" href="#why-dmx-stays-down-until-someone-raises-it" aria-label="Link to this section">#</a>Why DMX stays down until someone raises it</h5>
 <p>The armed scene's DMX action is a snapshot with every channel at zero (§8.12), and <strong>snapshots write to the level store, not to the universe buffer</strong> (§7.2.3). That distinction is what produces the required behaviour:</p>
 <ul>
@@ -2697,13 +2713,12 @@ The booth's DMX input is wired to one port of the node for visiting desks, confi
 <p>DMX512 does not address individual channels. Every packet carries the entire universe — up to 512 sequential values as one frame — and a fixture finds its channel by counting bytes from the start. A full frame takes about 23 ms, giving a ceiling of roughly 44 Hz.</p>
 <p>The application's job is to keep correct values in a universe buffer. The transport handles packet timing.</p>
 <h4 id="7.2.3-output-pipeline"><a class="anchor" href="#7.2.3-output-pipeline" aria-label="Link to this section">#</a>7.2.3 Output pipeline</h4>
-<p>This resolves how individual levels, group faders and the master dimmer combine, and how DMX fixtures and KNX dimmers are driven from one model.</p>
+<p>This resolves how individual levels, group faders and the master dimmer combine, and how DMX fixtures and KNX dimmers are driven from one model. <strong>Groups are not an input to the compositor</strong>: a group fader sets its members' levels (§9.4, B73), so the composited output is level × master for a stage fixture and the level alone for a KNX house dimmer.</p>
 <pre><code>Level store   per channel: level 0–100 (one decimal)
                            colour r/g/b/w 0–255, colour fixtures only
-    ↑ written by: fade engine · direct set · scene snapshot ·
-                  binding rule · KNX dimmer status sync
-Group multipliers (0.0–1.0)  ─┐
-Master multiplier (0.0–1.0)  ─┤→  Compositor
+    ↑ written by: fade engine · direct set · group fader ·
+                  scene snapshot · binding rule · KNX dimmer status sync
+Master multiplier (0.0–1.0)  ──→  Compositor
                                ↓
         ┌──────────────────────┴──────────────────────┐
         ↓                                             ↓
@@ -2715,19 +2730,19 @@ Master multiplier (0.0–1.0)  ─┤→  Compositor
    Backend → node → fixtures                     Actuator → luminaire
 </code></pre>
 <p><strong>Two passes, not one.</strong> Earlier revisions ran a single loop that branched per channel type, which meant any condition suspending the compositor suspended KNX dimmers too — including external control (§7.2.7), where the suspension has no business touching KNX at all. The passes are gated independently and share only the level store.</p>
-<p><strong>One writer per output.</strong> The DMX pass is the sole writer of the universe buffer; the KNX pass is the sole producer of dimmer writes. Everything else — fade engine, scene snapshots, direct sets, group bindings, status sync — writes the <strong>level store</strong>. The level store therefore has many writers and exactly one reader.</p>
+<p><strong>One writer per output.</strong> The DMX pass is the sole writer of the universe buffer; the KNX pass is the sole producer of dimmer writes. Everything else — fade engine, scene snapshots, direct sets, group faders, group bindings, status sync — writes the <strong>level store</strong>. The level store therefore has many writers and exactly one reader.</p>
 <pre><code class="language-python">class Compositor:
     def composite_dmx(self) -&gt; None:
         &quot;&quot;&quot;Sole writer of the universe buffer.&quot;&quot;&quot;
         if self._dmx_suspended:                  # external control, §7.2.7
             return
         for ch in self._dmx_channels:
-            level = self._resolve(ch)            # clamp → group → master
+            level = self._resolve(ch)            # clamp → master
             self._write_profile(ch, level)   # roles from ch.profile — see below
 
     def composite_knx(self) -&gt; None:
         &quot;&quot;&quot;Sole producer of KNX dimmer writes. Never gated by DMX state, and
-        never scaled by group or master: house dimmers follow their own level.&quot;&quot;&quot;
+        never scaled by the master: house dimmers follow their own level.&quot;&quot;&quot;
         for ch in self._knx_channels:
             level = min(max(self._levels[ch.id], ch.min_value), ch.max_value)
             if abs(level - self._last_sent_knx.get(ch.id, -1)) &gt;= 0.5:
@@ -2739,9 +2754,8 @@ Master multiplier (0.0–1.0)  ─┤→  Compositor
         level = min(max(self._levels[ch.id], ch.min_value), ch.max_value)
         if ch.min_value &gt; 0:                     # a floor the master cannot
             return level                         # scale below: §7.2.3, §9.5
-        level *= self._effective_group_multiplier(ch.id)   # max across groups
-        level *= self._master
-        return level
+        level *= self._master                    # groups set levels; they do
+        return level                             # not scale (§9.4, B73)
 </code></pre>
 <h5 id="behaviour-matrix"><a class="anchor" href="#behaviour-matrix" aria-label="Link to this section">#</a>Behaviour matrix</h5>
 <p>Stated as a table rather than left implicit in the code above. Blockers B1 and B4 both arose from the compositor being a snippet that quietly accumulated cases — a missing row is visible in a way a missing <code>if</code> branch is not.</p>
@@ -2781,41 +2795,41 @@ Master multiplier (0.0–1.0)  ─┤→  Compositor
 </tr>
 <tr>
 <td><code>min_value</code> = 0</td>
-<td>Clamp, then group, then master</td>
-<td>Clamp only. Group faders and the master do not scale house dimmers (§9.5)</td>
+<td>Clamp, then master</td>
+<td>Clamp only. The master does not scale house dimmers (§9.5)</td>
 </tr>
 <tr>
 <td><code>min_value</code> &gt; 0</td>
-<td>Clamp only; <strong>exempt from group and master</strong> (§7.2.3)</td>
+<td>Clamp only; <strong>exempt from the master</strong> (§7.2.3)</td>
 <td>Clamp only, as for every house dimmer</td>
 </tr>
 <tr>
-<td>Recalled by a binding rule (§8.8)</td>
-<td>Group multiplier forced to 1.0 by a write on recall; the master applies normally (§8.8)</td>
-<td>Level set directly; no multiplier applies</td>
+<td>Group fader moved, or recalled by a binding rule (§8.8)</td>
+<td>Members' <strong>levels</strong> set; the master applies normally. Groups do not scale (§9.4, B73)</td>
+<td>Members' levels set directly</td>
 </tr>
 <tr>
 <td>Channel in several groups</td>
-<td><strong>Highest</strong> multiplier applies, not the product</td>
-<td>n/a — groups do not scale house dimmers</td>
+<td>Nothing to resolve: the last group written set the level, as on a desk</td>
+<td>n/a</td>
 </tr>
 <tr>
-<td>Level unchanged since last frame</td>
-<td>No frame sent; keepalive covers it</td>
+<td>Level unchanged, nothing moving for 250 ms</td>
+<td>No frame composited; the last frame is resent at the keepalive (1 s)</td>
 <td>No telegram sent; 0.5% deadband</td>
 </tr>
 <tr>
-<td>Level changed</td>
-<td>Frame sent, capped at 40 fps</td>
+<td>Level changed, or output moving (a fade, a fader, an operator glide)</td>
+<td>First frame at once, then frames on a steady 40 fps grid until nothing has moved for 250 ms</td>
 <td>Telegram queued at priority 3</td>
 </tr>
 </tbody>
 </table>
 <p>Two rows are the ones that were previously wrong or absent. <strong>External control gating the KNX pass</strong> was B1 — one flag doing two jobs took out house lighting whenever a visiting desk was patched in. <strong>Colour having no composited path</strong> was B4 — the snippet passed only a level, so nothing said where colour was read or whether the master scaled it.</p>
 <h5 id="clamp-point"><a class="anchor" href="#clamp-point" aria-label="Link to this section">#</a>Clamp point</h5>
-<p><strong><code>min_value</code> and <code>max_value</code> are applied to the stored level, before group and master scaling.</strong> They express <em>"this fixture's own level never leaves this range"</em>, not <em>"its output never leaves this range"</em>.</p>
+<p><strong><code>min_value</code> and <code>max_value</code> are applied to the stored level, before master scaling.</strong> They express <em>"this fixture's own level never leaves this range"</em>, not <em>"its output never leaves this range"</em>.</p>
 <p>With <code>max_value = 80</code> and the master at 50%, output is 40 — the cap applies to the channel's level, and the master then scales the whole rig as expected. Clamping after scaling would make the master unable to take a capped fixture below its cap, which is wrong for a master dimmer.</p>
-<p><code>min_value</code> is the mechanism §7.1 requires if a lighting circuit is ever brought into an egress calculation: a floor the master cannot scale below. <strong>That case needs the opposite behaviour</strong>, so a channel with <code>min_value &gt; 0</code> is exempt from master and group scaling entirely and its floor is applied to the output. This is deliberate and rare; the admin UI warns when <code>min_value</code> is set above zero.</p>
+<p><code>min_value</code> is the mechanism §7.1 requires if a lighting circuit is ever brought into an egress calculation: a floor the master cannot scale below. <strong>That case needs the opposite behaviour</strong>, so a channel with <code>min_value &gt; 0</code> is exempt from master scaling entirely and its floor is applied to the output. This is deliberate and rare; the admin UI warns when <code>min_value</code> is set above zero.</p>
 <p>Every writer into the level store clamps on write as well, so a stored level is always within range regardless of path (§7.2.6).</p>
 <h5 id="colour"><a class="anchor" href="#colour" aria-label="Link to this section">#</a>Colour</h5>
 <p>Colour fixtures hold <code>r/g/b/w</code> in the <strong>level store</strong>, not only on the channel row. A colour change from the UI, a scene snapshot or the X-Touch writes the store, and the DMX pass composites it — the same route as level, so a level and colour change resolve in one frame rather than racing.</p>
@@ -2843,15 +2857,19 @@ Master multiplier (0.0–1.0)  ─┤→  Compositor
 <p><strong>Value scale.</strong> Levels are 0–100 with one decimal everywhere — level store, API, WebSocket, scene snapshots, UI. Conversion to DMX 0–255 or KNX 0–100 happens only in the passes above. Colour components are the single exception at 0–255, because they are natively DMX values with no percentage interpretation.</p>
 <h5 id="rendering-is-change-driven"><a class="anchor" href="#rendering-is-change-driven" aria-label="Link to this section">#</a>Rendering is change-driven</h5>
 <p>The renderer does <strong>not</strong> run at a fixed rate. Art-Net is not DMX512: the node regenerates the physical DMX refresh on its outputs continuously and holds last value, so the controller does not need to send frames to keep fixtures lit.</p>
-<pre><code>Level store dirty  →  composite  →  send frame        capped at 40 fps
-No change          →  resend last frame               every 1 s (keepalive)
+<pre><code>Level store dirty     →  composite  →  send frame    at once (40 fps cap)
+Output moving         →  composite  →  send frame    every 25 ms, on a fixed grid
+Still, under 250 ms   →  resend last frame           every 25 ms (the grid's tail)
+At rest               →  resend last frame           every 1 s (keepalive)
 </code></pre>
-<p>At rest this is one packet per second and the compositor does not run at all. During a fade it reaches 40 fps. The previous fixed 25–40 fps loop burned CPU continuously to send identical frames and was a straightforward over-specification.</p>
+<p>At rest this is one packet per second and the compositor does not run at all. The previous fixed 25–40 fps loop burned CPU continuously to send identical frames and was a straightforward over-specification, and that still holds at rest, which is where the appliance spends nearly all its time.</p>
+<p><strong>While anything moves, frames go on a steady 40 fps grid</strong> (since v0.1.16, 30 September 2026). "Moving" is the level store changing — a fade's steps, fader writes — or an operator glide in progress (below). The grid is scheduled from the previous frame's due time, not from when it went, so it does not drift; changes landing between two frames join the next one. 250 ms after nothing has moved, the grid stops and the keepalive takes over. Sending only on change, as first specified, made the frame rate follow the arrival of fader writes over Wi-Fi: on the rig a drag produced a median of one frame every 50 ms with gaps past 100 ms, each a jump that grew with the drag speed, which the room saw as flicker (§23.1).</p>
+<p><strong>Operator glide.</strong> A direct operator write over the WebSocket — a fixture, group or master fader (§16.8) — moves the channel's <em>output</em> from where it was to its new composited value in a straight line over 75 ms (three frames), counted from one frame period before the frame that first carries it. The stored level is the target at once, so the interface, persistence, snapshots and a <code>level</code>-basis derived status never see the glide; an <code>output</code>-basis status evaluates the value actually sent, glide included (§8.6). A glide follows the live target, so a master move or fade started mid-glide is joined rather than fought, and a group's members glide in step. REST writes, scenes, rules, binding recalls and explicit fades do not glide, so an explicit fade keeps its own timing. External control drops every glide (§7.2.7).</p>
 <blockquote class="callout note">
 <p>Configure the node to <strong>hold last state</strong> on data loss rather than fade to black. A controller restart or a brief network interruption must not black out the rig.</p>
 </blockquote>
-<p><strong>Multi-group membership.</strong> Where a channel is in several groups the <strong>highest</strong> multiplier applies — maximum, not product — so a channel is never attenuated twice. This is surprising in practice: a fixture in "Row 2" at 40% and "Full Stage" at 100% ignores the Row 2 fader entirely. The group strip shows an inline hint naming the dominating group (§21.11).</p>
-<p><strong>Master dimmer</strong> scales stage (DMX) channels only. KNX house dimmers are scaled by neither the master nor group faders: they follow their own level one to one, the way a desk's grand master leaves architectural house lighting alone. A wall-panel change shown on screen is therefore never sent back scaled, and moving the master sends nothing to the KNX bus (§9.5). A binding rule's recall forces the group multiplier to 1.0 (§8.8) but is not exempt from the master: the master is not persisted and resets to 100% at boot, so if it is low, someone present chose that this session.</p>
+<p><strong>Multi-group membership.</strong> Groups set levels (§9.4, B73), so a channel in several groups simply takes the level the last group fader or binding wrote, as on a lighting desk. Earlier revisions made the group fader a multiplier with the highest applying, which left a fixture in "Row 2" at 40% and "Stage all" at 100% ignoring the Row 2 fader entirely; that rule, its ghost mark and its dominated-group hint are gone.</p>
+<p><strong>Master dimmer</strong> scales stage (DMX) channels only. KNX house dimmers are scaled by neither the master nor group faders: they follow their own level one to one, the way a desk's grand master leaves architectural house lighting alone. A wall-panel change shown on screen is therefore never sent back scaled, and moving the master sends nothing to the KNX bus (§9.5). A binding rule's recall sets its members' levels (§8.8) and is not exempt from the master: the master is not persisted and resets to 100% at boot, so if it is low, someone present chose that this session.</p>
 <h4 id="7.2.4-backend-abstraction"><a class="anchor" href="#7.2.4-backend-abstraction" aria-label="Link to this section">#</a>7.2.4 Backend abstraction</h4>
 <pre><code class="language-python">class LightingOutputDriver(Protocol):
     async def connect(self) -&gt; None: ...
@@ -3345,6 +3363,15 @@ Out 1 … Out 6, Main L/R
 <p>An earlier revision queued them. Queuing produces delayed surprise — someone presses power-on during cool-down, nothing happens, they walk away, and ninety seconds later the projector turns itself on in an empty room. Rejection is not silent as long as the interface says why, and §21.14 does.</p>
 <p><strong>Sequencing is what scenes are for.</strong> §8.13's worked example is exactly this case: <code>t=8000 ms  projector set input 1 (after the projector has warmed)</code>. The one legitimate use for a queue is already served by the primitive built for it.</p>
 <p>The state transition itself is a <code>device_state</code> trigger (§8.3), so a rule can write the panel's status indicator the moment the projector settles — without any polling in the rule layer.</p>
+<h5 id="minimum-warm-up"><a class="anchor" href="#minimum-warm-up" aria-label="Link to this section">#</a>Minimum warm-up</h5>
+<p><strong>A projector may report <code>on</code> while its lamp is still warming.</strong> The installation's PT-EZ570 reports <code>warming</code> for about 13 seconds and then <code>on</code>, so rejection alone let a power-off through twenty seconds after power-on. The PJLink device therefore carries a <code>min_warmup_s</code> setting (0–600, default 60; 0 disables), and from a successful power-on command the controller <strong>holds the shown state at <code>warming</code></strong> for that long, measured from its own command rather than the projector's report (B74):</p>
+<ul>
+<li>During the hold a reported <code>warming</code> or <code>on</code> is shown as <code>warming</code> everywhere — <code>state.projector</code>, the <code>projector_state</code> frame, <code>device_state</code> triggers and derived status — so power-off and input changes are refused exactly as in real warm-up, and the <code>on</code> transition happens once, when the hold ends.</li>
+<li>Any other report — <code>off</code>, <code>error</code>, <code>cooling</code>, <code>unreachable</code> — is shown at once. The hold never masks a fault.</li>
+<li><code>remaining_s</code> on <code>GET /projector/state</code> carries the hold's countdown in whole seconds, and is <code>null</code> otherwise (§16.5, §21.14).</li>
+<li>The hold is a time window only and is not persisted: a restart during one trusts the projector.</li>
+</ul>
+<p>"Set the input once it has warmed" (§8.13) therefore fires at the end of the hold, so a scene's delay before an input change must be at least <code>min_warmup_s</code>.</p>
 <h4 id="health-and-boot"><a class="anchor" href="#health-and-boot" aria-label="Link to this section">#</a>Health and boot</h4>
 <p>Poll <code>%1POWR ?</code> every 30 seconds while on, every 5 minutes while off.</p>
 <p>On startup, query state and issue no power command. The projector may be mid-cycle from before the restart; discover, do not overwrite.</p>
@@ -3964,7 +3991,7 @@ Bank 4  &quot;Lighting&quot;         Eight lighting groups · lighting master
 </tr>
 <tr>
 <td><code>lighting_group</code></td>
-<td>Group multiplier</td>
+<td>Group level — sets every member's level (§9.4); never an indicator-only group</td>
 <td>Bump to full while held</td>
 <td>—</td>
 </tr>
@@ -4145,10 +4172,11 @@ WHEN  mixer offline for 60 s       THEN  notify
 <pre><code>WHEN  knx 1/0/1                    THEN  lighting group &quot;Row 1&quot; → 100% / 0%
 </code></pre>
 <p>The four stage banks are shape B. Forward is an action; the reverse — the panel's indicator — is shape C.</p>
+<p><strong>The panel's <em>all</em> button is four bindings, not one.</strong> At this installation <code>4/0/8</code> is bound to each of the four row groups ("Stage all → row N"), not to a "Stage all" group: the whole-stage group is indicator-only (§9.4), so it cannot be bound, and the controller behaves as a lighting desk whose rows are the controls (B71). Four bindings on one address fire together, as all matching rules do (§8.7); the operator interface shows them as one button (§21.11).</p>
 <p><strong>The telegram's value selects which level applies.</strong> A binding requires <code>match_type = 'any'</code> on a 1-bit address: value 1 sets <code>on_level</code>, value 0 sets <code>off_level</code>, both over <code>fade_ms</code>. One rule handles both directions, which is the point of the shape — two rules matching 1 and 0 separately would work but can be edited out of step with each other.</p>
 <p>A <code>CHECK</code> enforces the pairing (§8.9), so a binding cannot be configured against a non-boolean address or a narrower match type.</p>
 <p><strong>C — Derived status.</strong> An outgoing address that continuously reflects state, recomputed whenever that state changes.</p>
-<pre><code>STATUS  knx 1/0/11  =  every fixture in &quot;Row 1&quot; at 100%
+<pre><code>STATUS  knx 1/0/11  =  every fixture in &quot;Row 1&quot; at 100%, as the room sees it
 STATUS  knx 1/2/2   =  projector state is ON
 STATUS  knx 1/0/9   =  external control active
 </code></pre>
@@ -4178,7 +4206,7 @@ STATUS  knx 1/0/9   =  external control active
 </tr>
 <tr>
 <td><code>device_state</code></td>
-<td>A driver reporting a state transition — offline, online, projector <code>ON</code>, external control cleared</td>
+<td>A driver reporting a state transition — offline, online, projector <code>ON</code>, external control cleared. For the projector both vocabularies apply: its connection status and its own operational state (§7.4), so <code>warming</code> or <code>on</code> matches as well as <code>connected</code></td>
 </tr>
 </tbody>
 </table>
@@ -4231,14 +4259,20 @@ device_state       only when a named device is in a given state
 <p><strong>Not a boolean tree.</strong> Allowing <code>and</code>/<code>or</code> composition would require an expression language, an interface for building it, and a debugger for when it misfires. One guard covers the realistic cases; anything more complex is a scene with its own logic.</p>
 <h3 id="8.6-derived-status"><a class="anchor" href="#8.6-derived-status" aria-label="Link to this section">#</a>8.6 Derived status</h3>
 <p>Shape C rules are evaluated on <strong>state change, not on a timer</strong>, and each binds one outgoing address to one predicate.</p>
-<pre><code>lighting_group_all_at   every member channel at a given level
+<pre><code>lighting_group_all_at   every member channel at a given level, by basis
 device_state            a named device in a given state
 external_control        external control active
 </code></pre>
+<p><strong><code>basis</code></strong> (on <code>derived_status</code>, §15.8) chooses what <code>lighting_group_all_at</code> compares. <code>level</code>, the default, compares each member's <strong>stored</strong> level, as first specified. <code>output</code> compares what the room sees: each member's output as last actually sent in a frame — its clamped level × the master (§7.2.3), including where an operator glide has reached — so with the master at 0 every stage row reads off whatever its faders say. A KNX house dimmer is not scaled by the master, so its output is its level. The stage panel's five indicators all use <code>output</code> (B72). A member whose range cannot reach the compared level is compared with the nearest level it can hold, and a group with no members is never "all at" anything.</p>
+<p><strong>Every panel indicator is on only when every member is at 100%</strong> — rows and <em>all</em> alike. "Any fixture in the row on" was considered and rejected by the owner (B72): the indicator claims what the button does, and the button sets every member to 100%.</p>
+<p><strong><code>device_state</code> on the projector</strong> matches the projector's own operational state (§7.4) as well as its connection status; the two vocabularies are separate and either satisfies the status. <code>on_or_warming</code> is an alias for {<code>warming</code>, <code>on</code>}, so a panel's projector button stays lit through warm-up rather than looking dead for a minute; plain <code>on</code> stays exact. The installation's projector indicator is <code>device_state</code>, the projector, <code>on_or_warming</code>.</p>
 <p><strong>The level-store subscription is the important part.</strong> Status is recomputed when <em>anything</em> changes the underlying state, not only when the rule that set it fired. Someone dragging Row 2's fixtures down in the web interface turns the panel indicator red, because the button is claiming "on" and it is not.</p>
 <p>That means bindings hold no state of their own — status is derived, never stored and updated, which removes a class of drift where the panel's belief and the room diverge.</p>
+<h5 id="re-assert-after-a-panel-press"><a class="anchor" href="#re-assert-after-a-panel-press" aria-label="Link to this section">#</a>Re-assert after a panel press</h5>
+<p><strong>The one exception to writing only on change.</strong> A KNX wall panel flips its own icon the moment a button is pressed, before anything has happened. If the press then does not take effect — the projector is warming or cooling (B52), unreachable, a guard blocks the rule, the telegram is debounced — no value changes, nothing would be written, and the panel would go on showing a state the room is not in.</p>
+<p>So after a telegram on an <strong>enabled rule's trigger address</strong>, once the rule layer and whatever the telegram started have finished, every enabled status with an address is <strong>re-sent at its current value</strong> ("re-assert", B51). It is coalesced 250 ms after the last completion, the wait for completion is capped at 10 s, and a status already written <em>since the press</em> is skipped, since that write reached the panel after the icon flipped. The re-assert rides the ordinary recompute, so every timing rule above still holds — a status waiting for its frame is written when the frame has gone. It changes no value, so it cannot look like a state change to the rule layer (§8.7). On the rig a refused press is corrected within about a second.</p>
 <h5 id="overlapping-groups-resolve-naturally"><a class="anchor" href="#overlapping-groups-resolve-naturally" aria-label="Link to this section">#</a>Overlapping groups resolve naturally</h5>
-<p>The auditorium has four bank buttons and an <em>All</em> button whose group contains every stage fixture. Press <em>All On</em>, then turn Bank 2 off: Bank 2's status goes 0, and <em>All</em>'s status goes 0 because twelve of sixteen fixtures are at level and not all of them.</p>
+<p>The auditorium has four bank buttons and an <em>All</em> button whose status group contains every stage fixture (an indicator-only group, §9.4). Press <em>All On</em>, then turn Bank 2 off: Bank 2's status goes 0, and <em>All</em>'s status goes 0 because eleven of fifteen fixtures are at level and not all of them.</p>
 <p>One evaluation — <em>is everything this button controls on?</em> — applied to every binding after any change. No mixed state to represent, and a boolean that is honest about what the button claims.</p>
 <h5 id="coalescing"><a class="anchor" href="#coalescing" aria-label="Link to this section">#</a>Coalescing</h5>
 <p>Statuses are recomputed on the next tick rather than per level change, so a fade emits at most one status telegram rather than one per step. Only the transition matters, not the journey. This also keeps a five-status <em>All</em> press well inside the 15 telegrams/second budget (§7.1).</p>
@@ -4251,24 +4285,28 @@ external_control        external control active
 <p><strong>Triggers come from a closed set</strong> (§8.3). A new trigger source is a code change, not a configuration one.</p>
 <h3 id="8.8-the-auditoriums-rules"><a class="anchor" href="#8.8-the-auditoriums-rules" aria-label="Link to this section">#</a>8.8 The auditorium's rules</h3>
 <p>What this installation actually needs, as an illustration of the whole model:</p>
-<pre><code>—— stage lighting, the daily path ———————————————————————————
-WHEN    knx 1/0/1        THEN   group &quot;Row 1&quot; → 100% / 0%
-WHEN    knx 1/0/2        THEN   group &quot;Row 2&quot; → 100% / 0%
-WHEN    knx 1/0/3        THEN   group &quot;Row 3&quot; → 100% / 0%
-WHEN    knx 1/0/4        THEN   group &quot;Row 4&quot; → 100% / 0%
-WHEN    knx 1/0/0        THEN   group &quot;All Stage&quot; → 100% / 0%
+<pre><code>—— stage lighting, the daily path (addresses as installed) ————
+WHEN    knx 4/0/0        THEN   group &quot;Stage row 1&quot; → 100% / 0%
+WHEN    knx 4/0/1        THEN   group &quot;Stage row 2&quot; → 100% / 0%
+WHEN    knx 4/0/2        THEN   group &quot;Stage row 3&quot; → 100% / 0%
+WHEN    knx 4/0/3        THEN   group &quot;Stage row 4&quot; → 100% / 0%
+WHEN    knx 4/0/8        THEN   group &quot;Stage row 1&quot; → 100% / 0%   ┐ the all-button:
+WHEN    knx 4/0/8        THEN   group &quot;Stage row 2&quot; → 100% / 0%   │ four bindings,
+WHEN    knx 4/0/8        THEN   group &quot;Stage row 3&quot; → 100% / 0%   │ one per row
+WHEN    knx 4/0/8        THEN   group &quot;Stage row 4&quot; → 100% / 0%   ┘ (§8.2)
 
-STATUS  knx 1/0/11       =      every fixture in &quot;Row 1&quot; at 100%
-STATUS  knx 1/0/12       =      every fixture in &quot;Row 2&quot; at 100%
-STATUS  knx 1/0/13       =      every fixture in &quot;Row 3&quot; at 100%
-STATUS  knx 1/0/14       =      every fixture in &quot;Row 4&quot; at 100%
-STATUS  knx 1/0/10       =      every fixture in &quot;All Stage&quot; at 100%
+STATUS  knx 4/0/4        =      every fixture in &quot;Stage row 1&quot; at 100%  basis output
+STATUS  knx 4/0/5        =      every fixture in &quot;Stage row 2&quot; at 100%  basis output
+STATUS  knx 4/0/6        =      every fixture in &quot;Stage row 3&quot; at 100%  basis output
+STATUS  knx 4/0/7        =      every fixture in &quot;Stage row 4&quot; at 100%  basis output
+STATUS  knx 4/0/9        =      every fixture in &quot;Stage all&quot; at 100%    basis output
+                                (&quot;Stage all&quot; is indicator-only, §9.4)
 
 —— projector —————————————————————————————————————————————————
-WHEN    knx 1/2/1 = 1    THEN   projector power on
-WHEN    knx 1/2/1 = 0    THEN   projector power off
-STATUS  knx 1/2/2        =      projector state is ON
-STATUS  knx 1/2/3        =      projector is WARMING or COOLING
+WHEN    knx 3/0/0 = 1    THEN   run scene &quot;Projector on&quot;
+WHEN    knx 3/0/0 = 0    THEN   run scene &quot;Projector off&quot;
+STATUS  knx 3/0/1        =      projector on_or_warming
+STATUS  (reserved)       =      projector is WARMING or COOLING
 
 —— alarm ————————————————————————————————————————————————————
 WHEN    knx 0/5/0 = 1    THEN   run scene &quot;All Off&quot;    → scene is critical
@@ -4278,9 +4316,9 @@ WHEN    knx 0/5/0 = 0    THEN   run scene &quot;Morning Reset&quot;
 WHEN    schedule 23:00   THEN   run scene &quot;All Off&quot;
 STATUS  knx 1/0/9        =      external control active
 </code></pre>
-<p><strong>A group binding forces the group's multiplier to 1.0 on recall.</strong> Without it, a group left at 40% from an evening show makes the next morning's assembly come up at 40% — and the derived status would still report 1, because the level store says 100 and the multiplier is what attenuates. So the forcing keeps both the room and the panel indicator truthful.</p>
-<p>The <strong>master dimmer applies normally</strong> and needs no exemption: it is not persisted and resets to 100% at boot (§12.3), so the only way it is low is that someone present set it this session.</p>
-<p><strong>Multipliers return to operator control</strong> as soon as the web interface or control surface writes to those channels. The force applies to the recall, not permanently.</p>
+<p><strong>A binding's recall is a group-level write</strong> — the same as moving the group's fader: every member's level is set to <code>on_level</code> or <code>off_level</code>. Groups set levels and do not multiply (§9.4, B73), so there is nothing left to force: a group fader left low from an evening show set its members' levels, and the morning's recall sets them again. Earlier revisions forced the group's multiplier to 1.0 on recall; with no multiplier, that rule is gone.</p>
+<p>The <strong>master dimmer applies normally</strong> and needs no exemption: it is not persisted and resets to 100% at boot (§12.3), so the only way it is low is that someone present set it this session. Because the stage indicators use the <code>output</code> basis (§8.6), a low master turns them off — the panel says what the room shows. Under the old multiplier model a stored-level status could report 1 while the room sat dimmed, because it compared the level store and the multiplier attenuated after it; that reasoning does not apply to an <code>output</code>-basis status, which compares what was actually sent.</p>
+<p>The alarm addresses below are placeholders until the installation's alarm telegrams are captured (§7.1 <em>Alarm integration</em>).</p>
 <h4 id="the-projector-needs-three-addresses-not-two"><a class="anchor" href="#the-projector-needs-three-addresses-not-two" aria-label="Link to this section">#</a>The projector needs three addresses, not two</h4>
 <p>DPT 1.001 is boolean; the projector has six states, two of which last 60–90 seconds. Writing 0 until fully <code>ON</code> leaves the button apparently dead for a minute and a half. Writing 1 optimistically lies, and lies persistently if warm-up fails.</p>
 <p>A second address carrying <em>"changing state"</em> is the only option that neither lies nor looks broken. Both are DPT 1.001, so no new datatype is needed — it is one more reserved address from the integrator, which is on the §17.4 checklist alongside the heartbeat and external-control addresses.</p>
@@ -4322,7 +4360,9 @@ STATUS  knx 1/0/9        =      external control active
   source_type         lighting_group_all_at | device_state | external_control
   lighting_group_id   → LightingGroup, compare_level      (lighting_group_all_at)
   device_id           → Device, compare_state             (device_state)
+  basis               level | output, default level         (lighting_group_all_at)
 </code></pre>
+<p><code>compare_state</code> for the projector may name its operational state (§7.4) as well as a connection status, and accepts the alias <code>on_or_warming</code> (§8.6). <code>basis</code> was added by migration <code>011</code> (§15.8).</p>
 <p><code>UNIQUE</code> on the address, when one is set: two rules writing one address would be non-deterministic.</p>
 <p><strong>The address is optional</strong> (migration <code>006</code>). A derived status with no address is still evaluated and broadcast on every state change, like any other — a page button's lamp reads it exactly as a wall-panel indicator would — it is simply never written to the KNX bus. Requiring an address forced a status that exists only for a page button, such as "House at 100%", to claim one it had no physical indicator to drive.</p>
 <h3 id="8.10-execution-and-logging"><a class="anchor" href="#8.10-execution-and-logging" aria-label="Link to this section">#</a>8.10 Execution and logging</h3>
@@ -4421,8 +4461,9 @@ t=0 ms       PJLink power on
 t=0 ms       Mixer recall &quot;Lecture Baseline&quot;
 t=1000 ms    Unmute Out 1/2, stage monitors (after the recall has settled)
 t=2000 ms    KNX write, house lights off (once the stage fade has finished)
-t=8000 ms    PJLink set input 1 (after the projector has warmed)
+t=60000 ms   PJLink set input 1 (after the projector has warmed)
 </code></pre>
+<p><strong>"After the projector has warmed" means after its minimum warm-up hold</strong> (§7.4): until <code>min_warmup_s</code> has passed since the power-on, the projector is shown as <code>warming</code> and an input change is refused. An input step's delay must therefore be at least the projector's <code>min_warmup_s</code> (60 s by default) after the power-on step.</p>
 <p><strong>An adjustment that follows a recall goes in a later group.</strong> A mixer recall replaces every level and mute the desk scene holds, so an adjustment in the same group may land before the recall and be undone by it. Recall first, then adjust.</p>
 <h3 id="8.14-priority-and-mutual-exclusion"><a class="anchor" href="#8.14-priority-and-mutual-exclusion" aria-label="Link to this section">#</a>8.14 Priority and mutual exclusion</h3>
 <p><strong>Normal</strong> scenes execute independently and may run concurrently. Per-channel conflicts resolve in the domain handlers — a new fade cancels an in-progress fade on the same channel.</p>
@@ -4502,9 +4543,10 @@ t=8000 ms    PJLink set input 1 (after the projector has warmed)
 <p><code>position</code> is cosmetic. It affects where the fixture appears on the plan and nothing else — DMX addressing is entirely independent.</p>
 <h3 id="9.4-groups"><a class="anchor" href="#9.4-groups" aria-label="Link to this section">#</a>9.4 Groups</h3>
 <pre><code>LightingGroup
-  name         &quot;Row 1 — Front of Stage&quot;
-  colour       &quot;#E8A020&quot;     UI colour coding
+  name            &quot;Row 1 — Front of Stage&quot;
+  colour          &quot;#E8A020&quot;     UI colour coding
   sort_order
+  indicator_only  false          true: membership only — no fader, never bound
 
 LightingGroupMembership
   group_id  → LightingGroup
@@ -4512,21 +4554,21 @@ LightingGroupMembership
   sort_order
 </code></pre>
 <p>A channel may belong to several groups.</p>
-<p>Group faders set a <strong>multiplier</strong> (0.0–1.0, shown as 0–100%). Moving a group fader changes only that multiplier; individual channel levels are untouched. Moving an individual fader changes that channel's level; the group multiplier is not recalculated.</p>
-<p>Group faders scale stage (DMX) members only. A KNX house dimmer in a group is set directly by a recall or a scene and is never scaled (§9.5).</p>
-<p>Individual faders display the <strong>individual level</strong>, not the composited output. This is how lighting desks work and it avoids confusion when a group is below full.</p>
-<p><strong>A ghost mark shows where the channel actually lands.</strong> A faint secondary mark on the fader track sits at the composited output, with the effective percentage beside the readout:</p>
+<p><strong>A group fader sets its members' levels</strong> (0–100, as every level, §9.2), as on a traditional lighting desk (B73). Moving it writes every member's level to the fader's value, each clamped to its own range; fixture faders then trim members individually, and the next group move sets them again. A channel in several groups takes whatever the last group fader or binding wrote. Output is level × master for a stage fixture, and the level alone for a KNX house dimmer (§7.2.3, §9.5). Members a critical scene holds are left alone and reported (§16.5).</p>
+<p>A group fader therefore has no value of its own: it shows its members' <strong>highest</strong> level, marked "mixed" when they differ (§21.11).</p>
+<p><em>Superseded:</em> earlier revisions made the group fader a <strong>multiplier</strong> (0.0–1.0) over its members' levels, with the highest multiplier applying to a fixture in several groups, a ghost mark for the group's effect, and a hint when one group dominated another. On the rig that left the row faders dead whenever "Stage all" sat at or above them, and a binding's forced 1.0 did so after every wall-panel use. All of it was removed on 30 September 2026 (B73).</p>
+<p><strong>Indicator-only groups</strong> (<code>indicator_only</code>, migration <code>011</code>). An indicator-only group exists for its membership: derived statuses (§8.6), scenes and membership still use it, but it has no fader in any view, cannot be the target of a binding (§8.2) or of a page's group master (§15.12), and a group-level write to it is refused with 422. At this installation "Stage all" is indicator-only — it lights the panel's <em>all</em> indicator — and the Lighting view's Master is the whole-stage fader (B71).</p>
+<p>Individual faders display the <strong>individual level</strong>, not the composited output. This is how lighting desks work and it avoids confusion when the master is below full.</p>
+<p><strong>A ghost mark shows where the channel actually lands.</strong> A faint secondary mark on a fixture fader's track sits at the composited output, with the effective percentage beside the readout:</p>
 <pre><code>   85%  →55%      set to 85%, landing at 55% under a master at 65%
 </code></pre>
 <p>Showing only the set level hides what the rig is doing; showing only the composited result would move every member fader whenever the master moved, which is wrong on a desk. The thumb is what was set, the ghost is what the fixture is doing, and neither number misleads.</p>
-<p>This also resolves the dominated-group case in §7.2.3, which previously had only an inline text hint.</p>
-<p>Where a channel is in several groups the <strong>highest</strong> multiplier applies (§7.2.3), with the UI surfacing when one group is dominating another.</p>
-<p><strong>Persistence.</strong> Individual levels, colour and group multipliers are persisted, so a reboot during a rig session does not lose the work. The <strong>master resets to 100%</strong> on restart, which is the safe default.</p>
-<p><strong>Binding rules force group multipliers to 1.0 on recall</strong> (§8.8). A bank switched on from the wall panel comes up at exactly its <code>on_level</code>, whatever the group fader was left at. This keeps the daily path independent of the occasional one and is the single most important interaction between the two.</p>
+<p><strong>Persistence.</strong> Individual levels and colour are persisted, so a reboot during a rig session does not lose the work. Groups hold no value to persist (§12.3). The <strong>master resets to 100%</strong> on restart, which is the safe default.</p>
+<p><strong>A binding's recall is a group-level write</strong> (§8.8). A bank switched on from the wall panel comes up at exactly its <code>on_level</code> (× the master), whatever the group fader was left at, because the recall sets the levels the fader set. The daily path stays independent of the occasional one with nothing forced.</p>
 <h3 id="9.5-master-dimmer"><a class="anchor" href="#9.5-master-dimmer" aria-label="Link to this section">#</a>9.5 Master dimmer</h3>
 <p>A single 0–100% multiplier scaling stage (DMX) output without altering stored levels. Applied in the DMX pass only (§7.2.3). KNX house dimmers are outside it: they follow their own fader, the wall panel and scenes one to one, as house lighting sits outside a desk's grand master. The master therefore cannot take the house lights down on its own, and moving it sends nothing to the KNX bus. Not persisted; resets to 100%.</p>
 <p>One exemption: channels with <code>min_value &gt; 0</code> are exempt entirely, because a floor the master can scale below is not a floor (§7.2.3).</p>
-<p>A bank recalled by a <strong>binding rule</strong> is not exempt. The rule forces its group multiplier to 1.0, and the master applies as usual (§8.8).</p>
+<p>A bank recalled by a <strong>binding rule</strong> is not exempt. The rule sets its members' levels, and the master applies as usual (§8.8). With groups no longer multiplying (§9.4), the master is the only scaling in the DMX pass, and at this installation it is the whole-stage fader.</p>
 <blockquote class="callout note">
 <p>This control can take the stage to darkness. That is acceptable <strong>only because emergency lighting is a separate battery-backed system independent of KNX</strong> (§7.1). If any circuit under this system's control is ever brought into an egress calculation, a minimum floor must be imposed on it that the master cannot scale below.</p>
 </blockquote>
@@ -4768,7 +4810,8 @@ LightingGroupMembership
 <li>SSD media errors are detected</li>
 <li>Free space on <code>/data</code> is critically low</li>
 <li>A backup fails twice consecutively</li>
-<li>Backup integrity verification fails</li>
+<li>Backup integrity verification fails (a copy was read and found corrupt: <code>backup_untrusted</code>)</li>
+<li>The archive the monthly check chose is held by no destination at all (<code>backup_missing</code>, email only — no banner, since nothing is known to be corrupt; §13.4)</li>
 <li>More than 10 failed login attempts arrive from one address within an hour</li>
 <li>An update fails and is rolled back automatically</li>
 <li>Both backup destinations are unavailable</li>
@@ -4789,9 +4832,9 @@ LightingGroupMembership
       ├── Run database migrations (§15.2)
       ├── Detect platform, initialise the platform layer
       ├── Wait for the knxd socket, 30 s timeout
-      ├── Restore persisted state: levels, group multipliers, external control
+      ├── Restore persisted state: levels, external control
       ├── DMX backend: connect and confirm
-      ├── Restore lighting levels, colour and group multipliers
+      ├── Restore lighting levels and colour
       ├── Evaluate all derived statuses; write those whose value differs
       ├── Start the Art-Net input listener; wait up to 5 s for booth frames
       ├── ── if no external desk detected and no manual flag ──
@@ -4868,8 +4911,8 @@ LightingGroupMembership
 </tr>
 <tr>
 <td>Group multipliers</td>
-<td>Yes</td>
-<td></td>
+<td><strong>No longer exist</strong></td>
+<td>Groups set levels (§9.4, B73), so there is nothing to restore. A <code>group_multipliers</code> row persisted by an older version is ignored</td>
 </tr>
 <tr>
 <td>Derived statuses</td>
@@ -5046,6 +5089,8 @@ LightingGroupMembership
 </tr>
 </tbody>
 </table>
+<p><strong>Retention works from the reconciled index</strong> (§13.4): each archive's per-destination presence flags are brought into line with what each reachable destination actually lists before anything is pruned, and a row held by no destination at all is dropped, as it is when retention deletes an archive's last copy.</p>
+<p><strong>A re-image recreates <code>/srv/local</code> empty</strong> (§13.6, §13.7). Only the USB and network copies survive one, which is why the reconcile exists: after the re-image of 28 September 2026 the index still claimed local copies, and the next monthly check reported a merely missing archive as corrupt.</p>
 <p><strong>Credentials</strong> for the network destination are encrypted at rest in <code>/data/config/backup.json</code> using the device secret. SFTP prefers key authentication, with the private key generated on the device and the public key given to the target server; password authentication is supported as a fallback. SMB uses an encrypted username and password. Stored passwords are never displayed after saving — only a change option.</p>
 <h3 id="13.4-failure-handling-and-verification"><a class="anchor" href="#13.4-failure-handling-and-verification" aria-label="Link to this section">#</a>13.4 Failure handling and verification</h3>
 <p>Every attempt writes to <code>system_state</code> under <code>domain='backup'</code>.</p>
@@ -5056,14 +5101,53 @@ LightingGroupMembership
 <li><strong>Backup media absent</strong> — the local destination is skipped and logged, and this does <strong>not</strong> count toward the failure escalation (§4.5)</li>
 <li><strong>All destinations unavailable</strong> — red immediately, because nothing is being backed up</li>
 </ul>
-<p><strong>Integrity verification.</strong> Every archive is checksummed with SHA-256 on creation. A monthly timer:</p>
+<p><strong>Every backup verifies after writing</strong> (B75). Each archive is checksummed with SHA-256 on creation, with a <code>.sha256</code> sidecar beside every copy. Before it is distributed, the built archive passes the same integrity check the monthly timer runs (below). Each copy is then read back through its own destination and its SHA-256 compared with the archive built; a copy that does not read back identical is removed and that destination's write counts as failed. The result is recorded per archive — <code>checked_at</code>, and <code>checked_destinations</code>, the destinations whose copy read back identical (migration <code>012</code>) — separately from the monthly check, because the two answer different questions: "was it written correctly?" at 03:00, and "is it still good?" weeks later on media that may have decayed. For local and USB the read-back may come from the page cache; it proves the filesystem holds the right bytes under the right name, and the monthly check is what catches later decay.</p>
+<p><strong>The index is reconciled with the destinations</strong> at every backup, every verification and the first start after a restore. For each destination that is reachable and can be listed, a row flagged present whose file is not there is cleared, a row not flagged whose file is there is set, and an archive file with no row is <strong>adopted only with a matching <code>.sha256</code> sidecar</strong>. A destination that is absent or cannot be listed keeps its flags — unreachable is not missing (§4.5). A row then held nowhere is dropped.</p>
+<p><strong>Integrity verification.</strong> A monthly timer, or <code>POST /system/backup/verify</code> on demand (optionally for one <code>archive_id</code>, §16.7):</p>
 <ol>
-<li>Selects a recent backup at random</li>
+<li>Reconciles the index, then selects a recent backup at random from those a just-listed destination holds</li>
+<li>Reads a copy, falling back <strong>local → USB → network</strong>: a reachable destination without the file has its flag cleared and the next is tried</li>
 <li>Verifies its checksum</li>
 <li>Opens the archive and confirms the database inside can be opened read-only and passes <code>PRAGMA integrity_check</code></li>
-<li>Records the result under <code>domain='backup', key='last_verify'</code></li>
+<li>Records the result under <code>domain='backup', key='verify'</code>, with an <code>outcome</code> and the <code>destination</code> read</li>
 </ol>
-<p>A failed verification raises an immediate email alert and flags the backup as untrusted in the admin interface. This catches silent corruption before it matters — which is the only time anyone would otherwise discover it.</p>
+<table>
+<thead>
+<tr>
+<th>Outcome</th>
+<th>Meaning</th>
+<th>Response</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>verified</code></td>
+<td>A copy was read and passed both checks</td>
+<td>Clears any untrusted banner</td>
+</tr>
+<tr>
+<td><code>untrusted</code></td>
+<td>A copy was read and found corrupt</td>
+<td>The archive is flagged untrusted; immediate email and banner</td>
+</tr>
+<tr>
+<td><code>missing</code></td>
+<td>Every destination the index named was reachable and none holds it</td>
+<td>Flags cleared, nothing marked; a <code>backup_missing</code> email (§11.4)</td>
+</tr>
+<tr>
+<td><code>unreachable</code></td>
+<td>A destination that may hold it could not be reached</td>
+<td>Nothing — absent media has its own alarm (§4.5)</td>
+</tr>
+<tr>
+<td><code>none</code></td>
+<td>No archive is held anywhere yet</td>
+<td>Nothing to check</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Only a copy actually read and found corrupt marks an archive untrusted.</strong> This catches silent corruption before it matters — which is the only time anyone would otherwise discover it — without crying corruption over a copy that was never there.</p>
 <h3 id="13.5-venue-baseline-restore"><a class="anchor" href="#13.5-venue-baseline-restore" aria-label="Link to this section">#</a>13.5 Venue Baseline Restore</h3>
 <p>This exists to answer the accepted network risk in §3.5. If the permission model cannot prevent someone reconfiguring the room, the room must be restorable quickly and reliably.</p>
 <p>The problem splits in two, with different mechanisms, and the split matters.</p>
@@ -5426,6 +5510,10 @@ Database-wide      journal_mode = WAL
 <td>Venue baselines</td>
 <td>Never auto-pruned</td>
 </tr>
+<tr>
+<td>Backup archives</td>
+<td>Per destination (§13.3), from the reconciled presence flags; a <code>backup_archives</code> row held by no destination is dropped</td>
+</tr>
 </tbody>
 </table>
 <p>Pruned during the nightly backup job, or earlier under disk pressure (§11.3).</p>
@@ -5654,7 +5742,10 @@ CREATE TABLE derived_status (
   lighting_group_id INTEGER REFERENCES lighting_groups(id) ON DELETE RESTRICT,
   compare_level     REAL,
   device_id         INTEGER REFERENCES devices(id) ON DELETE CASCADE,
-  compare_state     TEXT
+  compare_state     TEXT,            -- for the projector, also its operational
+                                     -- state, and the alias 'on_or_warming' (§8.6)
+  basis             TEXT NOT NULL DEFAULT 'level'   -- migration 011 (§8.6):
+                    CHECK (basis IN ('level', 'output'))
 );
 
 CREATE TABLE rule_execution_log (
@@ -5794,10 +5885,12 @@ CREATE TABLE lighting_channels (
 <p>A twelve-channel moving head becomes a row rather than a code change. The three previous fixture types seed as three profiles, so nothing is lost.</p>
 <p><strong>Not GDTF.</strong> The full fixture-definition standard is large and this system would use perhaps five percent of it. A hand-entered profile takes two minutes, and §21.19 offers duplicate-and-edit.</p>
 <pre><code class="language-sql">CREATE TABLE lighting_groups (
-  id            INTEGER PRIMARY KEY,
-  name          TEXT NOT NULL,
-  colour        TEXT NOT NULL DEFAULT '#2E86C1',
-  sort_order    INTEGER NOT NULL DEFAULT 0
+  id             INTEGER PRIMARY KEY,
+  name           TEXT NOT NULL,
+  colour         TEXT NOT NULL DEFAULT '#2E86C1',
+  sort_order     INTEGER NOT NULL DEFAULT 0,
+  indicator_only INTEGER NOT NULL DEFAULT 0     -- migration 011 (§9.4): no fader,
+                 CHECK (indicator_only IN (0, 1))  -- never bound, not on pages
 );
 
 CREATE TABLE lighting_group_memberships (
@@ -5861,6 +5954,7 @@ CREATE TABLE video_destination_outputs (
 <p>Inputs and outputs carry <code>device_id</code> and an opaque <code>driver_ref</code> like every other addressable thing (§5.5). Earlier revisions used integer <code>input_number</code> / <code>output_number</code> columns, written before the driver model — which left <code>scene_actions.hdmi_input_id</code> resolving to an integer against a driver interface that takes a reference string, and left <code>matrix_outputs</code> orphaned because destinations repeated the reference instead of pointing at the row.</p>
 <p><code>default_input_id</code> moved here from <code>matrix_inputs</code>. A single global default could not express one destination defaulting to the stage feed while another defaults to a foyer source, and the model now permits several destinations.</p>
 <p>This venue has one destination covering both outputs. A scene action targets a destination, not an output, which is what keeps it a single action and a single driver call (§5.5).</p>
+<p><strong>Matrix rows have no <code>unmapped</code> column</strong>, unlike <code>mixer_channels</code> (§15.6). After a driver change every input and output must be given a reference the new driver declares, in the same re-mapping (§5.5); a re-map that leaves one out is refused, rather than leaving a row holding a reference that looks valid and may not exist. Until the re-map is applied, the rows keep their old references.</p>
 <pre><code class="language-sql"></code></pre>
 <h3 id="15.11-control-surface"><a class="anchor" href="#15.11-control-surface" aria-label="Link to this section">#</a>15.11 Control surface</h3>
 <p>Optional; unused when no surface is configured (§7.6).</p>
@@ -5979,6 +6073,7 @@ CREATE TABLE hirer_pages (
 );
 </code></pre>
 <p><strong>A page item never defines group membership</strong> — that lives on the group (§15.9), because rules and KNX bindings target groups too. A <code>group_master</code> item says only <em>"this group's master goes here"</em> (§21.9).</p>
+<p><strong>Pages leave indicator-only groups out</strong> (§9.4). Such a group has no fader, so a <code>group_master</code> item naming one is refused with <code>validation_failed</code>, and the generated default page does not place it.</p>
 <p><code>expanded</code> is the state the page <strong>opens</strong> in. An operator's expand toggle is session-only and does not write here: configuration is the venue's intent, the toggle is the moment's need.</p>
 <p><code>ON DELETE RESTRICT</code> on <code>rule_id</code> follows the delete-protection pattern of §15.1 — a rule bound to a button reports the binding rather than vanishing from under it, and §21.18's reference list includes page buttons.</p>
 <p><strong>Rows are computed per viewport, not stored.</strong> <code>panel_width</code> (1-4) is the configured column count; the layout may widen it to as many as 6 columns to keep buttons above their floor size (§21.9). <code>(row, col)</code> is a row-major reading order over however many rows the viewport produces — there is no three-row limit — so there is no grid to store and no way to configure a panel of unusably small targets.</p>
@@ -6010,7 +6105,7 @@ CREATE TABLE schema_versions (
   applied_at TEXT NOT NULL
 );
 </code></pre>
-<p><strong><code>system_state</code> write throttling.</strong> Rapidly-changing values — levels, fader positions, group multipliers — are written at most once per 500 ms through a dirty-flag check, not on every change. This avoids saturating the WAL during active fader use. Static changes — external control, device status, backup results — write immediately. All pending state is flushed on graceful shutdown (§12.4).</p>
+<p><strong><code>system_state</code> write throttling.</strong> Rapidly-changing values — levels, fader positions — are written at most once per 500 ms through a dirty-flag check, not on every change. This avoids saturating the WAL during active fader use. Static changes — external control, device status, backup results — write immediately. All pending state is flushed on graceful shutdown (§12.4).</p>
 <h2 id="16.-api-reference"><a class="anchor" href="#16.-api-reference" aria-label="Link to this section">#</a>16. API Reference</h2>
 <h3 id="16.1-versioning-and-conventions"><a class="anchor" href="#16.1-versioning-and-conventions" aria-label="Link to this section">#</a>16.1 Versioning and conventions</h3>
 <p>Every endpoint is served under <code>/api/v1/</code>. The prefix is omitted below for readability. A breaking change bumps to <code>/api/v2/</code> with both served in parallel for one release cycle.</p>
@@ -6185,6 +6280,10 @@ POST /lighting/channels/{id}/level [admin, operator, hirer]  { level, fade_ms? }
 POST /lighting/channels/{id}/colour[admin, operator, hirer]  { r, g, b, w? } 0–255
 POST /lighting/channels/{id}/test  [admin]                   { mode: &quot;full&quot;|&quot;off&quot; }
 POST /lighting/groups/{id}/level   [admin, operator, hirer]  { level, fade_ms? }
+     Sets every member's level (§9.4); answers { level, levels: { channel_id: level } },
+     each member after its own range clamped it. Members a critical scene holds are
+     left alone and, once the rest are set, reported as 403 permission_denied with
+     detail.locked. An indicator-only group has no fader: 422 validation_failed
 POST /lighting/master              [admin, operator]         { level }
 POST /lighting/blackout            [admin, operator]
 GET  /lighting/external-control    [admin, operator]
@@ -6192,6 +6291,13 @@ GET  /lighting/external-control    [admin, operator]
 POST /lighting/external-control    [admin, operator]         { manual }
      Cannot force off while frames are arriving — detection wins
 POST /lighting/snapshot            [admin]                   Capture the current look
+
+     Lighting configuration (generic CRUD, §16.1) carries, since migration 011:
+     groups      indicator_only — no fader, never bound, left off pages (§9.4); a
+                 group a binding drives cannot be made indicator-only (422)
+     channels    group_ids, and a read-only fader_group_ids — the same without
+                 indicator-only groups
+     derived-status  basis: &quot;level&quot; | &quot;output&quot; (§8.6)
 
 # Show timer — shared, not per-client (§21.7)
 POST /timer/start                  [admin, operator]
@@ -6226,8 +6332,12 @@ POST /mixer/desk-scenes/{id}/test  [admin]                   Immediate, reports 
 
 # Projector
 GET  /projector/state              [admin, operator]
+     { device_id, state, input_ref, inputs, remaining_s } — remaining_s is the
+     minimum warm-up hold's countdown in whole seconds (§7.4), null otherwise
 POST /projector/power              [admin, operator]         { on }
 POST /projector/input              [admin, operator]         { input }
+     Both refused with device_unavailable during warming (including the minimum
+     warm-up hold) and cooling, the state in detail (§7.4, B52)
 
 # HDMI
 GET  /hdmi/state                   [admin, operator]
@@ -6268,29 +6378,33 @@ GET  /hirer/conflicts              [admin]   Desk scenes recalling above a ceili
 </code></pre>
 <p><code>reason</code> is a closed set: <code>data_unavailable</code>, <code>data_readonly</code>, <code>migration_failed</code>, <code>disk_full</code>, <code>not_installed</code> (a freshly built appliance on which no application package has ever been installed).</p>
 <p><strong><code>last_backup</code> and <code>backup_media_present</code> are the two facts that decide whether someone drives in tonight or in the morning.</strong> Both are read from <code>/mnt/backup</code>, which is a different device — so they are available precisely when <code>/data</code> is not, which is the whole reason the fields are there.</p>
-<p>GET  /system/health                [admin]   Full vitals: CPU, memory, SSD SMART,
+<pre><code>GET  /system/health                [admin]   Full vitals: CPU, memory, SSD SMART,
                                              partitions, backup media, uptime, clients
 GET  /system/time                  [admin]   NTP status, RTC presence, degraded flag
-GET  /system/version               [admin, operator]</p>
-<p>GET  /system/network               [admin]
+GET  /system/version               [admin, operator]
+
+GET  /system/network               [admin]
 POST /system/network               [admin]   202 with a confirm_token; applies through
                                              the helper, then the reconnection flow (§10.8)
 POST /system/network/confirm       [admin]   { confirm_token } — keeps the new address
-GET  /system/network/state         [admin]   applied_at, reverts_at, the previous address</p>
-<p>GET  /system/certs/history         [admin]   The served certificate, its expiry and renewal history
+GET  /system/network/state         [admin]   applied_at, reverts_at, the previous address
+
+GET  /system/certs/history         [admin]   The served certificate (the current card), its
+                                             expiry, and the renewal history
 GET  /system/certs/token           [admin]   Whether a Cloudflare token is set — never the token
 PUT  /system/certs/token           [admin]   Write-only
 POST /system/certs/token/test      [admin]   Validate the Cloudflare token and zone
 POST /system/certs/issue           [admin]   DNS-01; progress streamed over WebSocket
-GET  /system/certs/history         [admin]   Renewal history
 GET  /system/certs/download        [public]  The served certificate, application/x-pem-file (§6.16)
-POST /system/certs/self-signed     [admin]</p>
-<h1 id="drivers-and-devices-5.5"><a class="anchor" href="#drivers-and-devices-5.5" aria-label="Link to this section">#</a>Drivers and devices (§5.5)</h1>
-<p>GET  /drivers                      [admin]   Available drivers by category,
+POST /system/certs/self-signed     [admin]
+</code></pre>
+<h4 id="drivers-and-devices-5.5"><a class="anchor" href="#drivers-and-devices-5.5" aria-label="Link to this section">#</a>Drivers and devices (§5.5)</h4>
+<pre><code>GET  /drivers                      [admin]   Available drivers by category,
                                              with capabilities and config schemas
 GET  /devices                      [admin]   Configured driver instances
 POST /devices                      [admin]   { category, driver_key, name, config }
-PUT  /devices/{id}                 [admin]   Reverts on connection failure
+PUT  /devices/{id}                 [admin]   Reverts on connection failure; a driver change
+                                             is saved first and invalidates references (§5.5)
 POST /devices/{id}/test            [admin]   connect + probe; reports both (§5.3)
 GET  /devices/{id}/capabilities    [admin, operator]
 GET  /devices/{id}/refs            [admin]   available_refs() with kind and label
@@ -6299,57 +6413,89 @@ GET  /devices/{id}/fader-law       [any]     Law table for position↔dB, plus
                                              printed labels and detents (§5.5)
 GET  /devices/{id}/meter-scale     [any]     min/max dB and the measurement
                                              point, when metering is available
-GET  /devices/{id}/remap           [admin]   Old refs vs new driver's refs
+GET  /devices/{id}/remap           [admin]   Old refs beside the new driver's refs:
+                                             { device_id, driver_key, as_connected,
+                                               mappings: [{ holder, id, name, kind, unmapped,
+                                                            old_refs, new_refs }],
+                                               available, missing_channels }
+                                             holder is mixer_channel | matrix_input |
+                                             matrix_output; new_refs is the pre-selection per
+                                             old ref, null where the screen starts blank (§5.5)
 POST /devices/{id}/remap           [admin]   Apply a driver change re-mapping:
                                              { mappings: [{ holder, id, new_refs | null }] },
-                                             all or nothing, pre-change snapshot; null leaves
-                                             a mixer channel unmapped (§5.5, §15.6)</p>
-<p>GET  /system/email                 [admin]
+                                             all or nothing, pre-change snapshot; answers the
+                                             same shape as GET. null leaves a mixer channel
+                                             unmapped (§15.6); a matrix row must be mapped
+                                             (§15.10). A rejection is 422 validation_failed
+                                             with detail keyed &quot;holder:id&quot;
+</code></pre>
+<pre><code>GET  /system/email                 [admin]
 PUT  /system/email                 [admin]   Password write-only, never returned; mirrors
                                              to /srv/appliance
-POST /system/email/test            [admin]</p>
-<p>GET  /system/backup/destinations   [admin]   Configured local, USB and network destinations
+POST /system/email/test            [admin]
+
+GET  /system/backup/destinations   [admin]   Configured local, USB and network destinations
 PUT  /system/backup/destinations   [admin]   Credentials encrypted with the device secret
-GET  /system/backup/status         [admin]   Destinations, last run, verification result
-POST /system/backup/run            [admin]   { destination: "all"|"local"|"usb"|"network" }
-GET  /system/backup/history        [admin]   Past runs, per destination
+GET  /system/backup/status         [admin]   Destinations, last run, last_verify
+                                             { verified_at, archive_id, ok, detail,
+                                               outcome, destination }
+POST /system/backup/run            [admin]   { destination: &quot;all&quot;|&quot;local&quot;|&quot;usb&quot;|&quot;network&quot; }
+GET  /system/backup/history        [admin]   Past archives, per destination, each with
+                                             checked_at and checked_destinations — the
+                                             check made after writing (§13.4)
 GET  /system/backup/{id}/download  [admin]   The archive itself
-POST /system/backup/verify         [admin]   Runs the monthly integrity check on demand
+POST /system/backup/verify         [admin]   ?archive_id= optional. Runs the monthly integrity
+                                             check on demand, on that archive or a random one;
+                                             answers { …, outcome: verified | untrusted |
+                                             missing | unreachable | none, destination } (§13.4)
 GET  /system/backup/sftp-key       [admin]   The appliance's public key, to install on the NAS
 POST /system/backup/restore        [admin]   Streamed upload, or { archive_id };
-                                             snapshot taken first</p>
-<p>GET  /system/images                [admin]
+                                             snapshot taken first
+
+GET  /system/images                [admin]
 POST /system/images/capture        [admin]   Progress streamed over WebSocket
 POST /system/images/{id}/restore   [admin]   Writes the standby slot and boots it on
                                              trial (§14.4) — never the running slot
-DELETE /system/images/{id}         [admin]</p>
-<p>GET  /system/baseline              [admin]   Current baseline metadata
+DELETE /system/images/{id}         [admin]
+
+GET  /system/baseline              [admin]   Current baseline metadata
 POST /system/baseline              [admin]   Capture a baseline
 GET  /system/baseline/compare      [admin]   Diff against current configuration
-POST /system/baseline/restore      [admin]   Snapshot first, then apply</p>
-<p>POST /system/update                [admin]   Streamed upload; answers the verified
+POST /system/baseline/restore      [admin]   Snapshot first, then apply
+
+POST /system/update                [admin]   Streamed upload; answers the verified
                                              manifest for review
-POST /system/update/apply          [admin]   { when: "now"|"quiet" }
+POST /system/update/apply          [admin]   { when: &quot;now&quot;|&quot;quiet&quot; }
 POST /system/update/rollback       [admin]
-GET  /system/update/status         [admin]</p>
-<p>GET  /system/os                    [admin]   Slots, versions, trial state
-POST /system/os/rollback           [admin]   Reboots into the other slot</p>
-<p>GET  /surface/state                [admin, operator]
+GET  /system/update/status         [admin]
+
+GET  /system/os                    [admin]   Slots, versions, trial state
+POST /system/os/rollback           [admin]   Reboots into the other slot
+
+GET  /surface/state                [admin, operator]
      Session state, active bank, per-strip resolved targets and values
 POST /surface/bank                 [admin, operator]   { bank_id }
 GET  /surface/banks                [admin]   Banks with strips and buttons
 PUT  /surface/banks/{id}           [admin]   Full bank replacement, validated
 POST /surface/identify             [admin]   { strip_number } — flash the physical strip
 POST /surface/enabled              [admin]   { enabled }
-GET  /surface/validate             [admin]   Unreachable banks, dead targets, no route home</p>
-<p>GET  /system/logs                  [admin]   Filter by level, module, date
+GET  /surface/validate             [admin]   Unreachable banks, dead targets, no route home
+
+GET  /system/logs                  [admin]   Filter by level, module, date
 GET  /system/logs/export           [admin]   Filtered plain text
 POST /system/restart               [admin]   Runs privileged, never directly from the app
-POST /system/reboot                [admin]   Runs privileged, never directly from the app</p>
-<p>GET  /knx/monitor                  [admin]   Server-sent events, live telegrams
+POST /system/reboot                [admin]   Runs privileged, never directly from the app
+POST /system/shutdown              [admin]   Runs privileged, never directly from the app.
+                                             Powers the controller off cleanly; the power
+                                             must be cycled to start it again (§21.24, B76)
+
+GET  /knx/monitor                  [admin]   Server-sent events, live telegrams. Sent with
+                                             X-Accel-Buffering: no, or nginx buffers the
+                                             stream and telegrams arrive in late clumps
 POST /knx/addresses/{id}/test-write[admin]   { value }
 POST /knx/import                   [admin]   Multipart; preview then confirm
-GET  /knx/export                   [admin]   CSV of the library</p>
+GET  /knx/export                   [admin]   CSV of the library
+</code></pre>
 <h4 id="added-during-the-build">Added during the build</h4>
 <p>These endpoints were added while building Phases 5–7 and are part of the contract. <code>docs/api.md</code> is generated from the running application and lists every route with its tier.</p>
 <pre><code>GET    /auth/password-status              [admin]   { admin, operator: { password_changed_at }, identical } (§21.23)
@@ -6365,6 +6511,11 @@ DELETE /system/update                     [admin]   Discard an uploaded, unappli
 GET    /derived-status/monitor            [admin]   Live derived-status inputs (§21.17)
 GET    /lighting/patch/conflicts          [admin, operator]   Addresses patched twice (§9.1)
 GET    /scenes/domains                    [admin]   The action domains registered with the scene engine
+GET    /drivers/serial-ports              [admin]   Serial ports for the picker, from /dev/serial/by-id/, each marked in use or free (§21.24, B46)
+GET    /knx/unsupported                   [admin]   Group addresses whose DPT the subsystem could not decode (§7.1)
+GET    /mixer/devices/{id}/missing-channels   [admin]   Desk channels no channel on this mixer covers, in the driver's order (§5.5, §21.21)
+POST   /mixer/devices/{id}/missing-channels   [admin]   Add a channel for each; adds only, never renames or removes, so no snapshot is taken
+POST   /lighting/levels                   [admin, operator]   { levels: { channel_id: level }, fade_ms? } — the batch level write; answers the level each channel took (§9.2)
 </code></pre>
 <h3 id="16.8-websocket"><a class="anchor" href="#16.8-websocket" aria-label="Link to this section">#</a>16.8 WebSocket</h3>
 <p>WS /ws?v=1
@@ -6388,7 +6539,7 @@ GET    /scenes/domains                    [admin]   The action domains registere
 { &quot;type&quot;: &quot;set&quot;, &quot;domain&quot;: &quot;lighting&quot;, &quot;id&quot;: 7, &quot;value&quot;: 82.5, &quot;token&quot;: 4413 }
 { &quot;type&quot;: &quot;set&quot;, &quot;domain&quot;: &quot;mixer&quot;,    &quot;id&quot;: 3, &quot;value&quot;: -5.0, &quot;token&quot;: 4414 }
 </code></pre>
-<p><strong>Control writes.</strong> <code>domain</code> is <code>lighting</code>, <code>lighting_group</code>, <code>master</code> or <code>mixer</code>. <code>token</code> is a client-generated monotonic integer, unique per connection, which the server echoes on acknowledgement — it is what ties a rejection back to the correct pending entry when several gestures are in flight (§21.2).</p>
+<p><strong>Control writes.</strong> <code>domain</code> is <code>lighting</code>, <code>lighting_group</code>, <code>master</code> or <code>mixer</code>. A <code>lighting_group</code> write sets every member's level (§9.4). The three lighting domains are operator fader writes, so their <em>output</em> glides over 75 ms while the stored level is the target at once (§7.2.3); REST writes do not glide. <code>token</code> is a client-generated monotonic integer, unique per connection, which the server echoes on acknowledgement — it is what ties a rejection back to the correct pending entry when several gestures are in flight (§21.2).</p>
 <p>The server replies per write:</p>
 <pre><code class="language-json">{ &quot;type&quot;: &quot;ack&quot;,  &quot;token&quot;: 4413 }
 { &quot;type&quot;: &quot;nack&quot;, &quot;token&quot;: 4414, &quot;reason&quot;: &quot;value_out_of_range&quot;, &quot;value&quot;: -6.0 }
@@ -6410,7 +6561,7 @@ no pong within two intervals (40 s) → close the socket
 { &quot;type&quot;: &quot;resync&quot;, ... }    → on return; full snapshot per domain
 </code></pre>
 <p>On <code>visibilitychange</code> the browser gets a moment before suspension, which is enough for one frame. If it does not arrive — an abrupt sleep, a dropped network — the pong timeout catches it within 40 seconds and the socket closes.</p>
-<p><strong>Nothing new is needed on the way back.</strong> <code>resync</code> already exists and already carries a full snapshot per domain, and meters are deliberately not replayed (§16.8) because a stale meter is worse than none.</p>
+<p><strong>Nothing new is needed on the way back.</strong> <code>resync</code> already exists and already carries a full snapshot per domain, and meters are deliberately not replayed (§16.8) because a stale meter is worse than none. A resync does receive one <em>fresh</em> <code>mixer_meters</code> frame, built from live state at that moment (below).</p>
 <blockquote class="callout note">
 <p><strong>Backgrounding is not logging out.</strong> The session is governed by §6.6's visibility rule: the idle timer starts when the page is hidden, and the socket closing does not shorten it. A tablet picked up after ten minutes reconnects into the same session.</p>
 </blockquote>
@@ -6424,14 +6575,15 @@ no pong within two intervals (40 s) → close the socket
     &quot;1&quot;: { &quot;level&quot;: 85.0 },
     &quot;2&quot;: { &quot;level&quot;: 78.5, &quot;r&quot;: 255, &quot;g&quot;: 120, &quot;b&quot;: 0 }
   },
-  &quot;groups&quot;:  { &quot;1&quot;: 0.85, &quot;2&quot;: 1.0 },
   &quot;master&quot;: 100.0,
+  &quot;bindings&quot;: { &quot;3&quot;: true },
   &quot;external_control&quot;: &quot;off&quot;,
   &quot;observed&quot;: null,
   &quot;source&quot;: &quot;fade&quot;
 }
 </code></pre>
 <p>Levels are 0–100 with one decimal; colour components are 0–255 (§9.2).</p>
+<p><strong>There is no <code>groups</code> section.</strong> A group fader sets its members' levels and has no stored value of its own (§9.4, B73), so clients show it from <code>channels</code>. <code>bindings</code> carries each binding rule's bank state, keyed by rule id — whether every member of its group is at its <code>on_level</code> (§21.11).</p>
 <p>While external control is active, <code>external_control</code> is <code>"detected"</code> or <code>"manual"</code> and <code>observed</code> carries the levels read from the booth input for patched channels only (§7.2.7). Clients display <code>observed</code> in preference to <code>channels</code> whenever it is present, with an indicator saying so. <code>channels</code> continues to carry the controller's own model throughout, so the transition on resume is visible before it happens.</p>
 <pre><code class="language-json">{
   &quot;type&quot;: &quot;mixer_state&quot;,
@@ -6454,7 +6606,7 @@ no pong within two intervals (40 s) → close the socket
 </code></pre>
 <p><code>origin</code> is <code>"app"</code>, <code>"mixpad"</code> or <code>"surface"</code> and drives the origin badge (§7.3, §21.13).</p>
 <p><strong><code>mixer_meters</code> carries a list per channel</strong>, one entry per driver reference in sort order — index 0 is left on a stereo channel, and a mono channel is a one-element list rather than a scalar (§5.5). <strong>A channel with no meter data is absent from the object</strong>, not present at the floor, which is what lets the interface render no bar rather than an empty one.</p>
-<p>Batched as a continuous event at 10–15 fps and never replayed on resync — a stale meter is worse than none, so a reconnecting client shows no bars until the next frame arrives.</p>
+<p>Batched as a continuous event at 10–15 fps and never <strong>replayed</strong> on resync — a stale meter is worse than none. A resync instead gets <strong>one fresh <code>mixer_meters</code> frame</strong>, built from live state at the moment of sending. That is not a replay, so the reason above still holds; without it a channel whose reading is steady — a silent input — is never dirtied again after its first write (the state store drops unchanged writes, §5.6), and a client that connected later never saw its meter at all.</p>
 <h4 id="server-to-client-discrete-events"><a class="anchor" href="#server-to-client-discrete-events" aria-label="Link to this section">#</a>Server to client — discrete events</h4>
 <p>Sent immediately, never batched:</p>
 <pre><code class="language-json">{ &quot;type&quot;: &quot;device_status&quot;,    &quot;device&quot;: &quot;mixer&quot;, &quot;status&quot;: &quot;connected&quot; }
@@ -6791,21 +6943,28 @@ no pong within two intervals (40 s) → close the socket
       rtpmidi.md         RFC 6295 subset implemented, and what is deliberately omitted
       lkv422-manual.pdf  Vendor manual
       dmx.md             Universe buffer, compositor, fade engine
+      dmx-node.md        eDMX8 MAX configuration
     hardware/
       setup.md           Commissioning procedure
       porting.md         Running on other hardware — §5.4 and the five variables
       network_map.md     Addresses, MACs, USB serials, physical locations
       recovery.md        Full recovery procedure
-      dmx-node.md        eDMX8 MAX configuration
-      run-sheets.md      Pre-hire and post-hire (§17.5)
+    run-sheets/          Served by the controller as in-app help (§21.24)
+      operator-quick-reference.md
+      hire-handover.md   Pre-hire and post-hire (§17.5)
+      recovery-card.md
+    handover/
+      operations.md      Day-to-day operation for a successor (§20)
     build/
       image.md           Golden image build and partitioning
-      toolchain.md       Building and signing a package
-      signing_keys.md    Key management and handover
-  app/
+      packages.md        Package format, building and signing, verification,
+                         key management and rollover
+  proskenion/            The Python package (§5.2)
   web/
+  appliance/             systemd units, nginx, udev, the golden image build
   tests/
 </code></pre>
+<p>The tree is as built (October 2026). <code>dmx-node.md</code> sits with the protocol notes rather than the hardware ones, and the run sheets are a directory of separate documents because the controller serves each one, filtered by tier, from the Help sheet. Building, signing and key handover are one document, <code>docs/build/packages.md</code>, because one package format and one verification path serve application updates, OS upgrades and images alike (§14.1).</p>
 <p><code>docs/protocols/cq20b.md</code> is the authoritative protocol reference. <strong>Do not duplicate its values anywhere</strong>, including in this specification. The A&amp;H PDFs are stored in the repository rather than linked, because vendor URLs do not stay stable.</p>
 <h3 id="19.3-architecture.md"><a class="anchor" href="#19.3-architecture.md" aria-label="Link to this section">#</a>19.3 ARCHITECTURE.md</h3>
 <p>Records <em>why</em>, not <em>what</em>. A successor should be able to understand the reasoning behind:</p>
@@ -6887,7 +7046,7 @@ no pong within two intervals (40 s) → close the socket
 </tr>
 <tr>
 <td>Run sheets</td>
-<td><code>docs/hardware/run-sheets.md</code> and the laminated card</td>
+<td><code>docs/run-sheets/</code> (also served in the Help sheet, §21.24) and the laminated card</td>
 </tr>
 <tr>
 <td>CQ-20B MixPad access</td>
@@ -6925,16 +7084,16 @@ no pong within two intervals (40 s) → close the socket
 <li>Who to call for KNX, network, and audio issues</li>
 </ul>
 <h3 id="20.3-public-repository"><a class="anchor" href="#20.3-public-repository" aria-label="Link to this section">#</a>20.3 Public repository</h3>
-<p>The application code will be made public if and when the developer moves on, so the school or a successor can continue maintenance. The repository should be self-contained — a developer with reasonable Python and React experience should be able to build, understand and extend the system from it alone.</p>
+<p>The application code <strong>has been public since 26 September 2026</strong> (github.com/SympleNZ/Proskenion, MIT licence), so the school or a successor can continue maintenance whenever the developer moves on. It is published through a filtered <code>public</code> branch, never by pushing the working branch: what the checklist below excludes stays out of the public history. The repository should be self-contained — a developer with reasonable Python and React experience should be able to build, understand and extend the system from it alone.</p>
 <p><code>HANDOVER.md</code> covers credentials and private keys and is kept outside the public repository, referenced but not included. It is in <code>.gitignore</code> from the first commit, not added later — a file that has ever been committed remains in the history whether or not it is deleted.</p>
-<p>Before publication:</p>
+<p>Before publication (and before each later publish of the <code>public</code> branch):</p>
 <pre><code>□ Confirm HANDOVER.md was never committed — check the full history, not the working tree
 □ Scan history for tokens, keys, hostnames and addresses
 □ Confirm no signing private key is present in any commit
 □ Confirm docs/hardware/network_map.md carries no credentials
 □ Confirm the A&amp;H PDFs may be redistributed, or replace them with references
 </code></pre>
-<p>The last item is easy to miss. The protocol PDFs are stored in the repository rather than linked because vendor URLs do not stay stable (§19.2), which is the right call for a private repository and needs checking before a public one.</p>
+<p>The last item is easy to miss. The protocol PDFs are stored in the repository rather than linked because vendor URLs do not stay stable (§19.2), which is the right call for a private repository and needs checking before a public one. The repository is now public, so the check applies to every publish.</p>
 <h2 id="21.-user-interface"><a class="anchor" href="#21.-user-interface" aria-label="Link to this section">#</a>21. User Interface</h2>
 <p>This section is the complete frontend specification, absorbed from the former companion document. Every screen, component, interaction and state is here, so there is no second document to fall out of step with.</p>
 <hr>
@@ -7094,6 +7253,8 @@ Pointer up      Pending entry cleared on acknowledgement; the fader
                 settles to whatever the server actually holds
 </code></pre>
 <p>If a scene ran during the gesture (§10.6), the fader visibly moves on release. That is correct and honest — the scene is authoritative while running, and hiding the divergence would be worse.</p>
+<p><strong>On touch, the gesture starts when it is recognised, not at pointer-down</strong> (since v0.1.15). Fader rows scroll sideways, so a finger landing on a fader's track may be the start of a fader move or of a swipe along the row. Until it has moved 8 px it is neither: a release inside that is a tap, which positions the thumb; movement along the fader's own axis first is a fader drag; movement across it first is a scroll, which never changes the level. The fader's hit area carries <code>touch-action: pan-x</code> (<code>pan-y</code> on a horizontal fader), so the browser owns the swipe and cancels the pointer when it takes it. A touch landing on the thumb itself grabs at once without jumping. Mouse, pen and keyboard (§24.2) are unaffected: a mouse press is always a fader press. Horizontally scrolling fader rows also carry scroll arrows (§21.5).</p>
+<p><strong>A cancelled pointer ends at its last real position.</strong> A <code>pointercancel</code> carries no usable coordinates; the gesture ends where the pointer last actually was (it had been jumping to the top of travel, +10 dB on a mixer fader), and a touch the browser claimed as a scroll leaves the level untouched.</p>
 <h4 id="continuous-writes-go-over-the-websocket"><a class="anchor" href="#continuous-writes-go-over-the-websocket" aria-label="Link to this section">#</a>Continuous writes go over the WebSocket</h4>
 <p><strong>This is a change to §16, not only to the frontend.</strong></p>
 <p>§16.5 places fader writes on REST. A drag coalesced to 30 Hz produces 30 POSTs per second from a single person, against a §23.1 budget of 100 requests per second in total. <strong>One operator dragging one fader would consume a third of the budget</strong>, and two tablets during a soundcheck would exceed it.</p>
@@ -7103,6 +7264,7 @@ Pointer up      Pending entry cleared on acknowledgement; the fader
 { &quot;type&quot;: &quot;nack&quot;, &quot;token&quot;: 4413, &quot;reason&quot;: &quot;permission_denied&quot; }
 </code></pre>
 <p>The <code>token</code> ties an acknowledgement or rejection back to the correct pending entry — without it, the two-map model cannot know which gesture a rejection refers to when several are in flight.</p>
+<p><strong>Lighting writes over the WebSocket glide</strong> (since v0.1.16). A fixture, group or master fader write moves the DMX <em>output</em> to its new value over 75 ms on the server, while the stored level — and so the pending overlay's reconciliation — is the target at once (§7.2.3). Fader writes over Wi-Fi arrive irregularly; written straight to the output, each was a jump the room saw as flicker. REST writes, scenes, rules and explicit fades do not glide.</p>
 <p><strong>REST retains discrete actions</strong>: scene triggers, mute toggles, desk scene recall, configuration, and everything under <code>/system</code>. The division is continuous versus discrete, not important versus unimportant.</p>
 <p>Server-side permission enforcement is unchanged and applies identically to WebSocket writes (§6.7).</p>
 <h4 id="fader-law-is-client-side-data"><a class="anchor" href="#fader-law-is-client-side-data" aria-label="Link to this section">#</a>Fader law is client-side data</h4>
@@ -7136,13 +7298,12 @@ dbToPosition(law, -5.0)   // → 0.608
 </code></pre>
 <p>They arrive in their own message at their own rate (§16.8), carry no control meaning, and are <strong>never written to <code>pending</code></strong> — there is no gesture that produces a meter. <code>subscribeMeter(channelId, cb)</code> is a separate subscription so a strip re-renders its bar without re-rendering its fader.</p>
 <p><strong>Peak hold and ballistics are client-side.</strong> Fast attack, slow release, with the peak held about 1.4 seconds then falling. The server sends instantaneous values; smoothing them there would mean every client got one surface's idea of ballistics, and a meter that has been averaged twice reads sluggishly.</p>
-<p><strong>Nothing is replayed on resync.</strong> A stale meter is worse than none, so a reconnecting client shows no bars until the next frame.</p>
+<p><strong>Nothing is replayed on resync.</strong> A stale meter is worse than none. A resync instead receives one fresh <code>mixer_meters</code> frame built from live state (§16.8), so a steady — even silent — input shows its meter to a client that connected late.</p>
 <pre><code class="language-ts">interface LiveState {
   lighting: {
     levels:    Map&lt;number, number&gt;      // 0–100, one decimal
     colours:   Map&lt;number, Colour&gt;      // 0–255 components
-    groups:    Map&lt;number, number&gt;      // multipliers 0–1
-    master:    number
+    master:    number                    // no groups map: a group fader sets levels (§9.4)
     bindings:  Map&lt;number, boolean&gt;     // KNX bank states, §7.1
     observed:  Map&lt;number, number&gt;      // external control only, §7.2.7
     externalControl: 'off' | 'detected' | 'manual'
@@ -7440,6 +7601,7 @@ Table row hover    bg --color-bg-surface
   border-radius: var(--radius-sm);
 }
 </code></pre>
+<p><strong>The strips follow the mockups</strong> (<code>docs/operator-views.html</code>). The thumb travels inside a box inset from the track by half the thumb's height at each end, so at either end of travel it sits wholly inside the track; what a finger touches and where the thumb is drawn share that one coordinate system, and the printed scale is laid out on the same inset.</p>
 <h4 id="mute-buttons"><a class="anchor" href="#mute-buttons" aria-label="Link to this section">#</a>Mute buttons</h4>
 <p>Console mute buttons are illuminated, so the LED metaphor applies directly.</p>
 <pre><code class="language-css">.mute-active {
@@ -7512,6 +7674,12 @@ Level 100      Full glow, bright specular, maximum bloom
 
 HorizontalScroller  overflow-x-auto, scroll-snap, overscroll-contain
                     Props: children, snapAlign
+                    Scroll arrows: a triangle in the blank margin at each end,
+                    shown only while there is more content that way; a tap
+                    scrolls one visible width, clamped to the end. At least
+                    44 px, with an accessible name (&quot;Scroll right&quot;).
+                    On every horizontally scrolling fader row: Pages, Lighting
+                    groups and fixtures, the phone Mixer row
 
 PageChips           Scrollable range chips with an active indicator
                     Props: pages, activeIndex, onSelect
@@ -7570,7 +7738,7 @@ ReferenceGuard      Delete-protection dialog listing what refers to an entity
 <hr>
 <h3 id="21.6-navigation"><a class="anchor" href="#21.6-navigation" aria-label="Link to this section">#</a>21.6 Navigation</h3>
 <p>Three shells, one codebase, different entry points.</p>
-<p><strong>Operator</strong> — a tab strip below the status area on desktop and tablet, a rail on a phone in landscape (§21.9). <strong>Pages is the default landing.</strong></p>
+<p><strong>Operator</strong> — a tab strip at the top on every supported width; phones are portrait-only (§21.9, B68). <strong>Pages is the default landing.</strong></p>
 <p>Navigation is never at the bottom: that edge belongs to the status bar (§21.7), and putting tabs there too would place two unrelated things in one strip.</p>
 <pre><code>Pages  |  Scenes  |  Mixer  |  Lighting  |  Stage Plan  |  Video  |  Projector
 </code></pre>
@@ -7587,6 +7755,8 @@ ReferenceGuard      Delete-protection dialog listing what refers to an entity
                                     Health
                                     Logs
 </code></pre>
+<p><strong>Focus follows navigation</strong> (§24.7). After an in-app navigation each shell moves focus to the new screen's heading (every screen has an <code>h1</code>, visually hidden where the design shows none, made focusable without joining the tab order), so a screen reader announces the new screen and the next Tab continues into it. Not on first load or a redirect, never into an open sheet or dialog (its focus trap owns focus), and never while focus is in a text field. If the heading has not rendered within a second, focus goes to <code>#main</code>. The active navigation item carries a visually hidden ", current page" alongside <code>aria-current</code>, and the skip link shows on <code>:focus</code>, not only <code>:focus-visible</code>.</p>
+<p><strong>Admin → System → power.</strong> Restart (the application), reboot and <strong>shut down</strong> (power off) are reachable from Admin → System as well as Admin → Updates (§21.24).</p>
 <p><strong>Hirer</strong> — the pages assigned to them (§15.12), and nothing else. No other views, and no tabs at all when only one page is assigned.</p>
 <p>This replaces the earlier fixed Audio/Lighting split. What a hirer sees is now a layout someone built and can look at, rather than the product of six visibility flags.</p>
 <pre><code>┌──────────────────────────────────────────┐
@@ -7604,6 +7774,10 @@ ReferenceGuard      Delete-protection dialog listing what refers to an entity
 </code></pre>
 <p><strong>The bottom is where status belongs.</strong> The top of the screen is for moving around — navigation and page tabs — and mixing the two puts a thing you glance at beside things you tap. On a tablet held in two hands the bottom edge is also where thumbs already are, which matters for the timer controls; and it is where a physical console puts its status strip.</p>
 <p>An earlier revision placed it at the top. That put five device indicators between the operator and the navigation they were reaching for.</p>
+<h4 id="at-phone-width"><a class="anchor" href="#at-phone-width" aria-label="Link to this section">#</a>At phone width</h4>
+<p><strong>One summary LED replaces the five indicators</strong> (B70). It shows the worst state — red over amber over green. Not configured does not count; if everything is unconfigured it shows neutral. Its accessible name says what is wrong ("Connections: Mixer degraded, HDMI offline", or "all connected"). Tapping it opens a named list of every indicator and its state; for staff each row opens that device's detail sheet, as tapping an indicator does on a wider screen, so nothing the full bar offers is unreachable. <strong>The show timer is dropped on phones</strong>; the clock and the account chip stay. The five indicators and the timer return above the phone breakpoint.</p>
+<p>Sheets at phone width stop above the status bar (<code>--status-bar-height</code>) rather than drawing their footers over it.</p>
+<p><strong>Connection changes are spoken once</strong> (§24.3). A single visually hidden polite announcer says only what changed — "KNX offline", "KNX and DMX offline. Mixer degraded.", "KNX back online" — coalesced over one second, so a device that drops and returns inside the window is never mentioned and a device retrying while offline stays silent. The device list and the summary LED keep their accessible names but are <strong>not</strong> live regions.</p>
 <h4 id="clock-and-timer"><a class="anchor" href="#clock-and-timer" aria-label="Link to this section">#</a>Clock and timer</h4>
 <p>The right end carries two things, both of which earn their place.</p>
 <h5 id="the-clock-is-the-appliances-time-not-the-browsers"><a class="anchor" href="#the-clock-is-the-appliances-time-not-the-browsers" aria-label="Link to this section">#</a>The clock is the appliance's time, not the browser's</h5>
@@ -7647,7 +7821,7 @@ ReferenceGuard      Delete-protection dialog listing what refers to an entity
 </tbody>
 </table>
 <h4 id="on-very-short-viewports"><a class="anchor" href="#on-very-short-viewports" aria-label="Link to this section">#</a>On very short viewports</h4>
-<p>Below roughly 420 px of height — a phone in landscape (§21.9) — the bar is <strong>hidden</strong>, and device state moves into the navigation rail's overflow. At that size a 44 px bar is more than a tenth of the screen, and the fader travel it costs matters more than the glance it saves.</p>
+<p><strong>Superseded (B68).</strong> An earlier revision hid the bar below roughly 420 px of height — a phone in landscape — and moved device state into a navigation rail's overflow. Phones are now portrait-only (§21.9): a phone turned to landscape is covered by a "turn your phone upright" overlay, so the bar is never hidden.</p>
 <p><strong>The bar carries devices whose loss affects the room.</strong> Backup media (§4.5) and the control surface (§7.6) are monitored but excluded — losing either degrades maintenance or convenience, not operation — and both appear in the admin health screen instead. §11.1 lists everything monitored; this is the operator-facing subset.</p>
 <p>Staff tap an indicator for the detail sheet:</p>
 <pre><code>┌────────────────────────────────────────────┐
@@ -7890,19 +8064,15 @@ Rate limited          [ Sign in — try again in 12:34 ]
 <p><strong>Searching both together rather than in sequence matters.</strong> Expanding columns first commits to a shape before discovering that a slightly smaller button would have kept the configured one — it produced panels twice as wide. Under the joint search a five-button panel configured 1-wide stays one column on every target but a phone in landscape, shrinking from 126 px to 96 px instead.</p>
 <p><strong>The venue configured a shape; the layout honours it and adjusts the size.</strong> Only where the floor is reached does the arrangement change: at 260 px of panel height a five-row column would need 42 px buttons, so a phone in landscape becomes 2 × 3 at 78 px.</p>
 <h5 id="phone-landscape"><a class="anchor" href="#phone-landscape" aria-label="Link to this section">#</a>Phone landscape</h5>
-<p>The one target where the shell itself changes. With the usual chrome there are 37 px of fader travel, which is unusable.</p>
-<ul>
-<li>The <strong>status bar is dropped</strong></li>
-<li>Navigation becomes a <strong>56 px rail on the left, floating over the surface</strong> rather than insetting it, so the fader row keeps its full width. Two-character labels — <code>PG</code>, <code>SC</code>, <code>MX</code> — expanding to 176 px on touch and collapsing after about two seconds</li>
-<li>Strip furniture is compact: no reference tag, smaller readout and mute</li>
-</ul>
-<p>Together these take fader travel from 37 px to 226 px.</p>
+<p><strong>Not supported: phones are portrait-only</strong> (owner's decision, 29 September 2026; B68). When the viewport is in landscape, under 500 px tall and has a coarse pointer — a phone on its side, never a tablet (the smallest supported tablet landscape is 834 px tall) and never a short desktop window — a full-screen overlay covers every route, login and the hirer surface included: <em>"Turn your phone upright — Proskenion works in portrait on phones."</em> It has nothing to press and nothing to dismiss; the application keeps running underneath, made <code>inert</code>, and rotating back uncovers it at once. The overlay's visibility is a CSS media query, so a rotation is resolved before the next paint.</p>
+<p><em>Superseded:</em> this section previously adapted the shell for phone landscape — the status bar dropped, a 56 px floating navigation rail with two-character labels, compact strip furniture — taking fader travel from 37 px to 226 px. Even so, it was the one target where the shell changed, and 226 px of travel on a 390 px-tall screen was a poor fader. That code remains, covered by the overlay.</p>
 <h5 id="display-scale"><a class="anchor" href="#display-scale" aria-label="Link to this section">#</a>Display scale</h5>
 <p>Filling the height is right up to a point, and that point arrives sooner than expected. 1080p already gives 201 mm of physical travel on a 24″ panel — twice a console fader. 1440p gives 253 mm. <strong>A 4K panel unscaled gives 333 mm</strong>, a third of a metre for something moved with one hand, with 126 px buttons stranded beside it.</p>
 <p>So a tall display gets a <strong>scale factor rather than a longer fader</strong>. Everything grows together — strips, type, buttons — and the layout sees a smaller logical viewport, adapting exactly as it does for a smaller device. No second code path.</p>
+<p><strong>The scale is app-wide</strong> (since v0.1.12): the factor is applied to the root <code>&lt;html&gt;</code> element, so the whole operator and admin interface — not only the Pages surface — sees the smaller logical viewport, and a 4K panel at 2× lays out as 1920 × 1080. The control is in the account-chip menu (§21.7). An earlier build offered it as a slider that scaled the Pages surface alone.</p>
 <p><strong>The control appears only at or above 1920 × 1080.</strong> Below the design target the layout is already choosing button size and column count, and a manual factor would fight that machinery — which is why tablets and phones need no control and do not get one.</p>
 <blockquote class="callout note">
-<p><strong>Viewport size is the test, not device type.</strong> A booth touchscreen is a coarse pointer <em>and</em> a large display, so it reads as a tablet to every media query that would otherwise decide this.</p>
+<p><strong>Viewport size is the test, not device type.</strong> A booth touchscreen is a coarse pointer <em>and</em> a large display, so it reads as a tablet to every media query that would otherwise decide this. Here "viewport" means the <strong>screen's</strong> size in CSS pixels, not the browser window's: a 4K monitor with a browser's tab and address bars still has a 3840 × 2160 screen while its window is about 3840 × 2020, and would miss the threshold the window was measured against.</p>
 </blockquote>
 <table>
 <thead>
@@ -7922,12 +8092,12 @@ Rate limited          [ Sign in — try again in 12:34 ]
 </tr>
 <tr>
 <td>Storage</td>
-<td><code>localStorage</code>, keyed by viewport size</td>
+<td><code>localStorage</code>, keyed by screen size</td>
 </tr>
 </tbody>
 </table>
 <p><strong>No downward travel.</strong> Below 1.0× the layout already owns the problem, and scaling down would only push targets under their declared minimums — including §24.6's 72 px on the hirer surface, which a naive scaler would silently defeat.</p>
-<p><strong>Keyed by viewport size rather than per browser</strong>, so docking a laptop to a monitor recalls each screen's own value. It is deliberately <strong>not</strong> a database setting: a server-side scale would push the booth screen's factor onto someone's phone.</p>
+<p><strong>Keyed by screen size rather than per browser</strong>, so docking a laptop to a monitor recalls each screen's own value. It is deliberately <strong>not</strong> a database setting: a server-side scale would push the booth screen's factor onto someone's phone.</p>
 <h5 id="two-rules-that-are-easy-to-lose"><a class="anchor" href="#two-rules-that-are-easy-to-lose" aria-label="Link to this section">#</a>Two rules that are easy to lose</h5>
 <p><strong>A scroll is not a tap.</strong> A pointer that moves past a small threshold before release is a scroll. Without this, every drag across the surface fires whatever was under the finger — and here that is a lighting bank or a projector.</p>
 <p><strong>A panel button's LED is anchored to the top; the label is centred in the space that remains.</strong> Stating it as an order — "LED above label" — leads to centring the pair as a group, which is not the same thing and has been got wrong more than once.</p>
@@ -7944,11 +8114,12 @@ Rate limited          [ Sign in — try again in 12:34 ]
 <p><strong>The tray slides rather than snapping.</strong> Strips are a fixed width, so the target is arithmetic — member count × (strip + gap) — and the transition needs no measurement and causes no layout thrash. Around 300 ms on the width with the members fading slightly faster, collapsing to 50 ms under <code>prefers-reduced-motion</code> (§21.3).</p>
 <p>The toggle changes a class on the existing tray rather than re-rendering the page: replacing the node mid-transition would discard the animation, and the surface would appear to snap anyway.</p>
 <h5 id="the-ghost-mark"><a class="anchor" href="#the-ghost-mark" aria-label="Link to this section">#</a>The ghost mark</h5>
-<p>A group fader sets a <strong>multiplier</strong>, not a level (§9.4), so member thumbs stay where they were set while the fixtures sit lower. Showing only the set level hides what the rig is doing; showing the composited result would move every fader whenever the master moved.</p>
+<p>A group fader sets its members' levels (§9.4, B73), so a member's thumb moves with its master. The master dimmer is the scaling left: member thumbs stay where they were set while the fixtures sit lower. Showing only the set level hides what the rig is doing; showing the composited result would move every fader whenever the master moved. (Earlier revisions made the group fader a multiplier, with a ghost for its effect too; that is gone, and hirers no longer receive group multipliers, because there are none.)</p>
 <p>So each member's track carries a <strong>faint secondary mark at its composited output</strong>, with the effective percentage beside the readout:</p>
 <pre><code>   85%  →55%          set 85%, landing at 55% under a master at 65%
 </code></pre>
-<p>The thumb is what you set, the ghost is what the fixture is doing, and neither number is lying. This also resolves the dominated-group case §7.2.3 previously only warned about in text.</p>
+<p>The thumb is what you set, the ghost is what the fixture is doing, and neither number is lying.</p>
+<p><strong>Indicator-only groups (§9.4) are left out of pages</strong>: they have no master to place, so the page editor does not offer them and a page item naming one is refused (§15.12).</p>
 <h4 id="different-groupings-are-different-rules"><a class="anchor" href="#different-groupings-are-different-rules" aria-label="Link to this section">#</a>Different groupings are different rules</h4>
 <p>A button bringing up banks 1 and 3 together is a rule with that action (§8). <strong>Nothing in the page model needs to know about lighting</strong> — it places strips and fires rules.</p>
 <h4 id="a-default-page-is-generated-never-required"><a class="anchor" href="#a-default-page-is-generated-never-required" aria-label="Link to this section">#</a>A default page is generated, never required</h4>
@@ -8007,10 +8178,11 @@ Rate limited          [ Sign in — try again in 12:34 ]
 ├────────────────────────────────────────────────────────────┤
 │  Groups                              ← horizontal scroll   │
 │  ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐              │
-│  │Row 1 │ │Row 2 │ │Row 3 │ │Row 4 │ │Full  │              │
+│  │Row 1 │ │Row 2 │ │Row 3 │ │Row 4 │ │Wings │              │
 │  │ ▓▓▓  │ │ ▓▓▓  │ │ ▓▓   │ │      │ │ ▓▓▓  │              │
 │  │  ●   │ │  ●   │ │  ●   │ │  ●   │ │  ●   │              │
 │  │ 85%  │ │ 72%  │ │ 60%  │ │  0%  │ │ 72%  │              │
+│  │      │ │mixed │ │      │ │      │ │      │              │
 │  └──────┘ └──────┘ └──────┘ └──────┘ └──────┘              │
 ├────────────────────────────────────────────────────────────┤
 │  Fixtures                            ← horizontal scroll   │
@@ -8019,7 +8191,10 @@ Rate limited          [ Sign in — try again in 12:34 ]
 </code></pre>
 <p>Both rows scroll horizontally with scroll-snap. RGB and RGBW fader fills take the fixture's current colour; double-tap opens the colour picker.</p>
 <p><strong>Channels driven by a running scene show a pulsing teal ring</strong> on the fader track (§10.6). Moving one takes it over from the scene, which is intended for normal-priority scenes but should be a deliberate act rather than a surprise. Under a <strong>critical</strong> scene the ring is red and the fader is disabled for the duration — the write would be rejected, so the control says so rather than accepting a gesture it will discard.</p>
-<p><strong>Dominated groups.</strong> Where a group fader has no effect on a member because another group's multiplier is higher (§7.2.3), the group strip shows an inline hint naming the dominating group — <em>3 fixtures held by Full Stage</em> — so the operator is not left thinking the control is broken.</p>
+<p><strong>A group fader shows its members' highest level</strong>, marked <em>mixed</em> when they differ, because it sets levels and holds none of its own (§9.4, B73). Moving it sets every member to the new value. The Groups row leaves out indicator-only groups (§9.4), which have no fader; at this installation the whole-stage fader is the Master.</p>
+<p><em>Superseded:</em> the dominated-group hint — <em>3 fixtures held by Full Stage</em> — existed only because a group fader was a multiplier and the highest applied. With groups setting levels nothing can be held by another group, and the hint is gone.</p>
+<p><strong>Stage banks show one button per KNX address</strong>, not one per binding. The rig's four "Stage all → row N" bindings on <code>4/0/8</code> (§8.2) therefore appear as one "Stage all" button, lit when all four banks are.</p>
+<p>The mockups show a BUMP button on group strips. There is no bump feature, so it is not built; whether to add one is an open decision.</p>
 <h4 id="external-control"><a class="anchor" href="#external-control" aria-label="Link to this section">#</a>External control</h4>
 <p>The toggle sits in the pinned header and uses the LED treatment: amber and glowing when active, unlit when off.</p>
 <p><strong>Detection is automatic</strong> (§7.2.7). Plugging a desk into the booth input puts the view into external control within one frame; unplugging it restores normal operation five seconds later. The operator does nothing.</p>
@@ -8158,6 +8333,9 @@ Rate limited          [ Sign in — try again in 12:34 ]
 └──────────────────────────────────────────────┴──────┴────────┴────────┘
 </code></pre>
 <h4 id="narrow"><a class="anchor" href="#narrow" aria-label="Link to this section">#</a>Narrow</h4>
+<blockquote class="callout note">
+<p><strong>Phone portrait is a scrolling row, not swipe-paged (owner's decision, 29 September 2026; B69).</strong> At phone width every input renders in one horizontally scrolling row — at least two faders side by side, no page chips, no paging — with <strong>Main as the last item in the row</strong>, and scroll arrows at each end (§21.5). The three-strips-per-page swipe design drawn below reserved a pinned Main column that left no room for even two strips at a phone's width. The same rule applies to the Lighting view's rows. The outputs page below is unchanged.</p>
+</blockquote>
 <pre><code>┌────────────────────────────────────────────────────────────┐
 │  Desk scenes                        Last: Lecture · 2 hrs  │
 │  ┌──────────────────────────────────────────────────────┐  │
@@ -8196,7 +8374,7 @@ Rate limited          [ Sign in — try again in 12:34 ]
 <strong>Narrow</strong> — the page chip row alone, with the outputs icon button pinned right.</p>
 <p><strong>Page chips</strong> show the channel range each covers. They are always fully visible in a horizontally scrollable row, never hidden or collapsed. The active chip glows teal. Minimum height 38px. Tapping jumps to that page.</p>
 <p><strong>Swiping</strong> uses <code>scroll-snap-type: x mandatory</code> with full-width page groups as snap targets, so each swipe moves exactly one page. The active chip updates as the user swipes.</p>
-<p>On narrow, exactly <strong>three strips</strong> are visible, filling the width equally. On wide, the count is calculated from available width with a minimum strip width of 88px.</p>
+<p>On wide, the count is calculated from the desk row's measured width: <strong>as many inputs as fit are shown, and the view pages only when they do not all fit</strong> — a 4K monitor shows every input at once with no chips, an iPad in portrait pages. On a phone there is no paging at all (B69, above). The earlier "exactly three strips on narrow" rule is superseded.</p>
 <p>Tapping an input page chip while on the outputs page exits it and navigates to that input page.</p>
 <h4 id="channel-strip"><a class="anchor" href="#channel-strip" aria-label="Link to this section">#</a>Channel strip</h4>
 <pre><code>┌──────────────────┐
@@ -8213,12 +8391,14 @@ Rate limited          [ Sign in — try again in 12:34 ]
 └──────────────────┘
 </code></pre>
 <p>Only channels with <code>visible_staff</code> and <code>tracked</code> appear, in <code>sort_order</code>.</p>
+<p><strong>The second line names the channel's kind</strong> — <em>input</em>, <em>stereo in</em>, <em>output</em>, <em>stereo out</em>, <em>main</em> — not the desk reference the mockups draw (<code>ip1</code>, <code>st1</code>). An operator view is not sent driver references (§5.5: <code>driver_ref</code> is opaque to everything but the driver and the admin's re-mapping).</p>
 <p><strong>Fader fill</strong> is the gradient system from §21.3. There are no level bars — the fader colour conveys gain position honestly, without implying signal data the CQ does not provide.</p>
 <p><strong>Origin badge</strong> appears in the top-right when the most recent change for that channel came from outside this view (§7.3). Teal mono text: <strong>MixPad</strong> for a change made in the A&amp;H app or on the desk, <strong>SURFACE</strong> for one made on the X-Touch (§7.6). It tells the operator the fader moved without them, and which surface did it.</p>
 <p><strong>dB display</strong> comes from the store directly — the core holds dB (§5.5). Thumb position is interpolated from the driver's published fader law, client-side (§21.2). The curve is not linear and unity is not the midpoint, so never estimate it.</p>
 <p><strong>Pan</strong> is an optional small rotary below the fader, shown when <code>show_pan</code> is set.</p>
 <h4 id="outputs"><a class="anchor" href="#outputs" aria-label="Link to this section">#</a>Outputs</h4>
 <p><strong>Wide — drawer.</strong> A narrow vertical tab between the input area and the Main Output column, labelled with the configured output range as rotated text, with a directional arrow and a small LED. Tapping slides the output panel out from the right, narrowing the input area. Tapping again collapses it. Drawer state persists across navigation.</p>
+<p><strong>Open owner decision:</strong> whether the mix outputs should instead be always shown, with no drawer, on a display as large as a 4K monitor, where there is room for them beside every input. Until it is decided, the drawer above applies at every wide width.</p>
 <p>The label is generated from the outputs actually configured. The CQ-20B has six aux outputs, Out 1 to Out 6, individually or as linked pairs — there is no Out 7.</p>
 <p><strong>Narrow — outputs page.</strong> A horizontal flex row: a scrollable area snapping in <strong>pairs</strong>, so each swipe advances two outputs, and a pinned Main Output strip at the right, visually identical to the output strips and separated by a hairline. At most three strips are visible at once — two scrolling plus the pinned Main.</p>
 <h4 id="main-output"><a class="anchor" href="#main-output" aria-label="Link to this section">#</a>Main Output</h4>
@@ -8262,7 +8442,7 @@ Rate limited          [ Sign in — try again in 12:34 ]
 <p><strong>Projector.</strong> Power buttons, input selector, and current state with an LED.</p>
 <pre><code>OFF · WARMING · ON · COOLING · ERROR · UNREACHABLE
 </code></pre>
-<p>During warming or cooling, buttons are <strong>disabled</strong> and the state line carries the reason and, where PJLink reports it, the remaining time: <em>Cooling down — 47 s.</em></p>
+<p>During warming or cooling, buttons are <strong>disabled</strong> and the state line carries the reason and, where a remaining time is known, a countdown: <em>Warming up — 47 s.</em> PJLink Class 1 reports no remaining time, so the countdown comes from <code>remaining_s</code> (§16.5), which carries the controller's own minimum warm-up hold (§7.4); outside the hold no time is shown.</p>
 <p>An earlier revision left them active and queued the command. That produced delayed surprise: a power-on pressed during cool-down would fire ninety seconds later, possibly into an empty room. A disabled button with a stated reason is the honest version (§7.4), and a scene is the way to express <em>"turn it on once it has cooled"</em> (§8.13).</p>
 <hr>
 <h3 id="21.15-hirer-surface"><a class="anchor" href="#21.15-hirer-surface" aria-label="Link to this section">#</a>21.15 Hirer surface</h3>
@@ -8401,13 +8581,12 @@ Rate limited          [ Sign in — try again in 12:34 ]
   │    On level   [100.0] %   Off  [0.0] %       │
   │    Fade       [0      ] ms                   │
   │                                              │
-  │  ⓘ On recall this forces the group's         │
-  │    multiplier to 100% and ignores whatever   │
-  │    the web interface last left it at.        │
-  │    Without that, a group left at 40% would   │
-  │    make the next panel press come up dim     │
-  │    while the indicator reported &quot;on&quot; — with  │
-  │    no way to diagnose it from the panel.     │
+  │  ⓘ On recall this sets every fixture in the  │
+  │    group to the on or off level, whatever    │
+  │    the group fader was left at — the same    │
+  │    as moving the group's fader. The master   │
+  │    still applies. Indicator-only groups are  │
+  │    not offered: they cannot be bound.        │
   │                                              │
   │  [Save]                          [Delete]    │
   └──────────────────────────────────────────────┘
@@ -8588,7 +8767,7 @@ Rate limited          [ Sign in — try again in 12:34 ]
 <p>The import runs in a single transaction, all or nothing, with a pre-change snapshot captured first.</p>
 <p><strong>Export</strong> produces CSV of the whole library, for backup or for handing back to the integrator.</p>
 <h4 id="live-monitor"><a class="anchor" href="#live-monitor" aria-label="Link to this section">#</a>Live monitor</h4>
-<p>A collapsible panel showing incoming telegrams in real time, over server-sent events.</p>
+<p>A collapsible panel showing incoming telegrams in real time, over server-sent events. The stream is sent with <code>X-Accel-Buffering: no</code> (§16.7): without it nginx buffers the proxied response and telegrams arrive in late clumps, which the performance run on the appliance found (1 October 2026).</p>
 <pre><code>  Live monitor                      [● Recording]  [Clear]
   ─────────────────────────────────────────────────────────
   14:32:01.452   1/0/1   value=1     DPT 1.001   Stage Lights Command
@@ -8738,7 +8917,7 @@ Rate limited          [ Sign in — try again in 12:34 ]
 <p><strong>The scribble line shows the truncation</strong> and offers an override. Truncation is usually fine — "Foldback" becomes "Foldbac" and nobody is confused — but two channels truncating to the same thing is blocked, because the discriminating part is exactly what truncation removes (§5.5). The configurator names the colliding channels rather than just refusing.</p>
 <p><strong>Add missing channels</strong> creates a row for every desk channel no row covers; when the mixer is added, every channel is created this way, visible to staff (§5.5). Rows are then named, hidden or deleted here. (Earlier revisions defaulted to adding channels individually, because a venue exposing four of twenty inputs should not begin by deleting sixteen rows; hiding is now a switch, so that no longer applies.)</p>
 <p><strong>A ganged channel</strong> maps to several references and drives them together under one ceiling, because it is one channel. If the references diverge — someone moved one side in MixPad — the fader shows the first reference's value with a divergence marker until the next write re-converges them.</p>
-<p><strong>Unmapped channels</strong> appear at the top of the list with a warning after a driver change, are not controllable, and are excluded from hirer access until remapped.</p>
+<p><strong>Unmapped channels</strong> appear at the top of the list with a warning after a driver change, are not controllable, and are excluded from hirer access until remapped. The warning appears on <strong>Mix outputs</strong> as well as inputs: an output is a mixer channel like any other (§15.6), and is unmapped the same way.</p>
 <p><strong>Non-MIDI notice</strong> at the foot of the tab, where it is actionable:</p>
 <pre><code>  ⓘ Not controllable from this application: gain, phantom power (+48V),
     EQ, compression, routing, output delay and limiters.
@@ -8922,6 +9101,8 @@ Rate limited          [ Sign in — try again in 12:34 ]
 <p>The two flags earn their place: <strong>in use</strong> surfaces §7.5's device-busy failure at configuration time rather than at first connect, and <strong>unstable path</strong> says plainly that a cable without a serial number will move — which is §4.12's chip-family problem appearing while it can still be solved by buying a different cable.</p>
 <p><strong>Test reports both stages separately</strong> (§5.3): a transport that opens but does not respond says <em>"connected, but the device did not reply"</em> rather than a single pass or fail. Saving attempts a reconnect and <strong>reverts to the previous settings on failure</strong>.</p>
 <p><strong>Changing a driver</strong> opens the re-mapping screen (§5.5): every channel's old reference and name beside a picker of the new driver's references. Names, ceilings, visibility, group memberships and surface assignments are preserved; only references change. Configuration the new driver cannot support is listed and disabled rather than deleted.</p>
+<p><strong>The driver change is saved first, then re-mapped in the same sheet.</strong> Saving the new driver invalidates the device's references (mixer channels become unmapped, §15.6) and the sheet moves straight on to the re-mapping step, so the admin never leaves with a half-finished swap. The pickers start blank except for identity pre-selections (§5.5), which the admin confirms; the re-map is applied all or nothing (§16.7), and for a mixer the sheet then offers to add any desk channels no row covers.</p>
+<p><strong>Projector settings</strong> include <strong>Minimum warm-up (seconds)</strong>, <code>min_warmup_s</code>, 0–600, default 60, 0 disabling it: the projector may report "on" before its lamp is fully warm, and power-off is refused until this long after power-on (§7.4).</p>
 <p>The lighting output card offers driver selection: Art-Net, sACN, or <code>opendmx</code>. Art-Net and sACN use the <code>udp</code> transport and reveal node address, universe number, and the booth input reminder for external control. <code>opendmx</code> uses <code>serial</code> and reveals the device picker (§5.5), with a warning that the driver is unverified. Test buttons send a blackout and a full-on.</p>
 <p><strong>Saving attempts an immediate reconnect. On failure the previous settings are restored</strong> and the failure explained — a wrong address should not leave the system unable to reach a working device.</p>
 <h4 id="backup"><a class="anchor" href="#backup" aria-label="Link to this section">#</a>Backup</h4>
@@ -8948,15 +9129,17 @@ Rate limited          [ Sign in — try again in 12:34 ]
   auditorium_20260412   Today    5.8 GB   [Restore]
   auditorium_20260401   11 days  5.7 GB   [Restore]
 
-  History                              [Download latest]
-  Today 03:00       All destinations  ✓        [Download]
-  Yesterday 03:00   All destinations  ✓        [Download]
-  2 days ago        Local + USB       ⚠ Network failed
+  History                                    [Verify now]  [Download latest]
+                    Destination   Checked after backup  Monthly check
+  Today 03:00       All           ✓ All destinations    —          [Download]
+  Yesterday 03:00   All           ✓ All destinations    ✓ 1 Oct    [Download]
+  2 days ago        Local + USB   ✓ Local + USB         —          [Download]
 
   Restore
   [Upload a backup file]   [Restore from backup media]
 </code></pre>
 <p><strong>An image's <code>[Restore]</code> never overwrites the running slot</strong> — it writes the image into the <strong>standby</strong> slot and boots it on trial, through §14.4's confirm-after-10-healthy-minutes mechanism, exactly as an OS upgrade does. Only images this machine itself captured are accepted. Restoring an image onto a <strong>replacement</strong> SSD, which has no partition table yet to hold a standby slot, is not offered here at all — that is the recovery environment's job (§13.7), which recreates the partition table with the recorded partition IDs before it can write anything.</p>
+<p><strong>History has two check columns</strong>, because they answer different questions (§13.4). <strong>Checked after backup</strong> is the run's own read-back of every copy it wrote — "was it written correctly?" — from <code>checked_at</code> and <code>checked_destinations</code>. <strong>Monthly check</strong> is the random sample read weeks later — "is it still good?" — and is blank for most rows by design. <strong>[Verify now]</strong> runs the monthly check on demand on a random archive (the endpoint also takes one <code>archive_id</code>), and reports its outcome in the same words as §13.4: verified, untrusted, missing or unreachable.</p>
 <p><strong>Compare</strong> is the operation that earns its keep on the baseline card:</p>
 <pre><code>  Changes since the baseline captured 14 August
 
@@ -8992,6 +9175,9 @@ Rate limited          [ Sign in — try again in 12:34 ]
 <p>A rejected signature says what happened without speculating: <em>This package could not be verified. It may be corrupted, or it was not built with a trusted signing key.</em></p>
 <p>Applying shows a <code>ProgressPanel</code> through the real steps of §14.2, then hands over to the reconnection flow.</p>
 <p>OS upgrades appear as a separate section with the active slot, the standby slot's version, and a clear warning that applying reboots the machine.</p>
+<h4 id="power"><a class="anchor" href="#power" aria-label="Link to this section">#</a>Power</h4>
+<p><strong>Restart</strong> (the application), <strong>Reboot</strong> (the controller) and <strong>Shut down</strong> (power off, B76), each behind a confirmation. All three run through the privileged helper, never directly from the application (§16.7). The card is on Admin → Updates and is also reachable from the System section of the admin navigation, so it can be found without knowing it lives with updates.</p>
+<p><strong>Shut down's confirmation says what it costs:</strong> the controller powers off cleanly and does not come back by itself — the power must be cycled (switched off and on at the supply) to start it again, so it is for moving or servicing the controller, not for ending a day. Added when the controller moved into the rack (1 October 2026).</p>
 <h4 id="health"><a class="anchor" href="#health" aria-label="Link to this section">#</a>Health</h4>
 <p>Cards for CPU, memory, storage per partition, backup media, and the application. All values come through the platform layer (§5.4), so an unsupported metric on a ported platform reads "not available" rather than showing a wrong number.</p>
 <pre><code>  ┌──────────────────────────────────────────────┐
@@ -9266,22 +9452,27 @@ aria-live=&quot;polite&quot;          announces selection and assignment changes
 <tr>
 <td>Backup media absent 48h+</td>
 <td>Amber</td>
-<td>Backup media not detected — no local backup for 2 days</td>
+<td>No backup media has been present for 48 hours. The offline copy is out of date; insert the backup USB. (Red, with "…and the network backup destination is also unreachable. No offline copy is being made at all.", when the network destination is down too, §4.5)</td>
 </tr>
 <tr>
 <td>Backup failed, retry also failed</td>
 <td>Amber</td>
-<td>Last backup failed — check the network destination</td>
+<td>The backup on {time} failed after a retry: {detail} ({n} consecutive night(s) failed).</td>
 </tr>
 <tr>
 <td>Backup failed three nights running</td>
 <td>Red</td>
-<td>Backup has failed for 3 nights — check the network destination</td>
+<td>The same text, at red from the third consecutive night</td>
+</tr>
+<tr>
+<td>Backup untrusted</td>
+<td>Red</td>
+<td>The monthly check on archive {id} failed: {detail} — only for a copy read and found corrupt (§13.4)</td>
 </tr>
 <tr>
 <td>Certificate expiring</td>
 <td>Amber</td>
-<td>TLS certificate expires in 7 days</td>
+<td>TLS certificate expires in {n} days</td>
 </tr>
 <tr>
 <td>Certificate expired</td>
@@ -9291,7 +9482,7 @@ aria-live=&quot;polite&quot;          announces selection and assignment changes
 <tr>
 <td>Time not synchronised</td>
 <td>Amber</td>
-<td>System time not synchronised — check the RTC battery and NTP</td>
+<td>System time not synchronised. Check the RTC battery and the NTP server.</td>
 </tr>
 <tr>
 <td>No Venue Default scene</td>
@@ -9301,20 +9492,22 @@ aria-live=&quot;polite&quot;          announces selection and assignment changes
 <tr>
 <td>Disk critically low</td>
 <td>Red</td>
-<td>Storage critically low — non-essential logging suspended</td>
+<td>Free space on /data is critically low. Prune or restore space before continuing.</td>
 </tr>
 <tr>
 <td>Update rolled back</td>
 <td>Red</td>
-<td>An update failed to start and was rolled back</td>
+<td>An update failed to start and was rolled back automatically. Review the logs before retrying.</td>
 </tr>
 <tr>
 <td>Update ready</td>
 <td>Blue</td>
-<td>Update v1.3.0 ready — apply when convenient</td>
+<td>An update is ready and will be applied at the next quiet moment. Apply now from Admin → System → Updates.</td>
 </tr>
 </tbody>
 </table>
+<p>The texts are as implemented (October 2026); the levels are unchanged from earlier revisions. <code>{…}</code> marks a value filled in when the banner is raised. The device-offline text names the device and what is lost — <em>Mixer offline — audio controls unavailable</em>, <em>DMX offline — stage lighting controls unavailable</em> — and a device's configured name replaces the category where there is more than one.</p>
+<p><strong>Device-offline banners are not live regions.</strong> A device change is spoken once, by the connection announcer (§21.7, §24.3); a banner that also announced it made Narrator read the same news several times over. Banners for other conditions stay live.</p>
 <h4 id="websocket-disconnected"><a class="anchor" href="#websocket-disconnected" aria-label="Link to this section">#</a>WebSocket disconnected</h4>
 <pre><code>● KNX   ● DMX   ● Mixer   ● Projector   ○ HDMI      ← all grey
 ──────────────────────────────────────────────────────────
@@ -9560,7 +9753,7 @@ aria-live=&quot;polite&quot;          announces selection and assignment changes
 <li><strong>Scene recall offset</strong>, confirming CQ scene 1 sends program change 0</li>
 <li><strong>The lighting value scale</strong>, confirming 0–100 in and correct 0–255 or 0–100 out per channel type</li>
 <li><strong>Compositor arithmetic</strong>, including maximum-not-product across overlapping groups, the clamp-before-scale order, and <code>min_value &gt; 0</code> exemption from master scaling</li>
-<li><strong>Binding rule recall</strong>, confirming the group multiplier is forced to 1.0 and the result is exactly <code>on_level</code> with a group left at 40%</li>
+<li><strong>Binding rule recall</strong>, confirming the recall sets every member's level, so the result is exactly <code>on_level</code> (× the master) with the group fader left at 40%, and that a binding to an indicator-only group is refused</li>
 <li><strong>Change-driven rendering</strong>, confirming no frame is sent while the level store is clean and that the keepalive fires inside the node's source timeout</li>
 <li><strong>External control detection</strong>, confirming entry on the first frame, exit only after 5 s of silence, no flapping on intermittent input, and that a desk sending all zeros counts as active</li>
 <li><strong>Observed store isolation</strong>, confirming no compositor pass and no output value ever reads <code>state.lighting.observed</code></li>
@@ -9589,7 +9782,7 @@ aria-live=&quot;polite&quot;          announces selection and assignment changes
 <li><strong>Scroll versus tap</strong>, confirming a pointer that moves past the threshold before release does not fire the button under it</li>
 <li><strong>Page validation</strong>, confirming a tray renders only for contiguous group members, a duplicate member is warned, and a button bound to a deleted rule is refused</li>
 <li><strong>Hirer page scoping</strong>, confirming a hirer reaches nothing outside an assigned page and that a ceiling applies whichever page a channel came from</li>
-<li><strong>Ghost mark</strong>, confirming the composited value tracks the group multiplier while the thumb does not move</li>
+<li><strong>Ghost mark</strong>, confirming the composited value tracks the master while the thumb does not move; and a group fader showing its members' highest level, "mixed" when they differ</li>
 <li><strong>Group palette</strong>, confirming every adjacent pair clears its hue gap and ΔE2000 18, and that no member falls within ΔE 11 of a semantic colour</li>
 <li><strong>Scribble collision detection</strong>, confirming two channels truncating to the same seven characters is refused and the colliding names are reported</li>
 <li><strong>Name width validation</strong>, confirming a name too wide for a channel strip is flagged while typing rather than at save</li>
@@ -9604,7 +9797,7 @@ aria-live=&quot;polite&quot;          announces selection and assignment changes
 <li><strong>Detent snapping</strong>, confirming the value sent is the detent's exact dB rather than a converted position, and that the break-out counter resets on leaving the zone from either direction</li>
 <li><strong>Scale generation</strong>, confirming the printed legend comes from the law table and changes with the driver</li>
 <li><strong>Capability gating</strong>, confirming a scene action against a driver reporting it unsupported is skipped and logged, not attempted</li>
-<li><strong>Driver swap re-mapping</strong>, confirming names, order, ceilings, visibility, scene actions and surface assignments survive while references are invalidated</li>
+<li><strong>Driver swap re-mapping</strong>, confirming names, order, ceilings, visibility and scene actions survive while references are invalidated. Surface assignments join the test with the control surface in Phase 9 (§18): until then there are none to survive</li>
 <li><strong>Transport substitution</strong>, confirming a driver's <code>probe</code> is unchanged across TCP and serial transports</li>
 <li><strong>Serial enumeration</strong>, confirming by-id paths are preferred, in-use ports are flagged, and a cable with no serial reports an unstable path</li>
 <li><strong>Single intent</strong>, confirming a grouped route produces one driver call and one device command</li>
@@ -9672,7 +9865,7 @@ aria-live=&quot;polite&quot;          announces selection and assignment changes
 <p><strong>Pass:</strong> memory growth under 5 MB over 72 hours; no unhandled exceptions; no device connection decay; every scheduled scene within 100 ms of its trigger; SSD writes within the §23 budget; task count stable.</p>
 <p><strong>Fail:</strong> any of the above; any forced reboot; any device status turning red that is not traceable to an injected failure.</p>
 <h3 id="22.8-continuous-integration"><a class="anchor" href="#22.8-continuous-integration" aria-label="Link to this section">#</a>22.8 Continuous integration</h3>
-<p>The repository is hosted under the <strong>symplenz</strong> account, private initially and made public later if and when the developer moves on (§20.3).</p>
+<p>The repository is hosted under the <strong>symplenz</strong> account, private at first and <strong>public since 26 September 2026</strong> (github.com/SympleNZ/Proskenion, MIT, published through a filtered <code>public</code> branch; §20.3). CI therefore runs on a public repository.</p>
 <p>Pipeline, using the hosting platform's native runner:</p>
 <table>
 <thead>
@@ -9740,11 +9933,12 @@ aria-live=&quot;polite&quot;          announces selection and assignment changes
 </tr>
 <tr>
 <td>DMX frame rate</td>
-<td>25–40 fps, stable</td>
+<td>25–40 fps, stable — in practice a steady 40 fps while output moves, including a fader drag; the 1 s keepalive at rest (§7.2.3)</td>
 <td>Second receiver on the universe</td>
 </tr>
 </tbody>
 </table>
+<p><strong>A fader drag produces a steady 40 fps</strong> (since v0.1.16). On site it had been an irregular ~20 fps: frames were sent only on change, so their timing followed fader writes arriving over Wi-Fi, with gaps past 100 ms. Frames now go on a fixed 25 ms grid while output moves, and an operator write glides over 75 ms between them (§7.2.3).</p>
 <h3 id="23.2-latency"><a class="anchor" href="#23.2-latency" aria-label="Link to this section">#</a>23.2 Latency</h3>
 <table>
 <thead>
@@ -9905,6 +10099,8 @@ End            Maximum
 <p><code>aria-valuenow</code> carries the fader's position and <code>aria-valuetext</code> the decibel reading from the driver's law, because a level is not linear in position and the bottom of travel is off rather than a number. The interface never sees the desk's wire format (B41): the store holds decibels and the component converts to position only when drawing (§21.2).</p>
 <h3 id="24.3-screen-readers"><a class="anchor" href="#24.3-screen-readers" aria-label="Link to this section">#</a>24.3 Screen readers</h3>
 <p>Semantic HTML with landmark regions, correct heading order, and labels associated with inputs. Live regions announce device status changes, scene results and toasts. Status indicators carry text — <em>Mixer: connected</em> — not colour alone. Faders expose full ARIA value attributes.</p>
+<p><strong>Device status changes are announced by one live region only</strong> (since v0.1.18, after the Narrator pass of 1 October 2026, where stopping knxd produced "KNX offline" buried in a great deal of other reading). A single visually hidden, polite connection announcer says only what changed — "KNX offline", "KNX and DMX offline. Mixer degraded.", "KNX back online" — coalesced over one second; an unchanged state is never repeated, "connecting" is never spoken, and the text clears after ten seconds so a browse cursor never finds a stale message. Everything that used to announce the same change no longer does: the status-bar device list and the phone summary LED keep their accessible names but are not live regions (§21.7), the device-offline banners are not live (§21.26), and the mixer's notices are not <code>role="status"</code>.</p>
+<p><strong>Focus follows navigation</strong> to the new screen's heading, and the active navigation item says ", current page" (§21.6).</p>
 <p>The stage plan uses <code>role="application"</code> on the SVG root with <code>role="button"</code> and a descriptive label on each fixture: <em>Stage Wash 3, channel 7, at 72 percent.</em> Level changes are announced on fade completion rather than during, so a two-second fade produces one announcement rather than a hundred.</p>
 <p>Modals and sheets trap focus, close on Escape, and return focus to the triggering element — or, if that element has been deleted, to the nearest logical target.</p>
 <h3 id="24.4-contrast"><a class="anchor" href="#24.4-contrast" aria-label="Link to this section">#</a>24.4 Contrast</h3>
@@ -10013,6 +10209,9 @@ End            Maximum
 <pre><code>□  Tab through every admin screen — logical order, no traps
 □  Every modal and sheet traps focus and returns it on close
 □  Escape closes every modal and sheet
+   (open owner decision: whether Escape dismisses the re-authentication overlay
+   and the other session prompts, which are hand-built, not sheets — §6.6; until
+   decided, they do not close on Escape)
 □  Every interactive element has a visible focus ring
 □  Stage plan is ONE tab stop; arrow keys move within it; skip link present
 □  Surface configurator uses the same roving-tabindex pattern
@@ -10031,6 +10230,12 @@ End            Maximum
 □  No group colour used as the sole distinction — a name is always present
 □  Muted text legibility verified **in the room, with the lights down** —
    4.94:1 is a compliance floor, not a guarantee in a dark auditorium
+□  After an in-app navigation, focus moves to the new screen's heading —
+   not on first load or a redirect, never into an open dialog or a text field
+□  The active navigation item announces &quot;current page&quot; (hidden text
+   beside aria-current)
+□  The skip link is visible on :focus, not only :focus-visible
+□  One device change is announced once, by the connection announcer only
 □  Screen reader walkthrough of the hirer surface — Narrator on the Windows 11 touch-screen PC and TalkBack on Android, the installation's hirer devices (the iOS VoiceOver pass joins when an iPad is available)
 □  Print stylesheet — light background, text labels beside every indicator
 </code></pre>
@@ -10080,7 +10285,7 @@ End            Maximum
 </ul>
 <hr>
 <h2 id="appendix-b-decisions-in-version-3.0-and-3.1"><a class="anchor" href="#appendix-b-decisions-in-version-3.0-and-3.1" aria-label="Link to this section">#</a>Appendix B — Decisions in Version 3.0 and 3.1</h2>
-<p>The substantive changes from v2.1, with the reasoning, so a successor can see why things are the way they are.</p>
+<p>The substantive changes from v2.1, with the reasoning, so a successor can see why things are the way they are. Items 68–76 are the owner's decisions taken on site during Phase 7 (September–October 2026); each says what it superseded, and the superseded text has been changed in place and points back here.</p>
 <table>
 <thead>
 <tr>
@@ -10108,7 +10313,7 @@ End            Maximum
 <tr>
 <td>4</td>
 <td><strong>Level store → compositor → universe buffer</strong></td>
-<td>The fade engine previously wrote straight to the buffer while a separate section defined output as individual × group × master. Both could not be true. The compositor also makes external control handoff coherent and resolves the RGB master-level question.</td>
+<td>The fade engine previously wrote straight to the buffer while a separate section defined output as individual × group × master. Both could not be true. The compositor also makes external control handoff coherent and resolves the RGB master-level question. <strong>Amended by item 73</strong> (30 September 2026): the group term is gone — groups set levels — so output is individual × master.</td>
 </tr>
 <tr>
 <td>5</td>
@@ -10223,12 +10428,12 @@ End            Maximum
 <tr>
 <td>27</td>
 <td><strong>KNX group bindings are a first-class concept, not scenes</strong></td>
-<td>The four stage banks are the daily control path. As scenes they would fill the execution log with routine traffic, duplicate status feedback into every scene, and bury the address-to-group mapping. As bindings they are four rows on one admin screen. The binding forces the group multiplier to 1.0 on recall, so leftover web-interface state cannot make a panel press come up dim while the indicator reports "on". <strong>Superseded by item 50</strong>: bindings are now one shape of rule, in §8.</td>
+<td>The four stage banks are the daily control path. As scenes they would fill the execution log with routine traffic, duplicate status feedback into every scene, and bury the address-to-group mapping. As bindings they are four rows on one admin screen. The binding forces the group multiplier to 1.0 on recall, so leftover web-interface state cannot make a panel press come up dim while the indicator reports "on". <strong>Superseded by item 50</strong>: bindings are now one shape of rule, in §8. The forced 1.0 is itself <strong>superseded by item 73</strong>: with no multiplier, a recall is a group-level write and there is nothing to force.</td>
 </tr>
 <tr>
 <td>28</td>
 <td><strong>Rendering is change-driven with an idle keepalive, not a fixed frame rate</strong></td>
-<td>Art-Net is not DMX512 — the node regenerates the physical refresh and holds last value, so continuous sending is unnecessary. At rest this is one packet per second instead of forty, and the compositor does not run at all.</td>
+<td>Art-Net is not DMX512 — the node regenerates the physical refresh and holds last value, so continuous sending is unnecessary. At rest this is one packet per second instead of forty, and the compositor does not run at all. <strong>Amended</strong> (v0.1.16, 30 September 2026): <em>while output is moving</em> frames go on a steady 40 fps grid, returning to the keepalive 250 ms after it stops, and operator fader writes glide the output over 75 ms (§7.2.3). Sending only on change had made the frame rate follow fader writes arriving over Wi-Fi — an irregular ~20 fps the room saw as flicker. The reasoning above still holds at rest, where the appliance spends nearly all its time.</td>
 </tr>
 <tr>
 <td>29</td>
@@ -10343,12 +10548,12 @@ End            Maximum
 <tr>
 <td>51</td>
 <td><strong>Status is derived from state, not written by whatever changed it</strong></td>
-<td>A pair of on/off event rules leaves a panel indicator wrong until the next transition if a telegram is lost — possibly hours. A derived rule recomputes on every state change and writes when the value differs, so it self-corrects. It also explains the <em>All</em> button: one evaluation, <em>is everything this button controls on?</em>, applied to every binding after any change, with no mixed state to represent in a boolean. Bindings therefore hold no state of their own.</td>
+<td>A pair of on/off event rules leaves a panel indicator wrong until the next transition if a telegram is lost — possibly hours. A derived rule recomputes on every state change and writes when the value differs, so it self-corrects. It also explains the <em>All</em> button: one evaluation, <em>is everything this button controls on?</em>, applied to every binding after any change, with no mixed state to represent in a boolean. Bindings therefore hold no state of their own. <strong>Amended</strong> (v0.1.10, 29 September 2026): a KNX panel flips its own icon when pressed, so after a press on an enabled rule's trigger address every addressed status is <strong>re-sent</strong> at its current value once what the press started has finished — the one exception to writing only on change, since a refused press changes no value and would otherwise leave the icon wrong (§8.6). And see item 72: "on" is judged on what the room sees.</td>
 </tr>
 <tr>
 <td>52</td>
 <td><strong>Projector commands during warm-up and cool-down are rejected, not queued</strong></td>
-<td>Queuing produced delayed surprise: power-on pressed during cool-down fires ninety seconds later, possibly into an empty room. Rejection is not silent as long as the interface says why. Sequencing is what scenes are for — §8.13's worked example already covers "set the input once it has warmed". A second boolean status address carries "changing state", because DPT 1.001 cannot represent a six-state model and a button that looks dead for ninety seconds gets pressed again.</td>
+<td>Queuing produced delayed surprise: power-on pressed during cool-down fires ninety seconds later, possibly into an empty room. Rejection is not silent as long as the interface says why. Sequencing is what scenes are for — §8.13's worked example already covers "set the input once it has warmed". A second boolean status address carries "changing state", because DPT 1.001 cannot represent a six-state model and a button that looks dead for ninety seconds gets pressed again. <strong>Extended by item 74</strong>: rejection covers only what the projector admits to, so the controller also holds a minimum warm-up of its own.</td>
 </tr>
 <tr>
 <td>53</td>
@@ -10408,7 +10613,7 @@ End            Maximum
 <tr>
 <td>64</td>
 <td><strong>Display scale is offered only at or above the design target</strong></td>
-<td>Filling the height stops being right sooner than expected — 1080p already gives twice a console fader's travel, and 4K unscaled gives a third of a metre. A tall display therefore scales rather than stretching, and the layout sees a smaller logical viewport so there is no second code path. The control is hidden below 1920 × 1080 because the layout is already choosing button size and column count there and a manual factor would fight it. Viewport size decides, not device type: a booth touchscreen is a coarse pointer <em>and</em> a large display, so it reads as a tablet to every media query that would otherwise be consulted.</td>
+<td>Filling the height stops being right sooner than expected — 1080p already gives twice a console fader's travel, and 4K unscaled gives a third of a metre. A tall display therefore scales rather than stretching, and the layout sees a smaller logical viewport so there is no second code path. The control is hidden below 1920 × 1080 because the layout is already choosing button size and column count there and a manual factor would fight it. Viewport size decides, not device type: a booth touchscreen is a coarse pointer <em>and</em> a large display, so it reads as a tablet to every media query that would otherwise be consulted. <strong>Clarified</strong> (v0.1.12, 29 September 2026): the scale is app-wide, on the root element, and "viewport" means the screen's size — a browser window on a 4K monitor is shorter than 2160 px and would miss the threshold.</td>
 </tr>
 <tr>
 <td>65</td>
@@ -10423,7 +10628,52 @@ End            Maximum
 <tr>
 <td>67</td>
 <td><strong>The status bar moves to the bottom and gains a clock and a shared timer</strong></td>
-<td>The top of the screen is for moving around; putting five device indicators between the operator and the navigation they were reaching for was wrong, and on a tablet held in two hands the bottom edge is where thumbs already are. The clock is deliberately the appliance's, not the browser's, because it is the clock scheduled rules fire against — a tablet showing its own idea of the time would have someone setting a 23:00 rule against a clock that is not deciding. The timer is server state rather than a per-client stopwatch, so two operators see one number and a reload does not lose it; only <code>running</code> and <code>started_at</code> are stored and elapsed is computed.</td>
+<td>The top of the screen is for moving around; putting five device indicators between the operator and the navigation they were reaching for was wrong, and on a tablet held in two hands the bottom edge is where thumbs already are. The clock is deliberately the appliance's, not the browser's, because it is the clock scheduled rules fire against — a tablet showing its own idea of the time would have someone setting a 23:00 rule against a clock that is not deciding. The timer is server state rather than a per-client stopwatch, so two operators see one number and a reload does not lose it; only <code>running</code> and <code>started_at</code> are stored and elapsed is computed. <strong>Amended by item 70</strong> at phone width.</td>
+</tr>
+<tr>
+<td>68</td>
+<td><strong>Phones are portrait-only</strong> (29 September 2026) — supersedes §21.9's phone-landscape design (the floating rail, the dropped status bar, compact furniture) and §21.7's short-viewport rule</td>
+<td>Even with every adaptation, phone landscape was the one target where the shell itself changed, and it gave about 226 px of fader travel on a 390 px-tall screen. A phone is held upright; refusing landscape outright with a "turn your phone upright" overlay is simpler and honest about the device, where a cramped landscape layout looks supported and is not. The test is landscape, under 500 px tall and a coarse pointer, so no tablet and no short desktop window is ever blocked. The landscape code stays, covered.</td>
+</tr>
+<tr>
+<td>69</td>
+<td><strong>The phone Mixer is one scrolling row, Main last</strong> (29 September 2026) — supersedes §21.13's narrow design of exactly three strips, swipe-paged with page chips, beside a pinned Main</td>
+<td>The pinned Main column left no room for even two strips at a phone's width. A row of at least two faders that scrolls sideways, with Main as its last item and no chips, is how the Pages surface and the Lighting rows already behaved, so one gesture works everywhere. Wider screens show as many inputs as fit and page only when they do not.</td>
+</tr>
+<tr>
+<td>70</td>
+<td><strong>At phone width the status bar is one summary LED</strong> (29 September 2026) — amends §21.7 and item 67, which showed five indicators and the timer at every width</td>
+<td>Five dots, a timer, a clock and the account chip do not fit across a phone, and squeezing them (v0.1.12's condensed dots) still overlapped. One LED showing the worst state — red over amber over green, unconfigured not counting — answers the question a glance asks ("is anything wrong?"), and a tap opens the named list with each device's detail sheet, so nothing is lost. The shared timer is dropped on phones as the least needed there; the clock and account chip stay.</td>
+</tr>
+<tr>
+<td>71</td>
+<td><strong>The controller is a lighting desk; KNX gets only the panel's indicators. "Stage all" is indicator-only</strong> (30 September 2026) — new <code>lighting_groups.indicator_only</code>; the panel's all-button becomes four row bindings</td>
+<td>Under the multiplier model a group containing every stage fixture held every row whenever it sat at or above them, and a binding forced it to 1.0, so after any wall-panel use the row faders stopped working. The whole-stage fader is the Lighting view's Master, as on a desk, and "Stage all" survives only as membership for the panel's <em>all</em> indicator: no fader, never bound, not on pages. The all-button drives the four rows directly, so the rows remain the controls.</td>
+</tr>
+<tr>
+<td>72</td>
+<td><strong>Every panel indicator is on only when every member is at 100% of output</strong> (30 September 2026) — new <code>derived_status.basis</code> (<code>level</code> | <code>output</code>); amends item 51's predicate for the stage panel</td>
+<td>The indicator should say what the room shows: a row lamp lit while the Master is down, or while one fixture has been pulled down, is the panel claiming something untrue. So the stage statuses compare the composited output — level × master, as last sent — not the stored level. "Any fixture in the row on" was proposed and rejected: the button sets every fixture to full, and its lamp claims exactly that. <code>level</code> stays the default so existing statuses read as before.</td>
+</tr>
+<tr>
+<td>73</td>
+<td><strong>Group faders set levels, not multipliers</strong> (30 September 2026) — supersedes §9.4's multiplier and the §7.2.3 "highest multiplier applies" rule, the group ghost mark, the dominated-group hint, the restoring of multipliers at boot (§12.3), the <code>groups</code> section of <code>lighting_state</code>, and the forced 1.0 on a binding recall (item 27, §8.8); amends item 4</td>
+<td>A traditional lighting desk's model, which is what operators expect: moving a group fader sets its members, fixture faders trim them, and the next group move sets them again. The multiplier model needed a max rule to avoid double attenuation, which made one group silently override another; a ghost mark and a "held by" hint to explain it; and a forced 1.0 on every panel recall to keep the indicator honest — three mechanisms to make a surprising model survivable. With levels there is nothing to explain or force, and output is simply level × master.</td>
+</tr>
+<tr>
+<td>74</td>
+<td><strong>The projector holds a minimum warm-up</strong> (30 September 2026) — <code>min_warmup_s</code>, default 60 s, 0–600; extends item 52</td>
+<td>The installation's PT-EZ570 reports PJLink <code>on</code> 13 seconds after power-on while its lamp is still visibly warming, so item 52's refusal let a power-off through at +20 s, followed by ninety seconds of cooling. Rejection only covers what the projector admits to. The hold is measured from the controller's own command and shows <code>warming</code> until it ends; any fault is still shown at once, so it can delay but never hide. Adjustable per projector, because another model may report honestly.</td>
+</tr>
+<tr>
+<td>75</td>
+<td><strong>Every backup verifies after writing</strong> (1 October 2026) — with the index reconciled against the destinations, and "missing" told apart from "corrupt" (§13.4)</td>
+<td>The first monthly check after a re-image reported a merely missing local copy as corrupt: the re-image had recreated <code>/srv/local</code> empty while the restored index still claimed local copies, and the check tried only local. The data was safe on USB. Checking a copy only once a month, at random, also meant nearly every archive was never read back at all. Now every run checks the built archive's integrity and reads each copy back, the index follows what each reachable destination actually holds, and only a copy read and found corrupt is called untrusted.</td>
+</tr>
+<tr>
+<td>76</td>
+<td><strong>A "Shut down" control in Admin</strong> (1 October 2026) — <code>POST /system/shutdown</code>, through the privileged helper, beside restart and reboot, all three reachable from Admin → System</td>
+<td>Moving the controller into the rack needed a clean power-off, and the only way was SSH. Restart and reboot existed but only on the Updates screen. Powering off is privileged for the same reason as rebooting — the application never does it directly. The confirmation states the cost plainly: the power must be cycled to start the controller again, so nobody uses it to end a day.</td>
 </tr>
 </tbody>
 </table>

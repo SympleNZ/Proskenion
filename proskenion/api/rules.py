@@ -59,6 +59,7 @@ from proskenion.rules.model import (
     SCHEDULE_NEVER_OCCURS,
     SURFACE_NOT_FIRING,
     ActionType,
+    Basis,
     DptClass,
     GuardType,
     MatchType,
@@ -251,6 +252,9 @@ class DerivedStatusModel(BaseModel):
     compare_level: float | None
     device_id: int | None
     compare_state: str | None
+    #: What ``lighting_group_all_at`` compares: the stored level or the
+    #: composited output (migration 011). ``level`` for every other source type.
+    basis: str
     created_at: str
     updated_at: str
 
@@ -274,6 +278,7 @@ class DerivedStatusCreate(BaseModel):
     compare_level: float | None = ModelField(default=None, ge=0, le=100)
     device_id: int | None = None
     compare_state: str | None = ModelField(default=None, max_length=32)
+    basis: Basis = "level"
 
 
 class DerivedStatusUpdate(BaseModel):
@@ -287,9 +292,10 @@ class DerivedStatusUpdate(BaseModel):
     compare_level: float | None = ModelField(default=None, ge=0, le=100)
     device_id: int | None = None
     compare_state: str | None = ModelField(default=None, max_length=32)
+    basis: Basis | None = None
 
 
-_STATUS_NOT_NULL = frozenset({"name", "enabled", "source_type"})
+_STATUS_NOT_NULL = frozenset({"name", "enabled", "source_type", "basis"})
 
 
 class DerivedStatesResponse(BaseModel):
@@ -550,8 +556,15 @@ async def _validate_rule(db: Database, values: Mapping[str, Any]) -> None:
         group_id = values.get("lighting_group_id")
         if group_id is None:
             errors.add("lighting_group_id", "a binding needs a lighting group")
-        elif await lighting_crud.get_group(db, group_id) is None:
+        elif (group := await lighting_crud.get_group(db, group_id)) is None:
             errors.add("lighting_group_id", "there is no lighting group with that id")
+        elif group.indicator_only:
+            errors.add(
+                "lighting_group_id",
+                f"“{group.name}” is indicator-only: it has no fader, and a binding forces "
+                "its group's level to full (§8.8), which would do nothing. Bind the groups "
+                "that do have faders instead",
+            )
         for level in ("on_level", "off_level"):
             if values.get(level) is None:
                 errors.add(level, "a binding needs both an on level and an off level")
@@ -846,6 +859,7 @@ async def _status_model(db: Database, status: DerivedStatus) -> DerivedStatusMod
         compare_level=status.compare_level,
         device_id=status.device_id,
         compare_state=status.compare_state,
+        basis=status.basis,
         created_at=status.created_at,
         updated_at=status.updated_at,
     )
@@ -918,6 +932,8 @@ async def _validate_status(
         for name in ("lighting_group_id", "compare_level"):
             if values.get(name) is not None:
                 errors.add(name, "only a lighting_group_all_at status has a group and level")
+        if values.get("basis", "level") != "level":
+            errors.add("basis", "only a lighting_group_all_at status compares what the room sees")
     if source == "device_state":
         device_id = values.get("device_id")
         if device_id is None:
@@ -1026,6 +1042,7 @@ async def update_derived_status(
         "compare_level": current.compare_level,
         "device_id": current.device_id,
         "compare_state": current.compare_state,
+        "basis": current.basis,
         **changes,
     }
     await _validate_status(db, merged, status_id=status_id)

@@ -111,7 +111,8 @@ appliance can do.
 | See the slots, their versions and the trial | System → Updates | — | `GET /api/v1/system/os` |
 | Go back to the other root slot | System → Updates | a reboot | `POST /api/v1/system/os/rollback` |
 | Restart the application | System → Updates | — | `POST /api/v1/system/restart` |
-| Reboot the appliance | System → Updates | a reboot | `POST /api/v1/system/reboot` |
+| Reboot the appliance | System → Updates, System → Health | a reboot | `POST /api/v1/system/reboot` |
+| Shut the controller down | System → Updates, System → Health | switching its power off and on at the rack to start it again | `POST /api/v1/system/shutdown` |
 
 ## Watching the appliance
 

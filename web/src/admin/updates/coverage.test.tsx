@@ -82,8 +82,9 @@ describe("UpdatesScreen gives every field and primary/destructive action help (s
     // Proves the OS section and Restart/Reboot actually rendered — otherwise
     // this would pass vacuously without checking either card.
     await screen.findByRole("button", { name: "Roll back" });
-    screen.getByRole("button", { name: "Restart application" });
-    screen.getByRole("button", { name: "Reboot appliance" });
+    screen.getByRole("button", { name: "Restart services" });
+    screen.getByRole("button", { name: "Restart controller" });
+    screen.getByRole("button", { name: "Shut down" });
     assertCovered();
   });
 

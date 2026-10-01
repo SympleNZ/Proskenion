@@ -508,6 +508,84 @@ async def test_reboot_is_refused_while_an_os_slot_is_on_trial(
     assert _helper_requests(config) == []
 
 
+async def test_shutdown_asks_the_helper_to_power_off_and_is_audited(
+    config: Config, db: Database, tokens: TokenService, limiter: RateLimiter
+) -> None:
+    app = create_app(config, db=db, tokens=tokens, limiter=limiter)
+    async with running(app) as client:
+        await login(client)
+        response = await client.post(f"{SYSTEM}/shutdown")
+    assert response.status_code == 202, response.text
+    body = response.json()
+    assert body["requested"] == "shutdown"
+    assert body["requested_at"]
+
+    requests = _helper_requests(config)
+    assert len(requests) == 1
+    assert json.loads(requests[0])["verb"] == "shutdown"
+
+    rows = await security_events.query(db, event_type="config_changed", limit=10)
+    detail = json.loads(rows[0].detail or "{}")
+    assert detail["setting"] == "shutdown"
+    assert rows[0].user_ident == "admin"
+
+
+async def test_shutdown_requires_admin(
+    config: Config, db: Database, tokens: TokenService, limiter: RateLimiter
+) -> None:
+    app = create_app(config, db=db, tokens=tokens, limiter=limiter)
+    async with running(app) as client:
+        await login(client, OPERATOR_PASSWORD)
+        operator = await client.post(f"{SYSTEM}/shutdown")
+    assert operator.status_code == 403
+    assert operator.json()["error"]["code"] == "permission_denied"
+
+    app = create_app(config, db=db, tokens=tokens, limiter=limiter)
+    async with running(app) as client:
+        await login(client)
+        enabled = await client.post(f"{API_PREFIX}/hirer/enabled", json={"enabled": True})
+        assert enabled.status_code == 200, enabled.text
+        assert (await hirer_login(client)).is_success
+        hirer = await client.post(f"{SYSTEM}/shutdown")
+    assert hirer.status_code == 403
+    assert _helper_requests(config) == []
+
+
+async def test_shutdown_needs_a_session(
+    config: Config, db: Database, tokens: TokenService, limiter: RateLimiter
+) -> None:
+    app = create_app(config, db=db, tokens=tokens, limiter=limiter)
+    async with running(app) as client:
+        response = await client.post(f"{SYSTEM}/shutdown")
+    assert response.status_code == 401
+    assert _helper_requests(config) == []
+
+
+async def test_shutdown_is_refused_while_an_os_slot_is_on_trial(
+    config: Config, db: Database, tokens: TokenService, limiter: RateLimiter
+) -> None:
+    """A power-off drops the one-boot `tryboot` selection exactly as a plain reboot does."""
+    app = create_app(config, db=db, tokens=tokens, limiter=limiter)
+    async with running(app) as client:
+        paths = UpdatePaths.for_appliance(
+            config.app.data_dir, config.app.state_dir, config.database.path
+        )
+        await paths.store().update(
+            trial={
+                "slot": "b",
+                "version": "v1.5.0",
+                "started_at": "2026-09-20T03:00:00+12:00",
+                "deadline_at": "2026-09-20T03:10:00+12:00",
+                "booted_at": "2026-09-20T03:00:05+12:00",
+            }
+        )
+        await login(client)
+        response = await client.post(f"{SYSTEM}/shutdown")
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["detail"]["reason"] == "os_trial"
+    assert _helper_requests(config) == []
+
+
 # -- security log (§6.14, §21.24 "Logs") -------------------------------------------
 
 

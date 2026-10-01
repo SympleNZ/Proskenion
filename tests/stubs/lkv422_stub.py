@@ -85,6 +85,10 @@ class LKV422Stub:
         #: When set, replaces every reply with these exact bytes instead of
         #: the device's real answer — the "malformed reply" case.
         self.garbage_reply: bytes | None = None
+        #: Sent as its own chunk, then ``stray_gap_s`` of silence, before the
+        #: real reply — the stray power-up byte seen on the real rig (b"\x00").
+        self.stray_prefix: bytes = b""
+        self.stray_gap_s: float = 0.0
         #: Added before every reply is sent — the "slow reply" case.
         self.reply_delay_s: float = 0.0
         #: When set, a well-formed PAXXR still gets ERR instead of OKPaPb —
@@ -197,4 +201,7 @@ class LKV422Stub:
         await self._reply(b"ERR")  # §7.5: "A malformed command returns ERR"
 
     async def _reply(self, body: bytes) -> None:
+        if self.stray_prefix:
+            await self._transport.peer_send(self.stray_prefix)
+            await asyncio.sleep(self.stray_gap_s)
         await self._transport.peer_send(body + TERMINATORS[self.terminator])

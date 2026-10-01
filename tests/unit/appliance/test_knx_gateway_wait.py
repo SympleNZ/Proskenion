@@ -92,16 +92,18 @@ def test_a_responding_gateway_is_found_well_inside_the_timeout(knx_wait: ModuleT
 
 
 def test_a_silent_gateway_gives_up_without_blocking_forever(knx_wait: ModuleType) -> None:
-    # A UDP port nothing is bound to: every send is an immediate, real failure
-    # to answer, not a mock standing in for one.
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("127.0.0.1", 0))
-    unused_port = sock.getsockname()[1]
-    sock.close()
-
-    started = time.monotonic()
-    found = knx_wait.wait_for_gateway("127.0.0.1", unused_port, timeout_s=0.6, poll_interval_s=0.1)
-    elapsed = time.monotonic() - started
+    # A real UDP port that never answers, not a mock standing in for one. The
+    # socket stays bound for the whole wait: closing it to "free" the port
+    # let a concurrently running test's fake gateway take the same port and
+    # answer (a flaky failure seen in the Linux run, 29 Sep 2026).
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as silent:
+        silent.bind(("127.0.0.1", 0))
+        silent_port = silent.getsockname()[1]
+        started = time.monotonic()
+        found = knx_wait.wait_for_gateway(
+            "127.0.0.1", silent_port, timeout_s=0.6, poll_interval_s=0.1
+        )
+        elapsed = time.monotonic() - started
     assert found is False
     assert elapsed < 5.0, "the wait must respect its own timeout, not knxd's 30s default"
 
@@ -111,12 +113,10 @@ def test_main_always_exits_zero_even_when_nothing_answers(
 ) -> None:
     """A dead gateway is Restart='s job; ExecStartPre= must never fail the start."""
     monkeypatch.setenv("KNXD_OPTS", "-e 0.0.1 -E 0.0.2:8 -b ipt:127.0.0.1")
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("127.0.0.1", 0))
-    unused_port = sock.getsockname()[1]
-    sock.close()
-    monkeypatch.setattr(knx_wait, "KNXNET_IP_PORT", unused_port)
-
-    rc = knx_wait.main(["--timeout-s", "0.4", "--poll-interval-s", "0.1"])
+    # Held bound and silent for the whole wait (see the test above).
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as silent:
+        silent.bind(("127.0.0.1", 0))
+        monkeypatch.setattr(knx_wait, "KNXNET_IP_PORT", silent.getsockname()[1])
+        rc = knx_wait.main(["--timeout-s", "0.4", "--poll-interval-s", "0.1"])
     assert rc == 0
     assert "did not answer within" in capsys.readouterr().out

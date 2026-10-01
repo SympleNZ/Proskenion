@@ -62,8 +62,9 @@ class ProjectorStateResponse(BaseModel):
     state: str | None
     input_ref: str | None
     inputs: list[InputModel]
-    #: Always ``null`` on PJLink Class 1, which has no remaining-time report
-    #: (§21.14); carried for a future projector that does.
+    #: PJLink Class 1 has no remaining-time report (§21.14), so this is
+    #: ``null`` except during the controller's own minimum warm-up hold
+    #: (§7.4), when it is the whole seconds left of that hold.
     remaining_s: float | None = None
 
 
@@ -99,7 +100,7 @@ async def _state_response(
         state=snapshot.state,
         input_ref=snapshot.input_ref,
         inputs=inputs,
-        remaining_s=None,
+        remaining_s=service.warmup_remaining_s(),
     )
 
 

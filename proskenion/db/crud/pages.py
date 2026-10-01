@@ -451,7 +451,8 @@ async def regenerate_default_page(db: Database) -> PageWithItems:
     mixer channel — Main first, then outputs, then inputs, each by
     ``sort_order`` — followed by every lighting group as a ``group_master``
     item (§15.12, §21.9: "A fresh installation shows every visible channel
-    without anyone configuring a layout").
+    without anyone configuring a layout"). An indicator-only group has no
+    fader and is left out (migration 011).
 
     Idempotent: called again with unchanged configuration, it writes the
     same items back. Meant to be called at startup and after any mixer or
@@ -462,7 +463,7 @@ async def regenerate_default_page(db: Database) -> PageWithItems:
     """
     channels = [c for c in await mixer_crud.list_channels(db) if c.visible_staff]
     channels.sort(key=_channel_sort_key)
-    groups = await lighting_crud.list_groups(db)
+    groups = [g for g in await lighting_crud.list_groups(db) if not g.indicator_only]
 
     items: list[PageItemInput] = [
         PageItemInput(kind="channel", channel_id=c.id) for c in channels

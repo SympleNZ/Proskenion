@@ -205,3 +205,95 @@ test.describe("Admin and operator screens — real-browser axe, including color-
     expect(popoverBlocking, describeBlocking("admin/devices — help popover open", popoverBlocking)).toEqual([]);
   });
 });
+
+/*
+ * The 44×44 px minimum on every admin and operator screen (spec §24, the
+ * "Touch targets" table: "All interactive elements 44 × 44px minimum";
+ * §24.7: "No interactive element below 44px"). The hirer test above covers
+ * the stricter 72 px floor; this measures everything else, at the touch PC
+ * (D5, 1920×1080) and at a phone width, on each screen the sweep above
+ * visits, in its default (closed) state.
+ *
+ * The spec grants no exception for any interactive element, so the list is
+ * short and is about what is *not a target*, never about a small target:
+ *   - the skip link, off-screen until focused (§24.7);
+ *   - elements with no layout box, or clipped to nothing (visually hidden
+ *     helpers, e.g. a screen-reader-only input);
+ *   - the fader's 32 px thumb: the slider element itself is the target and
+ *     its hit area is the whole travel (§24 table, tokens.css `--touch-thumb`),
+ *     so the `role="slider"` box is what is measured, as for any other.
+ * Inline text links in running prose would be the usual WCAG exception
+ * (2.5.8 "inline"), but §24 does not carve it out, so none is exempted.
+ */
+const MIN_TARGET_PX = 44;
+/** Subpixel layout: a 44 px token can measure 43.99 in a flex row. */
+const SUBPIXEL_TOLERANCE_PX = 0.5;
+
+const TARGET_SELECTOR = [
+  "button",
+  "a[href]",
+  "input:not([type=hidden])",
+  "select",
+  "textarea",
+  "summary",
+  '[role="button"]',
+  '[role="link"]',
+  '[role="slider"]',
+  '[role="checkbox"]',
+  '[role="switch"]',
+  '[role="tab"]',
+  '[role="menuitem"]',
+  '[role="radio"]',
+  '[role="option"]',
+].join(", ");
+
+async function undersizedTargets(page: Page, minPx: number): Promise<string[]> {
+  return page.evaluate(
+    ({ selector, min, tolerance }) => {
+      const found: string[] = [];
+      for (const el of Array.from(document.querySelectorAll<HTMLElement>(selector))) {
+        if (el.closest(".skip-link") || el.classList.contains("skip-link")) continue;
+        const style = getComputedStyle(el);
+        if (style.display === "none" || style.visibility === "hidden") continue;
+        const rect = el.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) continue; // No box: not a target.
+        if (style.clip === "rect(0px, 0px, 0px, 0px)" || style.position === "absolute" && rect.width <= 1 && rect.height <= 1) continue;
+        if (rect.right < 0 || rect.bottom < 0) continue; // Parked off-screen.
+        if (rect.width + tolerance < min || rect.height + tolerance < min) {
+          const name = el.getAttribute("aria-label") ?? el.textContent?.trim().slice(0, 40) ?? el.getAttribute("type") ?? "";
+          const cls = typeof el.className === "string" ? el.className.split(" ").filter(Boolean).slice(0, 2).join(".") : "";
+          found.push(`<${el.tagName.toLowerCase()}${cls ? "." + cls : ""}> "${name || "(unnamed)"}": ${rect.width.toFixed(1)}×${rect.height.toFixed(1)}`);
+        }
+      }
+      return found;
+    },
+    { selector: TARGET_SELECTOR, min: minPx, tolerance: SUBPIXEL_TOLERANCE_PX },
+  );
+}
+
+test.describe("Admin and operator screens — every interactive element is at least 44×44px (spec §24, §24.7)", () => {
+  for (const [label, viewport] of [
+    ["touch PC (1920×1080)", D5_VIEWPORT],
+    ["phone (412×915)", PHONE_VIEWPORT],
+  ] as const) {
+    test(`on the ${label}`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      await commission(page.request);
+
+      const screens: string[] = [
+        ...ADMIN_ITEMS.filter((item) => item.path !== CONTROL_SURFACE_PATH).map((item) => `/admin/${item.path}`),
+        ...OPERATOR_TABS.map((tab) => `/app/${tab.path}`),
+      ];
+      const failures: string[] = [];
+      for (const url of screens) {
+        await page.goto(url);
+        await expect(page.locator("#main")).toBeVisible();
+        // Let data-driven rows and strips render before measuring.
+        await page.waitForLoadState("networkidle");
+        const undersized = await undersizedTargets(page, MIN_TARGET_PX);
+        if (undersized.length > 0) failures.push(`${url}\n  ${undersized.join("\n  ")}`);
+      }
+      expect(failures, `elements below ${MIN_TARGET_PX}×${MIN_TARGET_PX}px:\n${failures.join("\n")}`).toEqual([]);
+    });
+  }
+});

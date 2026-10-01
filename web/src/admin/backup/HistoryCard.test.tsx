@@ -33,6 +33,8 @@ const ARCHIVE: ArchiveSummary = {
   verified_at: "2026-09-01T03:00:00+12:00",
   untrusted: false,
   untrusted_reason: null,
+  checked_at: "2026-09-20T03:04:00+12:00",
+  checked_destinations: ["local", "usb"],
 };
 
 function serve(history: BackupHistory, overrides: Record<string, unknown> = {}) {
@@ -55,7 +57,8 @@ describe("HistoryCard — archives, downloads and untrusted marking", () => {
     renderWithProviders(<HistoryCard status={undefined} />, { route: "/admin/backup" });
 
     expect(await screen.findByText("Local + USB")).toBeInTheDocument();
-    expect(screen.getAllByText("Verified").length).toBeGreaterThan(0); // the column heading plus this row's mark
+    expect(screen.getByRole("columnheader", { name: "Checked after backup" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Monthly check" })).toBeInTheDocument();
     const link = screen.getByRole("link", { name: /Download the/ });
     expect(link).toHaveAttribute("href", "/api/v1/system/backup/auditorium-20260920-0300/download");
   });
@@ -64,7 +67,51 @@ describe("HistoryCard — archives, downloads and untrusted marking", () => {
     serve({ archives: [{ ...ARCHIVE, untrusted: true, untrusted_reason: "checksum mismatch", verified_at: null }] });
     renderWithProviders(<HistoryCard status={undefined} />, { route: "/admin/backup" });
 
-    expect(await screen.findByText("Untrusted")).toBeInTheDocument();
+    expect(await screen.findByText("Failed · untrusted")).toBeInTheDocument();
+  });
+
+  it("shows the after-backup check and the monthly check separately", async () => {
+    serve({ archives: [{ ...ARCHIVE, verified_at: null }] });
+    renderWithProviders(<HistoryCard status={undefined} />, { route: "/admin/backup" });
+
+    expect(await screen.findByText("Local, USB · 03:04")).toBeInTheDocument();
+    expect(screen.getByText("Not checked yet")).toBeInTheDocument();
+    expect(screen.queryByText(/not yet verified/i)).not.toBeInTheDocument();
+  });
+
+  it("shows a monthly pass with its date", async () => {
+    serve({ archives: [ARCHIVE] });
+    renderWithProviders(<HistoryCard status={undefined} />, { route: "/admin/backup" });
+
+    expect(await screen.findByText(/^Passed /)).toBeInTheDocument();
+  });
+
+  it("says plainly when an older archive was never checked after its backup", async () => {
+    serve({ archives: [{ ...ARCHIVE, checked_at: null, checked_destinations: [] }] });
+    renderWithProviders(<HistoryCard status={undefined} />, { route: "/admin/backup" });
+
+    expect(await screen.findByText("Not checked (older backup)")).toBeInTheDocument();
+  });
+
+  it("names a missing archive in the last monthly check, not a failure", async () => {
+    serve({ archives: [ARCHIVE] });
+    const status: BackupStatus = {
+      last_run: null,
+      last_verify: {
+        verified_at: "2026-10-01T04:00:00+13:00",
+        archive_id: "auditorium-20260927-0301",
+        ok: false,
+        detail: "not present at any destination",
+        outcome: "missing",
+        destination: null,
+      },
+      last_restore: null,
+      usb_present: true,
+      retention_days: {},
+    };
+    renderWithProviders(<HistoryCard status={status} />, { route: "/admin/backup" });
+
+    expect(await screen.findByText(/Last monthly check .* · the archive it chose is missing/)).toBeInTheDocument();
   });
 
   it("shows an empty state with nothing backed up yet", async () => {
@@ -214,7 +261,7 @@ describe("HistoryCard — verify now", () => {
       if (path === "/system/backup/history") return Promise.resolve({ archives: [ARCHIVE] });
       if (path === "/system/backup/verify" && method === "POST") {
         verified = true;
-        return Promise.resolve({ verified_at: "2026-09-20T04:00:00+12:00", archive_id: ARCHIVE.id, ok: true, detail: "passed" });
+        return Promise.resolve({ verified_at: "2026-09-20T04:00:00+12:00", archive_id: ARCHIVE.id, ok: true, detail: "passed", outcome: "verified", destination: "local" });
       }
       return Promise.reject(new Error(`unexpected ${method} ${path}`));
     });

@@ -79,6 +79,16 @@ read-only, say), and nothing for a target it cannot see — and writes a
 a client dragging a refused fader cannot flood the log. How far a permitted
 mixer write may go (the ceiling) is the mixer handler's check.
 
+Holds that end with the connection (``lighting_bump``)
+-----------------------------------------------------
+A group's BUMP flashes it while held (owner decision 2026-10-01), and a hold
+belongs to the connection that made it: the handler is told which one
+(:attr:`SetRequest.connection`). Whatever a domain holds for a connection is
+let go through :meth:`WriteRouter.release_connection` when the socket closes,
+for any reason, and when the client reports going to the background — a
+hidden page cannot be holding a button. The lighting service also expires a
+hold the client stops refreshing (:mod:`proskenion.core.dmx.bump`).
+
 ``value`` and ``null`` (§16.8, phase-4-contracts.md)
 ------------------------------------------------------
 Every domain's value is a JSON number except ``mixer``, whose level is a dB
@@ -98,7 +108,7 @@ import logging
 import math
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Final, TypeIs
 
@@ -165,6 +175,9 @@ class SetRequest:
     id: int | None
     value: float | None
     token: int
+    connection: int | None = None
+    """The connection the frame arrived on, for a handler whose effect is held
+    by it (``lighting_bump``). Set by the endpoint, never by the client."""
 
 
 class _NoValue:
@@ -209,6 +222,9 @@ SetHandler = Callable[[SetRequest, TokenClaims], Awaitable[SetResult]]
 """What a domain registers to accept writes. It must not raise; if it does,
 the client is sent ``internal_error`` and the socket stays open."""
 
+ConnectionRelease = Callable[[int], object]
+"""Let go of whatever a domain holds for a connection id (module docstring)."""
+
 
 class WriteRouter:
     """Routes a validated ``set`` to the handler for its domain.
@@ -220,6 +236,7 @@ class WriteRouter:
 
     def __init__(self) -> None:
         self._handlers: dict[str, SetHandler] = {}
+        self._releases: list[ConnectionRelease] = []
 
     def register(self, domain: str, handler: SetHandler) -> None:
         if domain not in SETTABLE_DOMAINS:
@@ -230,6 +247,20 @@ class WriteRouter:
 
     def handles(self, domain: str) -> bool:
         return domain in self._handlers
+
+    def on_release(self, release: ConnectionRelease) -> None:
+        """Call ``release(connection id)`` when a connection closes or goes to the background."""
+        self._releases.append(release)
+
+    def release_connection(self, connection_id: int) -> None:
+        """Let go of everything held for ``connection_id``. Never raises."""
+        for release in self._releases:
+            try:
+                release(connection_id)
+            except Exception:
+                log.exception(
+                    "websocket connection release raised", extra={"connection": connection_id}
+                )
 
     async def apply(self, request: SetRequest, claims: TokenClaims) -> SetResult:
         handler = self._handlers.get(request.domain)
@@ -439,6 +470,8 @@ async def _serve(
         timers.stop()
         for part in parts:
             part.cancel()
+        # A held bump never outlives its socket (module docstring).
+        writes.release_connection(connection.id)
         code = connection.close_code or CLOSE_NORMAL
         reason = connection.close_reason or ""
         broadcaster.disconnect(connection)
@@ -618,6 +651,8 @@ async def _handle(
         connection.last_pong = broadcaster.now()
     elif kind == "background":
         connection.background()
+        # A hidden page is holding nothing down (module docstring).
+        writes.release_connection(connection.id)
         log.debug("websocket backgrounded", extra={"connection": connection.id})
     elif kind == "set":
         await _handle_set(payload, connection, session, broadcaster, writes)
@@ -703,7 +738,7 @@ async def _apply_set(
             )
         )
         return
-    result = await writes.apply(request, claims)
+    result = await writes.apply(replace(request, connection=connection.id), claims)
     if result.ok:
         # §21.2: on acknowledgement the client deletes its pending entry and
         # "falls through to a value that is already correct". The write's own
@@ -723,9 +758,9 @@ def visible_value(broadcaster: Broadcaster, connection: Connection, request: Set
     connection may see it; :data:`NO_VALUE` where it may not.
 
     Read from what a snapshot would send this connection, in the wire's
-    units: a lighting level 0–100, a group level 0–100, the master 0–100, a
-    mixer channel in dB (``None`` is off). A hirer refused a channel they
-    cannot see is told nothing about it.
+    units: a lighting level 0–100, the master 0–100, a mixer channel in dB
+    (``None`` is off); nothing for a group, which has no value of its own. A
+    hirer refused a channel they cannot see is told nothing about it.
     """
     state_domain = WRITE_DOMAIN_STATE.get(request.domain)
     if state_domain is None:
@@ -743,15 +778,16 @@ def _value_in(message: Message, request: SetRequest) -> object:
     if kind == "lighting_state":
         if request.domain == "master":
             return message.get("master", NO_VALUE)
-        section = "channels" if request.domain == "lighting" else "groups"
-        entries = message.get(section)
+        if request.domain != "lighting":
+            # A group has no stored value of its own: its fader shows its
+            # members' levels (owner decision 2026-09-30), which the client
+            # already holds in ``channels``.
+            return NO_VALUE
+        entries = message.get("channels")
         if not isinstance(entries, Mapping) or key not in entries:
             return NO_VALUE
         entry = entries[key]
-        if request.domain == "lighting":
-            return entry.get("level", NO_VALUE) if isinstance(entry, Mapping) else NO_VALUE
-        # Multipliers are held 0–1; a group's level travels 0–100.
-        return entry * 100.0 if _is_number(entry) else NO_VALUE
+        return entry.get("level", NO_VALUE) if isinstance(entry, Mapping) else NO_VALUE
     if kind == "mixer_state" and request.domain == "mixer":
         # Main is not keyed by id on the wire; it is never refused to a
         # connection that can see it (Main on an assigned page is writable).

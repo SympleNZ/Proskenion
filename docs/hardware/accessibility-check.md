@@ -14,7 +14,23 @@ Record the date and your result against each item. A tick and a one-line note
 is enough; a `WORKLOG.md` entry after a full pass is worth more than a note
 here.
 
-**Status: not yet run.**
+**Status: partly run, 1 Oct 2026 (Simon, on site, v0.1.17).**
+- §1, Narrator: navigation fell short (focus stayed on the tab; "current"
+  not announced; skip link not reached) and status announcements were
+  noisy. Both were fixed for the next build (`47a48c5`); re-test §1 after
+  it. Note: Narrator also narrates Windows itself, which makes a sighted
+  pass hard.
+- §3, colour-blind simulation: **pass**. Everything stays distinguishable,
+  with good contrast.
+- §4, zoom to 200 % and 400 %: **pass**. It scales and stays usable; heavy
+  scrolling at 400 % is as expected.
+- §6, print preview: **pass**. Light, outline-style output.
+- §7, touch targets with a finger (Simon's touchscreen laptop): **pass**.
+  Usable; fader-knob sizing may need tuning after real use.
+- Not yet run: §2 (TalkBack, waiting until the hirer pages are configured),
+  §5 (muted text with the house lights down), §8 (reduced motion) and §9
+  (stage plan text at the operator's distance), the last two added after the
+  re-run milestone audit and **not yet run**.
 
 ## Before you start
 
@@ -155,6 +171,41 @@ hardware, which a measured bounding box can't fully stand in for:
 - [ ] A slow drag on a fader scrolls nothing and a quick tap on a panel
       button never drags it ("a scroll is not a tap", CONVENTIONS.md).
 
+## 8. Reduced motion (not yet run)
+
+The CSS rule is unit-tested (`reducedMotion.test.ts`); this checks the whole
+interface for layout that *depends* on an animation finishing.
+
+- [ ] Windows 11: Settings → Accessibility → Visual effects → **Animation
+      effects** off (Edge follows it as `prefers-reduced-motion`). Reload the
+      operator interface.
+- [ ] Open and close a sheet (Add a device), a dialog, a menu and the inline
+      help popover: each appears and disappears at once, with no slide or
+      fade, and nothing else on the screen jumps as it does.
+- [ ] Trigger a toast (save something) and a banner (unplug a device or force
+      a status change): both appear in place without motion, and neither
+      shifts the controls underneath them unexpectedly.
+- [ ] Run a scene: the result reveal is present immediately, and the status
+      LEDs do not pulse.
+- [ ] Turn Animation effects back on afterwards.
+
+Date and result: ______
+
+## 9. Stage plan text at the operator's distance (not yet run)
+
+The stage plan's fixture labels are SVG text, which zoom and contrast tests
+cannot judge for real.
+
+- [ ] At the booth or FOH position, on the touch PC at its normal scale, read
+      every fixture label on the stage plan from where the operator actually
+      sits, without leaning in. Labels must be legible and must not overlap
+      one another or the fixture shapes.
+- [ ] Repeat on a phone held at arm's length for the busiest plan.
+- [ ] Anything that fails is a note against the label size or the plan's
+      fixture spacing, not against this check.
+
+Date and result: ______
+
 ## What's already covered (do not re-check by hand)
 
 - Every screen passes an automated axe-core sweep at serious/critical impact
@@ -173,3 +224,7 @@ hardware, which a measured bounding box can't fully stand in for:
   actual renderer, unlike the component sweep) on the hirer surface at the
   D5 viewport and a phone viewport, plus the login page —
   `tests/e2e/accessibility.spec.ts`.
+- Real touch-target sizes on every admin screen and operator tab (44×44 px)
+  at the D5 viewport and a phone viewport, and the muted-text contrast of
+  the menu, toast, popover, sheet and dialog layers —
+  `tests/e2e/accessibility.spec.ts` and `web/src/styles/contrast.test.ts`.

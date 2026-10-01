@@ -17,8 +17,13 @@ import { Sheet, SheetContent } from "@/components/ui/Sheet";
 import type { LightingGroup } from "@/lighting/types";
 import { saveFormOnShortcut } from "@/lib/keyboard";
 
-import { CONNECTION_STATES, STATE_ALIASES } from "./guards";
-import { SOURCE_TYPES, type DerivedStatus, type DerivedStatusInput, type KnxAddress, type SourceType } from "./types";
+import { CONNECTION_STATES, STATE_ALIASES, STATE_ALIAS_LABELS } from "./guards";
+import { SOURCE_TYPES, type DerivedStatus, type DerivedStatusInput, type KnxAddress, type SourceType, type StatusBasis } from "./types";
+
+const BASIS_LABELS: Readonly<Record<StatusBasis, string>> = {
+  level: "Stored level",
+  output: "What the room sees",
+};
 
 const SOURCE_LABELS: Readonly<Record<SourceType, string>> = {
   lighting_group_all_at: "Lighting group, all at a level",
@@ -37,6 +42,7 @@ interface FormState {
   compare_level: string;
   device_id: number | null;
   compare_state: string;
+  basis: StatusBasis;
 }
 
 function initialState(status: DerivedStatus | undefined): FormState {
@@ -49,6 +55,7 @@ function initialState(status: DerivedStatus | undefined): FormState {
     compare_level: status?.compare_level !== null && status?.compare_level !== undefined ? String(status.compare_level) : "100",
     device_id: status?.device_id ?? null,
     compare_state: status?.compare_state ?? "",
+    basis: status?.basis ?? "level",
   };
 }
 
@@ -63,6 +70,7 @@ function buildInput(form: FormState): DerivedStatusInput {
     compare_level: form.source_type === "lighting_group_all_at" && Number.isFinite(level) ? level : null,
     device_id: form.source_type === "device_state" ? form.device_id : null,
     compare_state: form.source_type === "device_state" ? form.compare_state : null,
+    basis: form.source_type === "lighting_group_all_at" ? form.basis : "level",
   };
 }
 
@@ -218,6 +226,25 @@ export function DerivedStatusEditor({
                 />
                 <p className="field-help">On when every member channel of this group is at this level (§8.6).</p>
               </Field>
+              <Field label="Compare" htmlFor={`${idPrefix}-basis`} helpId="rules.derived.basis" error={fieldErrors["basis"]} errorId={`${idPrefix}-basis-error`}>
+                <Select
+                  id={`${idPrefix}-basis`}
+                  value={form.basis}
+                  aria-invalid={fieldErrors["basis"] ? true : undefined}
+                  onChange={(event) => set("basis", event.currentTarget.value as StatusBasis)}
+                >
+                  {(Object.keys(BASIS_LABELS) as StatusBasis[]).map((basis) => (
+                    <option key={basis} value={basis}>
+                      {BASIS_LABELS[basis]}
+                    </option>
+                  ))}
+                </Select>
+                <p className="field-help">
+                  {form.basis === "output"
+                    ? "Each fixture's output, its level scaled by the Master: the Master pulled down turns this off, whatever the faders say."
+                    : "Each fixture's own level (its fader, or its group's), whatever the Master is doing."}
+                </p>
+              </Field>
             </>
           ) : null}
 
@@ -255,7 +282,7 @@ export function DerivedStatusEditor({
                 />
                 <datalist id={`${idPrefix}-state-options`}>
                   {STATE_SUGGESTIONS.map((s) => (
-                    <option key={s} value={s} />
+                    <option key={s} value={s} label={STATE_ALIAS_LABELS[s] ?? s} />
                   ))}
                 </datalist>
               </Field>

@@ -26,6 +26,7 @@ import { Input } from "@/components/ui/Input";
 import { Checkbox, Select } from "@/components/ui/Select";
 import { FieldLabel } from "@/help/HelpButton";
 import { useLightingChannels, useLightingGroups } from "@/lighting/api";
+import { hasFader } from "@/lighting/indicatorGroups";
 import { saveOnShortcut } from "@/lib/keyboard";
 
 import { ButtonEditorSheet } from "./ButtonEditorSheet";
@@ -505,7 +506,8 @@ function ChannelItemFields({ item, onChange }: { item: EditorChannelItem; onChan
 function GroupMasterItemFields({ item, onChange }: { item: EditorGroupMasterItem; onChange: (next: EditorGroupMasterItem) => void }) {
   const groups = useLightingGroups();
   const lightingChannels = useLightingChannels();
-  const groupOptions = groups.data?.groups ?? [];
+  // An indicator-only group has no fader to place (migration 011; the API refuses one).
+  const groupOptions = (groups.data?.groups ?? []).filter(hasFader);
   const channelById = new Map((lightingChannels.data?.channels ?? []).map((channel) => [channel.id, channel.name]));
 
   return (

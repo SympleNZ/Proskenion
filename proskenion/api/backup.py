@@ -381,6 +381,11 @@ class BackupVerifyStatusResponse(_Payload):
     archive_id: str | None
     ok: bool
     detail: str
+    #: What the check found (§13.4): only "untrusted" says the archive is bad;
+    #: "missing" and "unreachable" mean no copy could be read at all.
+    outcome: Literal["verified", "untrusted", "missing", "unreachable", "none"]
+    #: Which destination the checked copy was read from, when one was.
+    destination: str | None
 
 
 class BackupStatusResponse(_Payload):
@@ -420,6 +425,8 @@ def _verify_response(status: backup_core.VerifyStatus) -> BackupVerifyStatusResp
         archive_id=status.archive_id,
         ok=status.ok,
         detail=status.detail,
+        outcome=status.outcome,
+        destination=status.destination,
     )
 
 
@@ -490,10 +497,18 @@ async def run_now(
 async def verify_now(
     db: Annotated[Database, Depends(get_db)],
     paths: Annotated[backup_core.BackupPaths, Depends(get_backup_paths)],
+    archive_id: str | None = None,
 ) -> BackupVerifyStatusResponse:
     """The monthly check, run on demand. Needs no privilege: reading an
-    archive back is something the application can already do."""
-    status = await backup_core.run_monthly_verify(db, paths)
+    archive back is something the application can already do.
+
+    ``?archive_id=`` checks that archive rather than a random one — how an
+    archive wrongly marked untrusted is cleared without waiting for chance.
+    """
+    try:
+        status = await backup_core.run_monthly_verify(db, paths, archive_id=archive_id)
+    except LookupError as exc:
+        raise ApiError(ErrorCode.NOT_FOUND, "No such backup archive") from exc
     return _verify_response(status)
 
 
@@ -514,6 +529,10 @@ class ArchiveSummaryResponse(_Payload):
     verified_at: str | None
     untrusted: bool
     untrusted_reason: str | None
+    #: The backup run's own read-back check of the copies it wrote, distinct
+    #: from the monthly check above. ``None`` for an older archive.
+    checked_at: str | None
+    checked_destinations: list[str]
 
 
 class BackupHistoryResponse(_Payload):
@@ -535,6 +554,8 @@ def _summary(row: backup_crud.ArchiveRow) -> ArchiveSummaryResponse:
         verified_at=row.verified_at,
         untrusted=row.untrusted,
         untrusted_reason=row.untrusted_reason,
+        checked_at=row.checked_at,
+        checked_destinations=list(row.checked_destinations),
     )
 
 

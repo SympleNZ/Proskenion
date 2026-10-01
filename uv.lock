@@ -977,7 +977,7 @@ wheels = [
 
 [[package]]
 name = "proskenion"
-version = "0.1.9"
+version = "0.1.19"
 source = { editable = "." }
 dependencies = [
     { name = "acme" },

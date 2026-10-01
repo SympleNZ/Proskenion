@@ -3,6 +3,7 @@
 An outgoing KNX address that continuously reflects state::
 
     STATUS  knx 1/0/11  =  every fixture in "Row 1" at 100%
+    STATUS  knx 4/0/4   =  every fixture in "Stage row 1" at 100%, as the room sees it
     STATUS  knx 1/2/2   =  projector state is ON
     STATUS  knx 1/0/9   =  external control active
 
@@ -17,16 +18,35 @@ at the next change. Bindings hold no state of their own.
 The three predicates
 --------------------
 ``lighting_group_all_at``
-    Every member channel's **stored** level equals ``compare_level`` — not the
-    composited output. §8.8 explains why: the group multiplier is what
-    attenuates, and a binding forces it to 1.0 on recall, so the stored level
-    is the truthful thing to compare. A member whose own range cannot reach
-    ``compare_level`` is compared with the nearest level it can hold, so a
-    fixture capped at 80 % counts as "at 100 %" when it is at 80. A group with
-    no members is never "all at" anything.
+    Every member channel is at ``compare_level``. A member whose own range
+    cannot reach ``compare_level`` is compared with the nearest level it can
+    hold, so a fixture capped at 80 % counts as "at 100 %" when it is at 80.
+    A group with no members is never "all at" anything. What is compared is
+    the status's ``basis`` (migration 011, owner decision 2026-09-30):
+
+``level`` (the default, and §8.6 as written)
+    Each member's **stored** level — what its fixture fader, its group fader
+    and a binding's recall all set (a group fader sets levels; owner
+    decision 2026-09-30).
+``output`` ("what the room sees"; the stage panel's indicators)
+    Each member's output as last actually composited into a frame
+    (:meth:`~proskenion.core.dmx.compositor.Compositor.output_level`): its
+    clamped level × the master, or, while a fader's operator glide is on its
+    way, where the glide has reached. Every frame that moves a glide wakes a
+    recompute, so "all at 100" turns true on the frame that lands it.
+    With the master at 0 every stage row reads off, whatever its faders say.
+    A KNX house dimmer is not scaled by the master, so its output is its
+    level. A master change wakes a recompute only when an enabled status
+    uses this basis, and is held for the frame that carries it, as a level
+    change is.
 ``device_state``
-    The device's status is in ``compare_state``
-    (:func:`proskenion.rules.model.state_matches`).
+    The device's connection status is in ``compare_state``
+    (:func:`proskenion.rules.model.state_matches`). For the projector, also
+    true when its own operational state (§7.4, ``state.projector.state``) is
+    in ``compare_state`` — the two vocabularies are separate (§8.3) and
+    either satisfies the status, which is why ``STATUS knx 1/2/2 = projector
+    state is ON`` above works from ``state.projector`` rather than the
+    projector's connection record.
 ``external_control``
     External control is active (§7.2.7).
 
@@ -51,7 +71,7 @@ telegram, after its last frame, rather than one per step.
 External control (§7.2.7, §8.8)
 -------------------------------
 While it is active every status reflecting stage lighting — a
-``lighting_group_all_at`` whose group contains a DMX fixture — reads 0, and
+``lighting_group_all_at``, either basis, whose group contains a DMX fixture — reads 0, and
 the ``external_control`` status 1, at once: no frame is coming. A group of KNX
 house dimmers only is not stage lighting and is unaffected, as house lighting
 always is. When external control ends, the stage statuses are held until the
@@ -72,6 +92,28 @@ never emits a bus event and never calls into the rule engine — a structural
 test holds it to that — so a status write cannot look like a state change to
 the rule layer. knxd's echo of the write is the other half, handled where
 telegrams enter the rule layer (:mod:`proskenion.rules.engine`).
+
+Re-assert after a panel press
+-----------------------------
+A KNX wall panel flips its own icon the moment a button is pressed, before
+anything has happened. If the press then does not take effect — the projector
+is unreachable or still warming (B52), a guard blocks the rule, the telegram
+is debounced — no value changes, so nothing above would ever write, and the
+panel would go on showing a state the room is not in. So once the rule layer
+has finished with a telegram on a rule's trigger address, and with what that
+telegram started (:meth:`proskenion.rules.engine.RulesEngine.handle_telegram`),
+it calls :meth:`DerivedStatusEngine.reassert`: every enabled status with an
+address is written again with its current value, even though it is unchanged.
+
+The re-assert rides the ordinary recompute rather than writing on its own: it
+marks the statuses and wakes the task, so the pass that writes them is the
+same one that would have run anyway, evaluates from the store as it stands,
+and keeps every timing rule above — a status held for its frame is written
+when the frame releases it, not before. A status already written *since the
+press* is skipped: that write reached the panel after it flipped its icon, so
+the panel already shows the truth. A re-assert changes no value, so it
+publishes nothing to the monitor or the lamps and cannot look like a state
+change (below).
 
 Button lamps (Q6, Phase 5 contracts "Button lamps") — the other output
 ------------------------------------------------------------------------
@@ -160,6 +202,8 @@ class StatusSpec:
     compare_level: float | None = None
     device_id: int | None = None
     compare_state: str | None = None
+    #: ``level`` (stored) or ``output`` (composited) — ``lighting_group_all_at`` only.
+    basis: str = "level"
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,6 +265,12 @@ class DerivedStatusEngine:
         self._changed_at: dict[int, str] = {}
         self._held: set[int] = set()
         self._pending: dict[int, int] = {}
+        self._glide_frame_seen = 0
+        #: Statuses to write at the next pass even if unchanged, each with the
+        #: loop time of the latest press that asked — see :meth:`reassert`.
+        self._reassert: dict[int, float] = {}
+        #: Loop time of each status's last successful KNX write.
+        self._written_at: dict[int, float] = {}
         self._warned: set[int] = set()
         self._wake = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
@@ -232,6 +282,8 @@ class DerivedStatusEngine:
         """Evaluation passes run — tests read it."""
         self.writes = 0
         """Status telegrams handed to the KNX subsystem."""
+        self.reasserts = 0
+        """Of :attr:`writes`, those that re-sent an unchanged value (:meth:`reassert`)."""
 
     # -- configuration -------------------------------------------------------
 
@@ -240,7 +292,13 @@ class DerivedStatusEngine:
         self._statuses = tuple(statuses)
         self._bindings = tuple(bindings)
         current = {s.id: s for s in self._statuses}
-        for table in (self._written, self._values, self._changed_at):
+        for table in (
+            self._written,
+            self._values,
+            self._changed_at,
+            self._reassert,
+            self._written_at,
+        ):
             for status_id in [k for k in table if k not in current]:
                 del table[status_id]
         for status_id, address in list(self._written_to.items()):
@@ -248,6 +306,7 @@ class DerivedStatusEngine:
             if spec is None or spec.group_address != address:
                 # A new address has never been written: the next pass writes it.
                 self._written.pop(status_id, None)
+                self._written_at.pop(status_id, None)
                 del self._written_to[status_id]
         for status_id in [k for k, s in current.items() if not s.enabled]:
             self._values.pop(status_id, None)
@@ -292,6 +351,30 @@ class DerivedStatusEngine:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
 
+    # -- re-assert after a press -----------------------------------------------
+
+    def reassert(self, *, since: float | None = None) -> None:
+        """Write every enabled status with an address again, even if unchanged.
+
+        Called by the rule layer once it has finished with a telegram on a
+        rule's trigger address, so a panel that flipped its own icon on a
+        press that did not take effect is corrected (see the module
+        docstring). It does not write here: it marks the statuses and wakes
+        the recompute task, whose next pass writes each at its current value
+        through the ordinary path, at the ordinary priority. A status held
+        for its frame stays marked and is written when the frame releases it.
+
+        ``since`` is the loop time (``loop.time()``) of the latest press being
+        answered: a status successfully written at or after it is skipped,
+        since that write reached the panel after its icon flipped. ``None``
+        re-sends every one.
+        """
+        mark = float("-inf") if since is None else since
+        for spec in self._statuses:
+            if spec.enabled and spec.group_address is not None:
+                self._reassert[spec.id] = max(self._reassert.get(spec.id, mark), mark)
+        self._wake.set()
+
     # -- change intake (synchronous, on every store write) -------------------
 
     def _on_change(self, change: Change) -> None:
@@ -317,6 +400,33 @@ class DerivedStatusEngine:
         elif change.field == "external_control":
             self._on_external_control()
             self._wake.set()
+        elif change.field == "master" and self._output_basis_in_use():
+            self._on_master_change()
+
+    def _output_basis_in_use(self) -> bool:
+        return any(s.enabled and s.basis == "output" for s in self._statuses)
+
+    def _on_master_change(self) -> None:
+        """The master moved: an ``output`` status may change.
+
+        Only DMX fixtures are scaled (a house dimmer is not, §9.5), so every
+        device with a fixture patched is held for the frame carrying the
+        change (§7.1), exactly as a level change is. With no frames flowing
+        there is no frame to wait for: recompute now. (Groups no longer
+        scale — a group fader writes levels — so the master is the only
+        scaling input; owner decision 2026-09-30.)
+        """
+        if self._lighting is None:
+            return
+        devices = set(self._channel_devices().values())
+        if not devices:
+            return
+        if self._frames_flowing():
+            count = self._frame_count()
+            for device in devices:
+                self._pending[device] = count
+            return
+        self._wake.set()
 
     def _on_external_control(self) -> None:
         if self._lighting is None:
@@ -343,6 +453,13 @@ class DerivedStatusEngine:
         if seen is not None and frame > seen:
             del self._pending[device_id]
             self._wake.set()
+        if self._lighting is not None and self._output_basis_in_use():
+            # An operator glide moved the output without a store change:
+            # an ``output`` status reads the frame, so look again.
+            glide_frame = self._lighting.renderer.last_glide_composite
+            if glide_frame == frame and glide_frame != self._glide_frame_seen:
+                self._glide_frame_seen = glide_frame
+                self._wake.set()
 
     def _frames_flowing(self) -> bool:
         lighting = self._lighting
@@ -395,24 +512,29 @@ class DerivedStatusEngine:
             self._channel_devices()  # adopt the current configuration
         pending = set(self._pending)
         changed: list[StatusSpec] = []
-        to_write: list[tuple[StatusSpec, bool]] = []
+        to_write: list[tuple[StatusSpec, bool, bool]] = []
         self._held = set()
         for spec in self._statuses:
+            if not spec.enabled or spec.group_address is None:
+                self._reassert.pop(spec.id, None)
             if not spec.enabled:
                 continue
             if pending and self._devices_of_group(spec.lighting_group_id) & pending:
-                self._held.add(spec.id)
+                self._held.add(spec.id)  # a re-assert stays marked until released
                 continue
             value = self._evaluate(spec)
             if self._values.get(spec.id) != value:
                 self._values[spec.id] = value
                 self._changed_at[spec.id] = self._now()
                 changed.append(spec)
+            since = self._reassert.pop(spec.id, None)
             if self._written.get(spec.id) != value:
-                to_write.append((spec, value))
+                to_write.append((spec, value, False))
+            elif since is not None and self._written_at.get(spec.id, float("-inf")) < since:
+                to_write.append((spec, value, True))
         self._write_binding_states(pending)
-        for spec, value in to_write:
-            await self._write(spec, value)
+        for spec, value, again in to_write:
+            await self._write(spec, value, reassert=again)
         self._write_lamps()
         for spec in changed:
             self._publish(self._reading(spec))
@@ -423,11 +545,15 @@ class DerivedStatusEngine:
         if spec.source_type == "lighting_group_all_at":
             if spec.lighting_group_id is None or spec.compare_level is None:
                 return False
-            return self.group_at(spec.lighting_group_id, spec.compare_level)
+            return self.group_at(spec.lighting_group_id, spec.compare_level, basis=spec.basis)
         if spec.source_type == "device_state":
             if spec.device_id is None or spec.compare_state is None:
                 return False
-            return state_matches(spec.compare_state, self.device_status(spec.device_id))
+            if state_matches(spec.compare_state, self.device_status(spec.device_id)):
+                return True
+            if self._is_projector(spec.device_id):
+                return state_matches(spec.compare_state, self._projector_state())
+            return False
         return False
 
     @property
@@ -451,8 +577,12 @@ class DerivedStatusEngine:
         """External control holds this group: its binding is suppressed, its status 0."""
         return self.external_active and self.group_touches_dmx(group_id)
 
-    def group_at(self, group_id: int, level: float) -> bool:
-        """Every member's stored level at ``level`` — 0 under external control (§8.8)."""
+    def group_at(self, group_id: int, level: float, *, basis: str = "level") -> bool:
+        """Every member at ``level`` — 0 under external control (§8.8).
+
+        ``basis`` is ``level`` (the stored level) or ``output`` (what the room
+        sees: level × the master).
+        """
         members = self.group_members(group_id)
         if not members or self.group_suppressed(group_id):
             return False
@@ -461,14 +591,36 @@ class DerivedStatusEngine:
         for channel_id in members:
             low, high = ranges.get(channel_id, (0.0, 100.0))
             target = clamp_level(level, low, high)
-            if abs(self._view.level(channel_id) - target) > LEVEL_TOLERANCE:
+            if abs(self._member_value(channel_id, basis) - target) > LEVEL_TOLERANCE:
                 return False
         return True
+
+    def _member_value(self, channel_id: int, basis: str) -> float:
+        """The stored level, or with ``basis == "output"`` the composited output.
+
+        A member the lighting configuration cannot drive (not fully patched)
+        sends nothing, so its output is 0.
+        """
+        if basis == "output":
+            assert self._lighting is not None
+            if self._frames_flowing():
+                output = self._lighting.output_level(channel_id)  # what went, mid-glide too
+            else:
+                output = self._lighting.composited_level(channel_id)
+            return 0.0 if output is None else output
+        return self._view.level(channel_id)
 
     def device_status(self, device_id: int) -> str | None:
         key = None if self._devices is None else self._devices.state_key(device_id)
         record = None if key is None else self._state.devices.record(key)
         return None if record is None else record.status
+
+    def _is_projector(self, device_id: int) -> bool:
+        return self._devices is not None and self._devices.state_key(device_id) == _PROJECTOR_SLOT
+
+    def _projector_state(self) -> str | None:
+        value = self._state.projector.get("state")
+        return value if isinstance(value, str) else None
 
     def transitioning(self, spec: StatusSpec) -> bool:
         """The lamp frame's ``transitioning`` flag (§7.4, §21.9's amber pulse).
@@ -480,11 +632,11 @@ class DerivedStatusEngine:
         is, and independent of :meth:`_evaluate`'s boolean reading. Any other
         status is never transitioning.
         """
-        if spec.source_type != "device_state" or spec.device_id is None or self._devices is None:
+        if spec.source_type != "device_state" or spec.device_id is None:
             return False
-        if self._devices.state_key(spec.device_id) != _PROJECTOR_SLOT:
+        if not self._is_projector(spec.device_id):
             return False
-        return self._state.projector.get("state") in ("warming", "cooling")
+        return self._projector_state() in ("warming", "cooling")
 
     def _devices_of_group(self, group_id: int | None) -> set[int]:
         if group_id is None or self._lighting is None:
@@ -552,7 +704,7 @@ class DerivedStatusEngine:
 
     # -- writing -------------------------------------------------------------------
 
-    async def _write(self, spec: StatusSpec, value: bool) -> None:
+    async def _write(self, spec: StatusSpec, value: bool, *, reassert: bool = False) -> None:
         if spec.group_address is None:
             # Q6: a lamp-only status has nothing to write to the KNX bus —
             # no telegram is sent and self.writes (KNX telegrams) is
@@ -581,9 +733,12 @@ class DerivedStatusEngine:
         self._warned.discard(spec.id)
         self._written[spec.id] = value
         self._written_to[spec.id] = spec.group_address
+        self._written_at[spec.id] = asyncio.get_running_loop().time()
         self.writes += 1
+        if reassert:
+            self.reasserts += 1
         log.debug(
-            "derived status written",
+            "derived status re-asserted" if reassert else "derived status written",
             extra={"status_id": spec.id, "group_address": spec.group_address, "value": value},
         )
 

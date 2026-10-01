@@ -582,8 +582,13 @@ async def monitor(_: Admin, knx: Knx) -> StreamingResponse:
         async for entry in knx.monitor.stream():
             yield f"data: {json.dumps(_monitor_entry_dict(entry))}\n\n".encode()
 
+    # X-Accel-Buffering: nginx buffers a proxied response by default, so without
+    # this the monitor showed telegrams in late clumps (found by the perf run on
+    # the CM5, 1 Oct 2026); the derived-status monitor already sent it.
     return StreamingResponse(
-        events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 

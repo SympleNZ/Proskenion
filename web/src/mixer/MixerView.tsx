@@ -1,39 +1,37 @@
 /*
- * The operator Mixer view (spec §21.13 — its wireframe is the specification
- * for this view). The pinned Main Output, the outputs drawer, and input
- * pagination, built on the shared `FaderStrip`/`lawFaderScale` and the
- * mixer service's contract (`docs/plans/phase-4-contracts.md`).
+ * The operator Mixer view (spec §21.13; `docs/operator-views.html`'s Mixer
+ * tab is the drawn reference). The desk row, left to right: the input
+ * strips, a hairline, the outputs drawer while it is open, and Main — pinned
+ * immediately after the inputs, as the mock draws it, so it is never
+ * stranded at the far edge of a wide screen. Everything is built on the
+ * shared `FaderStrip` card via `ChannelStrip` and the mixer service's
+ * contract (`docs/plans/phase-4-contracts.md`).
  *
- * Wide and narrow share one DOM tree. §21.13 draws two different arrangements
- * — a side drawer that narrows the input area on wide, a full-width page swap
- * on narrow — but the interaction underneath is the same toggle (open or
- * close the outputs panel), and the true visual difference is layout, not
- * structure, so it is left entirely to CSS breakpoints rather than rendered
- * twice. The one piece of narrow's layout this does not attempt to
- * reproduce is hiding Main from the default inputs page (narrow shows Main
- * only once the outputs page is open) — the task brief for this view states
- * "the pinned Main Output, always visible" as its first line of scope, which
- * this follows literally; see the task report for the tension with that
- * specific wireframe detail.
+ * How many inputs show is measured, not fixed (§21.13 "calculated from
+ * available width"): `inputLayout` answers from the desk row's own width,
+ * so a 4K monitor shows every input at once and page chips appear only where
+ * they do not all fit (an iPad in portrait). The drawer narrows the inputs by
+ * the outputs' own width; where that leaves no room for one input, the
+ * inputs give way to the outputs (§21.13's narrow "outputs page").
  *
- * Similarly, wide's per-page input count ("calculated from available width
- * with a minimum strip width") is a real layout measurement this
- * view does not fake with an unmeasurable jsdom width; `DEFAULT_PAGE_SIZE`
- * (`pagination.ts`) is used uniformly, and CSS lets the fixed-size page of
- * strips reflow narrower down to that minimum floor rather than scroll.
+ * The row fills the height the view has left, so the faders are as tall as
+ * the screen allows (capped, `--fader-strip-max-height`) and never shorter
+ * than the mock's card.
  */
 import { PanelRightClose, PanelRightOpen, SlidersHorizontal } from "lucide-react";
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 
 import { ApiError } from "@/api/client";
+import { ScrollRow } from "@/components/scrollrow/ScrollRow";
 import { EmptyState, ErrorState, Skeleton } from "@/components/ui/EmptyState";
 import type { FaderLaw } from "@/lib/faderLaw";
+import { useElementSize } from "@/lib/useElementSize";
 import { useMixerMetering } from "@/live/store";
 
 import { useFaderLaw, useMixerState } from "./api";
 import { ChannelStrip, PAN_UNAVAILABLE } from "./ChannelStrip";
 import { DeskSceneBand } from "./DeskSceneBand";
-import { DEFAULT_PAGE_SIZE, pageChipLabel, paginate } from "./pagination";
+import { inputLayout, pageChipLabel, paginate } from "./pagination";
 import type { MeteringReason, MixerCapabilities, MixerOutputChannel, MixerStateResponse } from "./types";
 
 function statusLine(error: unknown): string | undefined {
@@ -67,17 +65,34 @@ function meteringNotice(reason: MeteringReason): string {
 interface OutputsPanelProps {
   id: string;
   open: boolean;
+  /** How many strips wide the open drawer is (`inputLayout`); the rest scroll inside it. */
+  shown: number;
   outputs: readonly MixerOutputChannel[];
   law: FaderLaw;
   capabilities: MixerCapabilities;
   connected: boolean;
 }
 
-function OutputsPanel({ id, open, outputs, law, capabilities, connected }: OutputsPanelProps) {
+/**
+ * The drawer (§21.13): always mounted, so opening it is a width change on a
+ * panel that is already there. Its open width is arithmetic — the strips
+ * `inputLayout` gave it × (strip + gap) — carried to CSS as
+ * `--mixer-output-count`; any outputs beyond that scroll inside it.
+ */
+function OutputsPanel({ id, open, shown, outputs, law, capabilities, connected }: OutputsPanelProps) {
   return (
-    <div id={id} className="mixer-outputs-panel" data-open={open || undefined} aria-hidden={!open}>
-      <h2 className="lighting-section-title">Outputs</h2>
-      <div className="mixer-outputs-strips">
+    <div
+      id={id}
+      className="mixer-column mixer-outputs-panel"
+      data-open={open || undefined}
+      aria-hidden={!open}
+      inert={!open}
+      style={{ "--mixer-output-count": shown } as CSSProperties}
+    >
+      <div className="mixer-column-header">
+        <h2 className="lighting-section-title">Outputs</h2>
+      </div>
+      <div className="mixer-strips">
         {outputs.map((channel) => (
           <ChannelStrip
             key={channel.channel_id}
@@ -94,36 +109,25 @@ function OutputsPanel({ id, open, outputs, law, capabilities, connected }: Outpu
   );
 }
 
-interface MainPanelProps {
-  main: MixerStateResponse["main"];
-  law: FaderLaw;
-  capabilities: MixerCapabilities;
-  connected: boolean;
-}
-
-function MainPanel({ main, law, capabilities, connected }: MainPanelProps) {
-  if (!main) return null;
+function MainStrip({ main, law, capabilities, connected }: { main: NonNullable<MixerStateResponse["main"]>; law: FaderLaw; capabilities: MixerCapabilities; connected: boolean }) {
   return (
-    <div className="mixer-main-panel">
-      <h2 className="lighting-section-title">Main Output</h2>
-      <ChannelStrip
-        channel={{
-          channel_id: main.channel_id,
-          name: main.name,
-          short_name: main.name,
-          stereo: true,
-          db: main.db,
-          muted: main.muted,
-          origin: main.origin,
-        }}
-        target={{ section: "main", id: main.channel_id }}
-        law={law}
-        capabilities={capabilities}
-        connected={connected}
-        faderPosLabel
-        testId="mixer-main"
-      />
-    </div>
+    <ChannelStrip
+      channel={{
+        channel_id: main.channel_id,
+        name: main.name,
+        short_name: main.name,
+        stereo: true,
+        db: main.db,
+        muted: main.muted,
+        origin: main.origin,
+      }}
+      target={{ section: "main", id: main.channel_id }}
+      law={law}
+      capabilities={capabilities}
+      connected={connected}
+      faderPosLabel
+      testId="mixer-main"
+    />
   );
 }
 
@@ -139,6 +143,7 @@ export function MixerView() {
   const metering = useMixerMetering();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [page, setPage] = useState(0);
+  const [deskRef, deskSize] = useElementSize<HTMLDivElement>();
 
   if (query.isPending) {
     return (
@@ -210,7 +215,9 @@ export function MixerView() {
         metering_reason: metering.available ? null : asMeteringReason(metering.reason),
       }
     : data.capabilities;
-  const pages = paginate(data.inputs, DEFAULT_PAGE_SIZE);
+  const layout = inputLayout(deskSize.width, data.inputs.length, drawerOpen, data.outputs.length);
+  const pageSize = layout.pageSize;
+  const pages = paginate(data.inputs, pageSize);
   const currentPage = Math.min(page, Math.max(0, pages.length - 1));
   const currentInputs = pages[currentPage] ?? [];
   const outputsPanelId = "mixer-outputs-panel";
@@ -227,22 +234,22 @@ export function MixerView() {
       {!capabilities.metering ? (
         // Absent, not empty: an absent meter bar reads as "not offered", an
         // empty one reads as silence — this line is what tells the truth (§21.13).
-        <p className="mixer-metering-notice" role="status">
+        <p className="mixer-metering-notice">
           {meteringNotice(capabilities.metering_reason)}
         </p>
       ) : null}
       {!capabilities.pan && data.inputs.some((channel) => channel.show_pan) ? (
         // §5.5 "Capability degradation": configured pan stays visible and
         // disabled, with the reason said once rather than on every strip.
-        <p className="mixer-metering-notice" role="status">
+        <p className="mixer-metering-notice">
           Pan unavailable — {PAN_UNAVAILABLE.charAt(0).toLowerCase() + PAN_UNAVAILABLE.slice(1)}.
         </p>
       ) : null}
-      <div className="mixer-body tablet:flex-row">
-        <div className="mixer-inputs-panel">
-          <div className="mixer-inputs-header">
+      <ScrollRow scrollerRef={deskRef} rowClassName="mixer-desk-row" className="mixer-desk">
+        <div className="mixer-column mixer-inputs-panel" hidden={layout.inputsHidden}>
+          <div className="mixer-column-header">
             <h2 className="lighting-section-title">Inputs</h2>
-            {pages.length > 0 ? (
+            {pages.length > 1 ? (
               <div className="mixer-page-chips" role="tablist" aria-label="Input pages">
                 {pages.map((_, index) => (
                   <button
@@ -253,26 +260,16 @@ export function MixerView() {
                     className="mixer-page-chip"
                     onClick={() => setPage(index)}
                   >
-                    {pageChipLabel(index, DEFAULT_PAGE_SIZE, data.inputs.length)}
+                    {pageChipLabel(index, pageSize, data.inputs.length)}
                   </button>
                 ))}
               </div>
             ) : null}
-            <button
-              type="button"
-              className="mixer-outputs-toggle"
-              aria-expanded={drawerOpen}
-              aria-controls={outputsPanelId}
-              onClick={() => setDrawerOpen((open) => !open)}
-            >
-              {drawerOpen ? <PanelRightClose aria-hidden="true" className="size-4" /> : <PanelRightOpen aria-hidden="true" className="size-4" />}
-              Outputs
-            </button>
           </div>
           {currentInputs.length === 0 ? (
             <p className="mixer-no-inputs">No input channels configured.</p>
           ) : (
-            <div className="mixer-input-strips">
+            <div className="mixer-strips mixer-input-strips">
               {currentInputs.map((channel) => (
                 <ChannelStrip
                   key={channel.channel_id}
@@ -287,16 +284,36 @@ export function MixerView() {
             </div>
           )}
         </div>
+        <div className="mixer-divider" aria-hidden="true" hidden={layout.inputsHidden} />
         <OutputsPanel
           id={outputsPanelId}
           open={drawerOpen}
+          shown={layout.outputsShown}
           outputs={data.outputs}
           law={law}
           capabilities={capabilities}
           connected={connected}
         />
-        <MainPanel main={data.main} law={law} capabilities={capabilities} connected={connected} />
-      </div>
+        <div className="mixer-column mixer-main-panel">
+          <div className="mixer-column-header">
+            <button
+              type="button"
+              className="mixer-outputs-toggle"
+              aria-expanded={drawerOpen}
+              aria-controls={outputsPanelId}
+              onClick={() => setDrawerOpen((open) => !open)}
+            >
+              {drawerOpen ? <PanelRightClose aria-hidden="true" className="size-4" /> : <PanelRightOpen aria-hidden="true" className="size-4" />}
+              Outputs
+            </button>
+          </div>
+          {data.main ? (
+            <div className="mixer-strips">
+              <MainStrip main={data.main} law={law} capabilities={capabilities} connected={connected} />
+            </div>
+          ) : null}
+        </div>
+      </ScrollRow>
     </div>
   );
 }

@@ -44,7 +44,11 @@ vocabulary from connection status, produced by
 :class:`~proskenion.core.events.ProjectorStateChanged` rather than
 :class:`~proskenion.core.events.DeviceStatusChanged` (Phase 3); ``error`` is
 a member of both and a rule naming it matches whichever fires. Any other
-state name is stored and validated but has no producer yet.
+state name is stored and validated but has no producer yet. A third alias,
+``on_or_warming``, spans two of the projector's own states (``warming`` and
+``on``) for a panel indicator that only cares whether the lamp has started,
+not whether it has finished warming up; plain ``on`` still means exactly
+``on``.
 """
 
 from __future__ import annotations
@@ -64,12 +68,15 @@ MATCH_TYPES: Final = ("any", "equal", "not_equal", "gte", "lte", "range")
 GUARD_TYPES: Final = ("time_window", "external_control", "device_state")
 ACTION_TYPES: Final = ("run_scene", "lighting_group", "notify")
 SOURCE_TYPES: Final = ("lighting_group_all_at", "device_state", "external_control")
+#: What ``lighting_group_all_at`` compares (migration 011): stored level or output.
+BASES: Final = ("level", "output")
 
 TriggerType = Literal["knx", "schedule", "surface", "device_state"]
 MatchType = Literal["any", "equal", "not_equal", "gte", "lte", "range"]
 GuardType = Literal["time_window", "external_control", "device_state"]
 ActionType = Literal["run_scene", "lighting_group", "notify"]
 SourceType = Literal["lighting_group_all_at", "device_state", "external_control"]
+Basis = Literal["level", "output"]
 GuardResult = Literal["passed", "blocked"]
 
 #: §8.4: debounce applies to knx triggers only, default 500 ms.
@@ -84,10 +91,15 @@ NUMERIC_ONLY_MATCH_TYPES: Final = frozenset({"gte", "lte", "range"})
 CONNECTION_STATES: Final = frozenset(
     {"connected", "degraded", "error", "unconfigured", "connecting"}
 )
-#: … and §8.3's plain-language names for two of them.
+#: … and §8.3's plain-language names for two of them, plus one that spans the
+#: projector's own vocabulary (§7.4): a panel indicator that should go green
+#: the moment the projector starts and red the moment it starts cooling,
+#: without caring which side of warm-up it is on. Plain ``"on"`` stays exact —
+#: a rule such as "set the input once warm" (§8.13) depends on that.
 STATE_ALIASES: Final[dict[str, frozenset[str]]] = {
     "online": frozenset({"connected"}),
     "offline": frozenset({"error"}),
+    "on_or_warming": frozenset({"warming", "on"}),
 }
 #: The projector's own operational states (§7.4), produced by
 #: :class:`~proskenion.core.events.ProjectorStateChanged` (Phase 3). ``error``

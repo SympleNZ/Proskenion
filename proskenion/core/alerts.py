@@ -85,6 +85,7 @@ class AlertKind(StrEnum):
     BACKUP_FAILED = "backup_failed"  # the nightly job itself failed (§13.4)
     MEDIA_FAILED = "media_failed"  # both the USB and the network destination are down
     BACKUP_UNTRUSTED = "backup_untrusted"  # the monthly verification found a bad archive
+    BACKUP_MISSING = "backup_missing"  # the archive it chose is held by no destination at all
     ROLLBACK = "rollback"  # seam for an automatic rollback; priority="high"
 
 

@@ -133,36 +133,6 @@ events only, until a `{"type": "resync"}` asks for a full snapshot per
 domain. See `proskenion/api/ws.py` and spec §16.8 for the full frame
 vocabulary.
 
-## Served endpoints not in spec §16
-
-The Phase 7 milestone audit (`docs/phase-7-milestone.md`) found these serving
-without a corresponding row in §16. Each is real, tested and in production
-use; §16 needs folding to catch up, not the code. Listed here so they can be
-added in one pass:
-
-| Method | Path | What it's for |
-|---|---|---|
-| `GET` | `/auth/password-status` | Each staff account's password-last-changed time, and whether the two passwords are identical (Admin → Users, §21.23) |
-| `POST` | `/auth/operator-password` | Admin sets or resets the shared operator password |
-| `GET` | `/system/security-log` | Paginated read of `security_events`, admin-only (§6.14) |
-| `GET` | `/system/debug-logging` | Current per-module DEBUG toggles |
-| `PUT` | `/system/debug-logging` | Change per-module DEBUG toggles |
-| `GET` | `/system/diagnostics` | What the soak harness cannot read from `/proc` directly: task count, socket count, loop lag (§22.7, §23.3) |
-| `GET` | `/system/backup/snapshots` | Lists pre-change/-restore/-update snapshots for the Backup screen's Snapshots list |
-| `POST` | `/system/backup/restore/acknowledge` | Dismisses the Backup screen's "Last restore" line; the record stays until the next restore supersedes it |
-| `DELETE` | `/system/email` | Removes stored SMTP configuration |
-| `DELETE` | `/system/update` | Discards a staged, not-yet-applied update package |
-| `GET` | `/derived-status/monitor` | Live read of derived-status inputs, for the rule editor's preview |
-| `GET` | `/lighting/patch/conflicts` | Two channels or fixtures patched to the same DMX address |
-| `GET` | `/scenes/domains` | The scene action domains a driver or subsystem has registered, for the scene action editor |
-
-Two further spec issues found alongside these, not fixed here (listed in
-full in this task's report rather than in this file, per `CLAUDE.md`'s
-convention of leaving `WORKLOG.md` and the spec HTML to the coordinator):
-§16.7 names three endpoints (`GET /system/certs`, `POST /system/certs/
-test-token`, `POST /system/baseline/capture`) that the Phase 6 contracts
-renamed; the served names are the ones in the table below.
-
 ## Route table
 
 Every route this application serves under `/api/v1/`, plus `GET /health` at
@@ -383,6 +353,7 @@ not prose written for this file.
 | POST | `/api/v1/system/reboot` | admin | Reboot |
 | POST | `/api/v1/system/restart` | admin | Restart |
 | GET | `/api/v1/system/security-log` | admin | Get Security Log |
+| POST | `/api/v1/system/shutdown` | admin | Shutdown |
 | GET | `/api/v1/system/time` | admin | System Time |
 | DELETE | `/api/v1/system/update` | admin | Discard |
 | POST | `/api/v1/system/update` | admin | Upload |

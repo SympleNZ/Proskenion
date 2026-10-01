@@ -81,6 +81,7 @@ def test_every_contract_verb_is_registered(helper: ModuleType) -> None:
     assert set(helper.VERBS) == {
         "restart-core",
         "reboot",
+        "shutdown",
         "apply-network",
         "apply-update",
         "write-slot",
@@ -96,6 +97,7 @@ def test_the_verbs_this_build_carries_out(helper: ModuleType) -> None:
     assert implemented == {
         "restart-core",
         "reboot",
+        "shutdown",
         "apply-update",
         "apply-network",
         "backup-now",
@@ -1247,3 +1249,38 @@ def test_nginx_refusing_its_normal_site_puts_emergency_mode_back(
     assert _enabled(enabled) == ["emergency.conf"]
     assert reason.exists()
     assert units.calls[-1] == ["systemctl", "start", "auditorium-emergency.service"]
+
+
+# -- shutdown ------------------------------------------------------------------
+
+
+def test_shutdown_takes_no_arguments(helper: ModuleType) -> None:
+    verb = helper.VERBS["shutdown"]
+    assert verb.args == {}
+    verb.validate({})
+    with pytest.raises(helper.Refused, match="does not accept"):
+        verb.validate({"mode": "normal"})
+
+
+def test_shutdown_powers_off_through_systemctl(helper: ModuleType, tmp_path: Path) -> None:
+    runner = _Systemctl()
+    request = helper.Request(
+        id=UUID,
+        verb="shutdown",
+        requested_at=dt.datetime.now().astimezone(),
+        args={},
+        path=tmp_path / f"{UUID}.json",
+    )
+    ctx = helper.Context(status=helper.Status(tmp_path, UUID, of=1), request=request, run=runner)
+    helper.do_shutdown(ctx)
+    assert runner.argv == [["systemctl", "poweroff"]]
+
+
+def test_a_shutdown_request_is_accepted_and_a_lookalike_verb_is_not(
+    helper: ModuleType, helper_dir: Path
+) -> None:
+    accepted = read_request(helper, write_request(helper_dir, verb="shutdown"))
+    assert accepted.verb == "shutdown"
+    for lookalike in ("poweroff", "halt", "shutdown-now"):
+        path = write_request(helper_dir, verb=lookalike)
+        assert "unknown verb" in refusal(helper, path)

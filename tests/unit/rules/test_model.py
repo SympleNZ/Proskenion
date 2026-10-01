@@ -20,6 +20,7 @@ from proskenion.rules.model import (
     parse_time_window,
     state_has_producer,
     state_matches,
+    valid_state_name,
     validate_cron,
 )
 
@@ -177,6 +178,20 @@ def test_online_and_offline_name_connection_states() -> None:
 def test_projector_states_have_a_producer_as_of_phase_3() -> None:
     for state in ("unreachable", "off", "warming", "on", "cooling", "error"):
         assert state_has_producer(state)
+
+
+def test_on_or_warming_spans_the_projectors_own_warming_and_on_states() -> None:
+    """A panel indicator using this alias goes green the moment the projector
+    starts and red the moment it starts cooling. Plain "on" stays exact —
+    §8.13's "set the input once warm" depends on it never matching "warming"."""
+    assert state_matches("on_or_warming", "warming")
+    assert state_matches("on_or_warming", "on")
+    assert not state_matches("on_or_warming", "off")
+    assert not state_matches("on_or_warming", "cooling")
+    assert not state_matches("on_or_warming", "unreachable")
+    assert not state_matches("on", "warming")  # unaffected: still exact
+    assert state_has_producer("on_or_warming")
+    assert valid_state_name("on_or_warming")
 
 
 # -- cron (§8.3: stored and validated; fired in Phase 7) ----------------------------

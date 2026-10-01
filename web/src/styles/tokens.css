@@ -141,17 +141,47 @@
   --focus-ring-width:  2px;    /* Focus: teal ring, 2px, 2px offset */
   --focus-ring-offset: 2px;
   --hairline:          1px;    /* Card, input and rule borders */
+  /* The operator/admin status bar's own rendered height (--touch-min plus
+   * its top hairline): a mobile bottom sheet (components.css's
+   * `.sheet-content`) clears this at its foot rather than sliding under the
+   * status bar, which sits above it in the DOM as a persistent footer, not
+   * inside the sheet's own stacking context. */
+  --status-bar-height: calc(var(--touch-min) + var(--hairline));
 
   /* ── Pages surface strip footprint (§21.9) ───────────────────────────────
-   * Fixed by the spec, not derived from the Mixer/Lighting views' own
-   * compact strip (`--space-20 + --space-4` = 96px): "A 2-wide panel is
-   * 314 px — two 150 px strips plus the 14 px between them — not 288 px
-   * derived from its buttons" (§21.9), and "A 150 px strip at 13.5 px takes
-   * about sixteen characters on one line" (§21.21). Used only on the Pages
-   * surface (`.page-surface-flow`'s own descendants) — the operator Mixer
-   * and Lighting views keep their own narrower strip.                       */
+   * Fixed by the spec: "A 2-wide panel is 314 px — two 150 px strips plus
+   * the 14 px between them — not 288 px derived from its buttons" (§21.9),
+   * and "A 150 px strip at 13.5 px takes about sixteen characters on one
+   * line" (§21.21). The Mixer and Lighting views' cards are now the same
+   * width (`--fader-strip-width` below, the mock's `.strip`).               */
   --pages-strip-width: 150px;
   --pages-strip-gap:   14px;
+
+  /* ── Channel strip card (§21.5 FaderStrip, drawn in docs/operator-views.html)
+   * One card for every view that shows a fader. The Mixer and Lighting views
+   * now use the same 150 px footprint as the Pages surface (the mock's
+   * `.strip`), and the same 430 px card where a row has a fixed height
+   * (Lighting's two rows) — about 280 px of travel. Where a row fills the
+   * height that is left (Mixer, Pages), the card grows and the fader with it.
+   * The thumb is the mock's wide, flat cap: 52 × 32, never under the 32 × 32
+   * `--touch-thumb` minimum; the hit area is the whole travel, not the thumb. */
+  --fader-strip-width:      150px;
+  --fader-strip-height:     430px;   /* Fixed-height rows (Lighting) */
+  --fader-strip-max-height: 820px;   /* Mixer view: fills the height up to this */
+  --fader-zone-min:         120px;   /* Fader zone never shorter than this */
+  --fader-thumb-width:       52px;
+  --fader-thumb-height:      32px;
+  --fader-track-width:       11px;
+  --fader-scale-width:       34px;
+  --fader-hknob-size:        24px;   /* Horizontal (Master) thumb */
+  --fader-htrack-height:      6px;   /* Horizontal track */
+  --fader-htrack-min:       160px;   /* Horizontal track never shorter than this */
+  --strip-accent-height:      3px;   /* Group colour along a card's top edge */
+  --meter-bar-width:         11px;   /* Mono meter bar */
+  --meter-bar-width-stereo:   8px;   /* Each of a stereo pair */
+  --meter-bar-gap:            3px;
+  --mute-glow: 0 0 6px 2px rgb(239 68 68 / 0.5);   /* Muted: the lit button's glow (mock `.mu.on`) */
+  --shadow-mute-inset: inset 0 2px 4px rgb(0 0 0 / 0.6);
 
   /* A panel button's latch (§21.9: "It drops two pixels") and its LED's own
    * glow geometry — the colour is a var(), composed at the call site, so
@@ -199,10 +229,20 @@
  *            and device state moves into the navigation rail (§21.7, §21.9)
  *   tablet   tablet and up: tab strip and sidebar layouts (§21.6)
  *   desktop  desktop: admin sidebar always visible (§21.6)
- *   design   1920 × 1080 design target: Display scale is offered (§21.9)     */
+ *   design   1920 × 1080 design target: Display scale is offered (§21.9)
+ *   portrait-guard-height   the owner's decision (2026-09): a phone in
+ *            landscape — orientation, this height, and a coarse pointer, all
+ *            three (`PhoneLandscapeGuard`, `lib/phoneLandscape.ts`, which
+ *            holds the same 500 as a JS literal to keep in step) — gets a
+ *            full-screen "turn your phone upright" overlay instead of the
+ *            unusable 37px-fader-travel interface `short` above adapts to.
+ *            Phone landscape is ~390–430px tall; the smallest supported
+ *            tablet landscape (an 11" iPad, 1194×834) is 834, comfortably
+ *            clear of it.                                                   */
 @theme {
   --viewport-short-height: 420px;
   --viewport-design-height: 1080px;
+  --viewport-portrait-guard-height: 500px;
   --breakpoint-tablet: 768px;
   --breakpoint-desktop: 1024px;
   --breakpoint-design: 1920px;

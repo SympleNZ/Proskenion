@@ -93,6 +93,7 @@ export const DERIVED_STATUS: DerivedStatus = {
   compare_level: 100,
   device_id: null,
   compare_state: null,
+  basis: "level",
   created_at: "2026-09-01T09:00:00+12:00",
   updated_at: "2026-09-01T09:00:00+12:00",
 };

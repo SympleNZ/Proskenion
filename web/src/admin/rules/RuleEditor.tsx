@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/Button";
 import { Field, Input } from "@/components/ui/Input";
 import { Checkbox, Select } from "@/components/ui/Select";
 import { Sheet, SheetContent } from "@/components/ui/Sheet";
+import { hasFader } from "@/lighting/indicatorGroups";
 import type { LightingGroup } from "@/lighting/types";
 import { saveFormOnShortcut } from "@/lib/keyboard";
 
@@ -30,9 +31,10 @@ import {
   parseDeviceStateGuard,
   parseExternalControlGuard,
   parseTimeWindow,
+  STATE_ALIAS_LABELS,
   STATE_ALIASES,
 } from "./guards";
-import { BINDING_FORCES_MULTIPLIER, NOTIFY_IS_LOG_ONLY, SCHEDULE_BEHAVIOUR, SURFACE_NOT_FIRING } from "./notices";
+import { BINDING_SETS_LEVELS, NOTIFY_IS_LOG_ONLY, SCHEDULE_BEHAVIOUR, SURFACE_NOT_FIRING } from "./notices";
 import {
   ACTION_TYPES,
   DEFAULT_DEBOUNCE_MS,
@@ -248,7 +250,7 @@ function DeviceStateFields({
         />
         <datalist id={`${idPrefix}-state-options`}>
           {STATE_SUGGESTIONS.map((s) => (
-            <option key={s} value={s} />
+            <option key={s} value={s} label={STATE_ALIAS_LABELS[s] ?? s} />
           ))}
         </datalist>
         <p className="field-help">
@@ -632,7 +634,9 @@ export function RuleEditor({
                   onChange={(event) => set("lighting_group_id", event.currentTarget.value ? Number(event.currentTarget.value) : null)}
                 >
                   <option value="">Choose a group…</option>
-                  {lightingGroups.map((group) => (
+                  {/* A binding does what its group's fader does (§8.8): an indicator-only
+                      group has none, and the API refuses one (migration 011). */}
+                  {lightingGroups.filter(hasFader).map((group) => (
                     <option key={group.id} value={group.id}>
                       {group.name}
                     </option>
@@ -672,7 +676,7 @@ export function RuleEditor({
                   />
                 </Field>
               </div>
-              <Banner tone="info">{BINDING_FORCES_MULTIPLIER}</Banner>
+              <Banner tone="info">{BINDING_SETS_LEVELS}</Banner>
             </>
           ) : null}
 

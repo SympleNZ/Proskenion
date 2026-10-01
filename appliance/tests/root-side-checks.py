@@ -56,6 +56,7 @@ def check_modules(appliance: pathlib.Path) -> None:
     expected_verbs = {
         "restart-core",
         "reboot",
+        "shutdown",
         "apply-network",
         "apply-update",
         "write-slot",

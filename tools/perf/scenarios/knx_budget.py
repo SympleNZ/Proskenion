@@ -86,6 +86,10 @@ async def run(client: PerfClient, safety: Safety, options: Options | None = None
 
     arrivals: list[float] = []
     stop = asyncio.Event()
+    # GET /knx/monitor replays its recent buffer (up to 200 entries, §21.19) the
+    # moment it opens; those are earlier telegrams, not this burst, and would
+    # land in one instant. Only entries arriving after the first write count.
+    writing = asyncio.Event()
 
     async def watch_monitor() -> None:
         try:
@@ -101,13 +105,14 @@ async def run(client: PerfClient, safety: Safety, options: Options | None = None
                         entry = json.loads(line[len("data: ") :])
                     except (TypeError, ValueError):
                         continue
-                    if entry.get("direction") == "outgoing":
+                    if writing.is_set() and entry.get("direction") == "outgoing":
                         arrivals.append(monotonic())
         except httpx.HTTPError:
             return
 
     monitor_task = asyncio.create_task(watch_monitor())
-    await asyncio.sleep(0.1)  # let the SSE connection actually open before writing
+    await asyncio.sleep(0.4)  # let the SSE connection open and its backlog replay finish
+    writing.set()
 
     sent = 0
     failures = 0
@@ -146,6 +151,8 @@ async def run(client: PerfClient, safety: Safety, options: Options | None = None
     peak_rate = _peak_one_second_rate(arrivals)
     overall_rate = len(arrivals) / (arrivals[-1] - arrivals[0]) if len(arrivals) > 1 else 0.0
     enforced = peak_rate <= RATE_LIMIT_PER_SECOND + WRITE_BUDGET_TOLERANCE
+    histogram = _window_histogram(arrivals)
+    over_budget = sum(n for count, n in histogram.items() if count > RATE_LIMIT_PER_SECOND)
     return ScenarioResult(
         target=KNX_TELEGRAMS,
         achieved=overall_rate,
@@ -160,9 +167,15 @@ async def run(client: PerfClient, safety: Safety, options: Options | None = None
             f"telegram(s) observed on GET /knx/monitor (SSE) for address id "
             f"{options.knx_address_id}. Peak observed rate in any 1 s window: "
             f"{peak_rate:.1f}/s against the {RATE_LIMIT_PER_SECOND}/s budget (§7.1) — "
-            f"{'held' if enforced else 'BREACHED'}. This checks the budget is enforced; raw "
+            f"{'held' if enforced else 'BREACHED'}. Window-count histogram (telegrams in the "
+            f"1 s window starting at each telegram: number of windows with that count): "
+            f"{_format_histogram(histogram)} - {over_budget} of {len(arrivals)} window(s) "
+            f"above {RATE_LIMIT_PER_SECOND}. This checks the budget is enforced; raw "
             f"telegram throughput beyond it is not independently observable from outside the "
-            f"process. A flood submitted all at once (as this scenario does, deliberately —"
+            f"process. The monitor records each outgoing telegram when the background sender "
+            f"hands it to knxd (not when it is queued), so these windows are the sender's "
+            f"pacing; on the box the bus itself can be cross-checked with knxtool "
+            f"(see tools/perf/README.md). A flood submitted all at once (as this scenario does, deliberately —"
             f" §23.1's own 'simultaneous fades') sends its first ~15 telegrams in one burst, "
             f"then another ~15 about a second later as that whole burst ages out together; a "
             f"window straddling two such bursts can read a little over 15 without the limiter "
@@ -174,6 +187,9 @@ async def run(client: PerfClient, safety: Safety, options: Options | None = None
             "failures": failures,
             "peak_1s_rate": peak_rate,
             "budget_per_second": RATE_LIMIT_PER_SECOND,
+            "window_count_histogram": {str(k): v for k, v in histogram.items()},
+            "windows_total": len(arrivals),
+            "windows_over_budget": over_budget,
         },
     )
 
@@ -200,10 +216,10 @@ def _alternate_value(dpt: str, toggle: bool) -> object:
     return 10.0 if toggle else 20.0
 
 
-def _peak_one_second_rate(arrivals: list[float]) -> float:
-    """The busiest 1-second sliding window in ``arrivals`` — telegrams whose
-    arrival falls within 1 s of some other arrival, counted for every
-    possible window start, taking the maximum.
+def _window_counts(arrivals: list[float]) -> list[int]:
+    """For each arrival, how many telegrams (itself included) fall in the
+    1 s window starting at it - every window start that can be the maximum.
+    (Windows near the end of the stream are truncated and so read low.)
 
     Strict ``<`` on the window boundary, matching ``_RateLimiter.acquire()``'s
     own expiry check (``proskenion/core/knx.py``: an entry expires once its
@@ -211,7 +227,7 @@ def _peak_one_second_rate(arrivals: list[float]) -> float:
     ``<=`` here would count a telegram the real limiter had already expired,
     an off-by-one that looked like a breach and was not one.
     """
-    peak = 0
+    counts: list[int] = []
     for i, start in enumerate(arrivals):
         count = 1
         for later in arrivals[i + 1 :]:
@@ -219,5 +235,24 @@ def _peak_one_second_rate(arrivals: list[float]) -> float:
                 count += 1
             else:
                 break
-        peak = max(peak, count)
-    return float(peak)
+        counts.append(count)
+    return counts
+
+
+def _peak_one_second_rate(arrivals: list[float]) -> float:
+    """The busiest 1-second sliding window in ``arrivals``."""
+    return float(max(_window_counts(arrivals), default=0))
+
+
+def _window_histogram(arrivals: list[float]) -> dict[int, int]:
+    """``{telegrams in a 1 s window: number of windows with that count}``,
+    ascending. Makes a marginal "just over 15" visible as how many windows
+    were over and by how much: a few bursts, or the steady state."""
+    histogram: dict[int, int] = {}
+    for count in _window_counts(arrivals):
+        histogram[count] = histogram.get(count, 0) + 1
+    return dict(sorted(histogram.items()))
+
+
+def _format_histogram(histogram: dict[int, int]) -> str:
+    return ", ".join(f"{count}: {windows}" for count, windows in histogram.items())

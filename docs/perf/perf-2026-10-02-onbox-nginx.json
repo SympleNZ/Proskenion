@@ -1,0 +1,209 @@
+{
+  "generated_at": "2026-10-01T20:53:11.240063+00:00",
+  "base_url": "https://127.0.0.1",
+  "signed_in_as": "admin",
+  "safety": {
+    "allow_device_writes": true,
+    "allow_scene_triggers": true
+  },
+  "run_context": {
+    "vantage": "on-box",
+    "path": "nginx",
+    "base_url": "https://127.0.0.1",
+    "host_header": "auditorium.obhs.school.nz",
+    "tls_verified": false,
+    "session": "minted",
+    "machine": "auditorium",
+    "euid": 0,
+    "dmx_capture_iface": "eth0"
+  },
+  "spec": "docs/proskenion-spec-v3.1.html \u00a723.1, \u00a723.2",
+  "results": [
+    {
+      "row_id": "http_throughput",
+      "concern": "Concurrent HTTP requests",
+      "citation": "\u00a723.1",
+      "target_text": "100/sec sustained",
+      "measured_by": "wrk against representative endpoints",
+      "unit": "req_per_s",
+      "achieved": 462.0814026609856,
+      "p50_ms": 14.39424000272993,
+      "p95_ms": 62.62051580124533,
+      "max_ms": 270.2253759998712,
+      "sample_count": 2317,
+      "passed": true,
+      "skipped": false,
+      "notes": "10 workers cycling 4 endpoints (/health, /system/health, /mixer/state, /lighting/state) for 5 s after a 0.5 s warm-up; 0 failure(s).",
+      "extra": {
+        "endpoints": [
+          "/health",
+          "/system/health",
+          "/mixer/state",
+          "/lighting/state"
+        ],
+        "failures": 0
+      }
+    },
+    {
+      "row_id": "ws_clients",
+      "concern": "Concurrent WebSocket clients",
+      "citation": "\u00a723.1",
+      "target_text": "20 sustained, 50 peak",
+      "measured_by": "50 connections holding the lighting view",
+      "unit": "clients",
+      "achieved": 50.0,
+      "p50_ms": 34.31085099509801,
+      "p95_ms": 35.42120484671614,
+      "max_ms": 35.4454429980251,
+      "sample_count": 50,
+      "passed": true,
+      "skipped": false,
+      "notes": "50 of 50 requested connections held for 2 s; 0 failed to open; 50 of 50 received the broadcast within 5 s of the trigger. p50/p95/max above are delivery latency, not a \u00a723.1 target on their own (\u00a723.2 has no row for this frame specifically).",
+      "extra": {
+        "connect_failures": 0,
+        "delivered": 50
+      }
+    },
+    {
+      "row_id": "ws_control_writes",
+      "concern": "WebSocket control writes",
+      "citation": "\u00a723.1",
+      "target_text": "300/sec sustained",
+      "measured_by": "10 clients dragging simultaneously",
+      "unit": "writes_per_s",
+      "achieved": 5328.1058068884795,
+      "p50_ms": 1.7455560009693727,
+      "p95_ms": 2.1917225523793604,
+      "max_ms": 4.038017999846488,
+      "sample_count": 15990,
+      "passed": true,
+      "skipped": false,
+      "notes": "10 clients dragging mixer channel 1 for 3 s; 0 nack/timeout(s). p50/p95/max are set-to-ack round trip (\u00a723.2 target: p50 15 ms, p99 60 ms).",
+      "extra": {
+        "channel_id": 1,
+        "failures": 0
+      }
+    },
+    {
+      "row_id": "db_inserts",
+      "concern": "Database writes",
+      "citation": "\u00a723.1",
+      "target_text": "100 inserts/sec sustained",
+      "measured_by": "Scene execution log under scripted load",
+      "unit": "inserts_per_s",
+      "achieved": 267.8620732851837,
+      "p50_ms": 18.011813997873105,
+      "p95_ms": 22.207610250916332,
+      "max_ms": 91.89990400045644,
+      "sample_count": 806,
+      "passed": true,
+      "skipped": false,
+      "notes": "5 workers triggering scene 3 ('Proskenion perf harness (transient \u2014 safe to delete)') for 3 s; 0 failure(s); 500 rows now in its execution log. p50/p95/max are the trigger call's own round trip (202 Accepted, \u00a716.8), not the log row's write time \u2014 the scene engine's own run-start lock (\u00a78.13's ``_run_gate``) serialises the actual insert, so this is the real production path, not an artificial ceiling.",
+      "extra": {
+        "scene_id": 3,
+        "logged_count": 500,
+        "failures": 0
+      }
+    },
+    {
+      "row_id": "knx_telegrams",
+      "concern": "KNX outgoing telegrams",
+      "citation": "\u00a723.1, \u00a77.1 (RATE_LIMIT_PER_SECOND)",
+      "target_text": "15/sec, enforced",
+      "measured_by": "Priority queue under simultaneous fades",
+      "unit": "telegrams_per_s",
+      "achieved": 16.914178935941106,
+      "p50_ms": null,
+      "p95_ms": null,
+      "max_ms": null,
+      "sample_count": 75,
+      "passed": true,
+      "skipped": false,
+      "notes": "1525 test-write(s) sent (0 refused) over 4 s by 5 concurrent callers; 75 outgoing telegram(s) observed on GET /knx/monitor (SSE) for address id 47. Peak observed rate in any 1 s window: 15.0/s against the 15/s budget (\u00a77.1) \u2014 held. Window-count histogram (telegrams in the 1 s window starting at each telegram: number of windows with that count): 1: 5, 2: 5, 3: 5, 4: 5, 5: 5, 6: 5, 7: 5, 8: 5, 9: 5, 10: 5, 11: 5, 12: 5, 13: 5, 14: 5, 15: 5 - 0 of 75 window(s) above 15. This checks the budget is enforced; raw telegram throughput beyond it is not independently observable from outside the process. The monitor records each outgoing telegram when the background sender hands it to knxd (not when it is queued), so these windows are the sender's pacing; on the box the bus itself can be cross-checked with knxtool (see tools/perf/README.md). A flood submitted all at once (as this scenario does, deliberately \u2014 \u00a723.1's own 'simultaneous fades') sends its first ~15 telegrams in one burst, then another ~15 about a second later as that whole burst ages out together; a window straddling two such bursts can read a little over 15 without the limiter actually being broken \u2014 see the module docstring before treating a marginal BREACHED as a defect.",
+      "extra": {
+        "sent": 1525,
+        "failures": 0,
+        "peak_1s_rate": 15.0,
+        "budget_per_second": 15,
+        "window_count_histogram": {
+          "1": 5,
+          "2": 5,
+          "3": 5,
+          "4": 5,
+          "5": 5,
+          "6": 5,
+          "7": 5,
+          "8": 5,
+          "9": 5,
+          "10": 5,
+          "11": 5,
+          "12": 5,
+          "13": 5,
+          "14": 5,
+          "15": 5
+        },
+        "windows_total": 75,
+        "windows_over_budget": 0
+      }
+    },
+    {
+      "row_id": "dmx_frame_rate",
+      "concern": "DMX frame rate",
+      "citation": "\u00a723.1",
+      "target_text": "25-40 fps, stable",
+      "measured_by": "Second receiver on the universe",
+      "unit": "fps",
+      "achieved": 39.992982188489265,
+      "p50_ms": 24.922847747802734,
+      "p95_ms": 25.666284561157227,
+      "max_ms": 25.93064308166504,
+      "sample_count": 108,
+      "passed": true,
+      "skipped": false,
+      "notes": "Captured on eth0 (AF_PACKET, kernel timestamps): 108 ArtDmx frame(s) 10.2.30.251 -> 10.2.30.245 universe 0 while channel 1 faded from 100.0 to 0 over a 2.70 s window. Interval median 24.9 ms, min 24.3 ms, max 25.9 ms (p50/p95/max columns are inter-frame intervals); 40.0 fps against the 25-40 fps target (range taken inclusively with a 0.5 fps measurement tolerance: 24.5 to 40.5 fps passes, since the renderer's 25 ms grid is exactly 40 fps and timer jitter reads a hair over); no gaps over 50 ms; 0 ArtDmx sequence skip(s).",
+      "extra": {
+        "method": "af_packet_capture",
+        "iface": "eth0",
+        "timestamps": "kernel",
+        "channel_id": 1,
+        "universe": 0,
+        "frame_count": 108,
+        "window_s": 2.7003373429979547,
+        "stream": {
+          "src": "10.2.30.251",
+          "dst": "10.2.30.245",
+          "universe": 0,
+          "frames": 108,
+          "span_s": 2.675469398498535,
+          "fps": 39.992982188489265,
+          "interval_median_ms": 24.922847747802734,
+          "interval_min_ms": 24.291038513183594,
+          "interval_max_ms": 25.93064308166504,
+          "interval_mean_ms": 25.00438690185547,
+          "interval_p95_ms": 25.666284561157227,
+          "gap_threshold_ms": 49.84569549560547,
+          "gaps": 0,
+          "sequence_skips": 0
+        },
+        "streams": [
+          {
+            "src": "10.2.30.251",
+            "dst": "10.2.30.245",
+            "universe": 0,
+            "frames": 108,
+            "span_s": 2.675469398498535,
+            "fps": 39.992982188489265,
+            "interval_median_ms": 24.922847747802734,
+            "interval_min_ms": 24.291038513183594,
+            "interval_max_ms": 25.93064308166504,
+            "interval_mean_ms": 25.00438690185547,
+            "interval_p95_ms": 25.666284561157227,
+            "gap_threshold_ms": 49.84569549560547,
+            "gaps": 0,
+            "sequence_skips": 0
+          }
+        ]
+      }
+    }
+  ]
+}

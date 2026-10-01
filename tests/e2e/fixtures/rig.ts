@@ -174,10 +174,10 @@ export async function configureLighting(request: APIRequestContext, stubs: Stubs
 
   // The lighting service loads configuration off the request path, on the
   // change event every configuration write emits. The group endpoint answers
-  // 404 until the bank is loaded, so asking it is how to know; 100 % is where
-  // a group multiplier already is when nothing has been stored.
+  // 404 until the bank is loaded, so asking it is how to know. A group level
+  // sets its members' levels (owner decision 2026-09-30); 0 is where they are.
   await expect
-    .poll(async () => (await request.post(`${API}/lighting/groups/${bank.id}/level`, { data: { level: 100 } })).status())
+    .poll(async () => (await request.post(`${API}/lighting/groups/${bank.id}/level`, { data: { level: 0 } })).status())
     .toBe(200);
   // The statuses are written once as configured (§12.1): the panel starts
   // in line with the room.

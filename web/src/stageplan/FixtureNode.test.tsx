@@ -180,3 +180,30 @@ describe("FixtureNode — gestures", () => {
     vi.useRealTimers();
   });
 });
+
+/*
+ * The page scrolls from the plan's background on a touch screen (owner's
+ * request, 30 Sep 2026); only a fixture a drag can start from — edit mode —
+ * holds the touch, so the page does not pan under the drag.
+ */
+describe("FixtureNode — which touches the plan keeps", () => {
+  function touchStart(node: Element): Event {
+    const event = new Event("touchstart", { bubbles: true, cancelable: true });
+    node.dispatchEvent(event);
+    return event;
+  }
+
+  it("an edit-mode fixture is a drag source and keeps its touch from the page's scroll", () => {
+    renderNode({ mode: "admin", draggable: true });
+    const node = screen.getByTestId("fixture-node-7");
+    expect(node).toHaveAttribute("data-drag-source", "true");
+    expect(touchStart(node).defaultPrevented).toBe(true);
+  });
+
+  it("any other fixture lets a swipe that starts on it scroll the page", () => {
+    renderNode({ mode: "operator" });
+    const node = screen.getByTestId("fixture-node-7");
+    expect(node).not.toHaveAttribute("data-drag-source");
+    expect(touchStart(node).defaultPrevented).toBe(false);
+  });
+});

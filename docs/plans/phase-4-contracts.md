@@ -146,8 +146,11 @@ Found by the milestone: metering lost mid-session left an open view's bars froze
     stopped answering
 - **When metering availability changes, a `mixer_meters` frame is sent at once,**
   carrying `"metering": {"available": <bool>, "reason": <metering_reason>}`, and,
-  on loss, an empty `channels`. The frame is never replayed on resync; resync
-  uses `GET /mixer/state` as now.
+  on loss, an empty `channels`. No old frame is ever replayed on resync. Since
+  v0.1.11, a resync gets one fresh catch-up `mixer_meters` frame, built from live
+  state: every channel's current reading, plus the current `metering`. Before
+  that, a silent input's steady reading was never sent to a client that
+  connected later.
 - **The client:**
   - When it receives `available: false`, it clears every meter and shows the
     §21.13 notice for that reason.

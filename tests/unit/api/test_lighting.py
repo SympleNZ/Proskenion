@@ -247,9 +247,7 @@ async def test_set_channel_colour_out_of_byte_range_is_validation_failed(
     client: AsyncClient,
 ) -> None:
     await login(client, OPERATOR_PASSWORD)
-    response = await client.post(
-        f"{LIGHTING}/channels/1/colour", json={"r": 999, "g": 0, "b": 0}
-    )
+    response = await client.post(f"{LIGHTING}/channels/1/colour", json={"r": 999, "g": 0, "b": 0})
     assert response.status_code == 422
     assert code(response) == "validation_failed"
 
@@ -286,20 +284,73 @@ async def test_test_channel_refused_for_an_operator(
 # -- POST /lighting/groups/{id}/level --------------------------------------------------
 
 
-async def test_set_group_level_of_60_reaches_the_service_as_0_6(
+async def test_set_group_level_sets_every_members_level_within_its_range(
     client: AsyncClient, db: Database, lighting_service: LightingService
 ) -> None:
-    group = await lighting_crud.create_group(db, name="Wash")
+    """Owner decision 2026-09-30: a group fader sets levels; it is not a multiplier."""
+    device_id = await make_device(db)
+    wash = await lighting_crud.create_channel(
+        db, name="Wash", type="dmx", profile_id=1, device_id=device_id, address=1
+    )
+    capped = await lighting_crud.create_channel(
+        db, name="Capped", type="dmx", profile_id=1, device_id=device_id, address=2,
+        max_value=80.0,
+    )  # fmt: skip
+    group = await lighting_crud.create_group(db, name="Row 1")
+    await lighting_crud.set_group_members(db, group.id, [wash.id, capped.id])
+    await lighting_service.reload_config()
+    await login(client, OPERATOR_PASSWORD)
+
+    response = await client.post(f"{LIGHTING}/groups/{group.id}/level", json={"level": 90})
+
+    assert response.status_code == 200, response.text
+    # A member held to its own range is the fader working, not an error.
+    assert response.json() == {
+        "level": 90.0,
+        "levels": {str(wash.id): 90.0, str(capped.id): 80.0},
+    }
+    assert lighting_service._view.level(wash.id) == 90.0  # noqa: SLF001
+    assert lighting_service._view.level(capped.id) == 80.0  # noqa: SLF001
+    assert "groups" not in (await client.get(f"{LIGHTING}/state")).json()
+
+
+async def test_set_group_level_sets_the_free_members_and_reports_the_locked_ones(
+    client: AsyncClient, db: Database, lighting_service: LightingService
+) -> None:
+    device_id = await make_device(db)
+    free = await lighting_crud.create_channel(
+        db, name="Free", type="dmx", profile_id=1, device_id=device_id, address=1
+    )
+    held = await lighting_crud.create_channel(
+        db, name="Held", type="dmx", profile_id=1, device_id=device_id, address=2
+    )
+    group = await lighting_crud.create_group(db, name="Row 1")
+    await lighting_crud.set_group_members(db, group.id, [free.id, held.id])
+    await lighting_service.reload_config()
+    lighting_service.begin_critical_scene(SceneRun(9, "critical"), [held.id])
+    await login(client, OPERATOR_PASSWORD)
+
+    response = await client.post(f"{LIGHTING}/groups/{group.id}/level", json={"level": 40})
+
+    assert response.status_code == 403, response.text
+    assert code(response) == "permission_denied"
+    assert detail(response) == {"locked": [str(held.id)]}
+    assert lighting_service._view.level(free.id) == 40.0  # noqa: SLF001
+    assert lighting_service._view.level(held.id) == 0.0  # noqa: SLF001
+
+
+async def test_set_group_level_of_an_indicator_only_group_is_refused(
+    client: AsyncClient, db: Database, lighting_service: LightingService
+) -> None:
+    group = await lighting_crud.create_group(db, name="Stage all", indicator_only=True)
     await lighting_service.reload_config()
     await login(client, OPERATOR_PASSWORD)
 
     response = await client.post(f"{LIGHTING}/groups/{group.id}/level", json={"level": 60})
 
-    assert response.status_code == 200, response.text
-    assert response.json() == {"level": 60.0}
-    assert lighting_service.compositor.config.groups  # configured
-    # The store holds the 0–1 scale the service actually applied.
-    assert abs(lighting_service._view.group_multiplier(group.id) - 0.6) < 1e-9  # noqa: SLF001
+    assert response.status_code == 422, response.text
+    assert code(response) == "validation_failed"
+    assert "indicator-only" in response.json()["error"]["message"]
 
 
 async def test_set_group_level_unknown_group_is_not_found(client: AsyncClient) -> None:
@@ -412,9 +463,7 @@ async def test_get_external_control_reports_the_desk_inputs_last_frame_at(
     """§16.5: filled from the desk input, as ISO 8601 with offset — not the
     monotonic float :class:`~proskenion.core.dmx.desk.DeskInput` otherwise
     keeps internally, and never null once a frame has arrived."""
-    desk = DeskInput(
-        state, lighting_service.set_external_detected, lambda: lighting_service.config
-    )
+    desk = DeskInput(state, lighting_service.set_external_detected, lambda: lighting_service.config)
     desk.art_dmx(1, 0, bytes(512))
     app.state.desk_input = desk
 
@@ -505,6 +554,7 @@ async def test_list_channels_matches_the_contract_field_for_field(
         "max_value": 100.0,
         "has_colour": True,
         "group_ids": [group.id],
+        "fader_group_ids": [group.id],
         "bar_id": 1,
         "position": 0.5,
         "visible_staff": True,
@@ -808,7 +858,12 @@ async def test_create_channel_with_an_overlapping_address_saves_and_reports_the_
     """§9.1, §21.18: an overlap warns and never refuses the save."""
     device_id = await make_device(db)
     existing = await lighting_crud.create_channel(
-        db, name="A", type="dmx", profile_id=2, device_id=device_id, address=1  # slots 1-3
+        db,
+        name="A",
+        type="dmx",
+        profile_id=2,
+        device_id=device_id,
+        address=1,  # slots 1-3
     )
     await login(client)
 
@@ -991,10 +1046,20 @@ async def test_patch_conflicts_reports_overlapping_dmx_addresses(
 ) -> None:
     device_id = await make_device(db)
     a = await lighting_crud.create_channel(
-        db, name="A", type="dmx", profile_id=2, device_id=device_id, address=1  # 3 slots: 1-3
+        db,
+        name="A",
+        type="dmx",
+        profile_id=2,
+        device_id=device_id,
+        address=1,  # 3 slots: 1-3
     )
     b = await lighting_crud.create_channel(
-        db, name="B", type="dmx", profile_id=1, device_id=device_id, address=2  # 1 slot: 2
+        db,
+        name="B",
+        type="dmx",
+        profile_id=1,
+        device_id=device_id,
+        address=2,  # 1 slot: 2
     )
     await login(client, OPERATOR_PASSWORD)
 
@@ -1138,10 +1203,12 @@ async def test_ws_set_on_a_channel_locked_by_a_critical_scene_is_nacked_permissi
             assert nack["reason"] == "permission_denied"
 
 
-async def test_ws_set_lighting_group_divides_by_100_before_the_service_sees_it(
+async def test_ws_set_lighting_group_sets_its_members_level_to_the_wire_value(
     ws_config: Config,
 ) -> None:
-    await _seed_ws(ws_config.database.path)
+    """A group fader sets levels (owner decision 2026-09-30): 60 on the wire is
+    the member's level of 60, not a multiplier of 0.6."""
+    channel_id = await _seed_ws(ws_config.database.path)
     app = create_app(ws_config)
     with TestClient(app, base_url="https://av.school.nz") as client:
         group_id: int = 0
@@ -1151,6 +1218,7 @@ async def test_ws_set_lighting_group_divides_by_100_before_the_service_sees_it(
             service: LightingService = app.state.lighting
             db: Database = app.state.db
             group = await lighting_crud.create_group(db, name="Wash")
+            await lighting_crud.set_group_members(db, group.id, [channel_id])
             group_id = group.id
             await service.reload_config()
 
@@ -1172,15 +1240,122 @@ async def test_ws_set_lighting_group_divides_by_100_before_the_service_sees_it(
 
         async def read() -> float:
             service: LightingService = app.state.lighting
-            return service._view.group_multiplier(group_id)  # noqa: SLF001
+            return service._view.level(channel_id)  # noqa: SLF001
 
         result: list[float] = []
         run(client, lambda: _capture(read, result))
-        assert abs(result[0] - 0.6) < 1e-9
+        assert result == [60.0]
+
+
+async def test_ws_set_lighting_group_with_a_member_a_critical_scene_holds_is_nacked(
+    ws_config: Config,
+) -> None:
+    """The free members are set; the nack carries what the fader now shows."""
+    held_id = await _seed_ws(ws_config.database.path)
+    app = create_app(ws_config)
+    with TestClient(app, base_url="https://av.school.nz") as client:
+        ids: dict[str, int] = {}
+
+        async def make_group() -> None:
+            service: LightingService = app.state.lighting
+            db: Database = app.state.db
+            device_id = await make_device(db)
+            free = await lighting_crud.create_channel(
+                db, name="Free", type="dmx", profile_id=1, device_id=device_id, address=9
+            )
+            group = await lighting_crud.create_group(db, name="Wash")
+            await lighting_crud.set_group_members(db, group.id, [held_id, free.id])
+            ids.update(group=group.id, free=free.id)
+            await service.reload_config()
+            service.set_level(held_id, 25.0)
+            service.begin_critical_scene(SceneRun(9, "critical"), [held_id])
+
+        run(client, make_group)
+        cookie = sign_in(client)
+        with client.websocket_connect(
+            "/ws?v=1", headers={"Origin": "https://av.school.nz", "Cookie": cookie}
+        ) as ws:
+            ws.send_json(
+                {
+                    "type": "set",
+                    "domain": "lighting_group",
+                    "id": ids["group"],
+                    "value": 60.0,
+                    "token": 4,
+                }
+            )
+            nack = receive_until(ws, "nack")
+        assert nack == {"type": "nack", "token": 4, "reason": "permission_denied", "value": 60.0}
+
+        async def read() -> float:
+            service: LightingService = app.state.lighting
+            return service._view.level(ids["free"])  # noqa: SLF001
+
+        result: list[float] = []
+        run(client, lambda: _capture(read, result))
+        assert result == [60.0]
 
 
 async def _capture(work: Callable[[], Awaitable[float]], out: list[float]) -> None:
     out.append(await work())
+
+
+async def test_ws_fader_writes_ask_for_an_output_glide_and_rest_writes_do_not(
+    ws_config: Config,
+) -> None:
+    """The WebSocket fader domains — fixture, group, master — are the operator's
+    hands, so their DMX output glides (field finding 2026-09-30); the service's
+    default — REST, scenes, rules — is output exactly as stored."""
+    channel_id = await _seed_ws(ws_config.database.path)
+    app = create_app(ws_config)
+    with TestClient(app, base_url="https://av.school.nz") as client:
+        requests: list[object] = []
+        group_id = 0
+
+        async def spy() -> None:
+            nonlocal group_id
+            service: LightingService = app.state.lighting
+            db: Database = app.state.db
+            group = await lighting_crud.create_group(db, name="Wash")
+            await lighting_crud.set_group_members(db, group.id, [channel_id])
+            group_id = group.id
+            await service.reload_config()
+            original = service.compositor.request_glide
+
+            def recording(channel_ids: Any = None) -> None:
+                requests.append(None if channel_ids is None else sorted(channel_ids))
+                original(channel_ids)
+
+            service.compositor.request_glide = recording  # type: ignore[method-assign]
+            # What REST, scenes and rules call: no glide unless asked for.
+            service.set_level(channel_id, 30.0)
+            service.set_group_level(group_id, 30.0)
+            service.set_master(90.0)
+
+        run(client, spy)
+        cookie = sign_in(client)
+        with client.websocket_connect(
+            "/ws?v=1", headers={"Origin": "https://av.school.nz", "Cookie": cookie}
+        ) as ws:
+            for token, (domain, id_, value) in enumerate(
+                (
+                    ("lighting", channel_id, 40.0),
+                    ("lighting_group", group_id, 50.0),
+                    ("master", None, 80.0),
+                ),
+                start=1,
+            ):
+                message: dict[str, Any] = {
+                    "type": "set",
+                    "domain": domain,
+                    "value": value,
+                    "token": token,
+                }
+                if id_ is not None:
+                    message["id"] = id_
+                ws.send_json(message)
+                assert receive_until(ws, "ack") == {"type": "ack", "token": token}
+        assert requests == [[channel_id], [channel_id], None]
 
 
 # -- §22.4 audit: failure tests added ----------------------------------------------
@@ -1295,6 +1470,82 @@ async def test_update_group_succeeds(client: AsyncClient, db: Database) -> None:
 
     assert response.status_code == 200, response.text
     assert response.json()["name"] == "Wash renamed"
+
+
+async def test_a_group_carries_indicator_only_through_create_read_and_update(
+    client: AsyncClient,
+) -> None:
+    await login(client)
+    created = await client.post(f"{LIGHTING}/groups", json={"name": "Stage all"})
+    assert created.status_code == 201, created.text
+    assert created.json()["indicator_only"] is False
+
+    changed = await client.put(
+        f"{LIGHTING}/groups/{created.json()['id']}",
+        json={"indicator_only": True},
+        headers={"If-Unmodified-Since-Version": created.json()["updated_at"]},
+    )
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["indicator_only"] is True
+    listed = (await client.get(f"{LIGHTING}/groups")).json()["groups"]
+    assert [g["indicator_only"] for g in listed if g["name"] == "Stage all"] == [True]
+
+    indicator = await client.post(
+        f"{LIGHTING}/groups", json={"name": "Row lamp", "indicator_only": True}
+    )
+    assert indicator.status_code == 201, indicator.text
+    assert indicator.json()["indicator_only"] is True
+
+
+async def test_a_channel_names_every_group_and_those_with_a_fader(
+    client: AsyncClient, db: Database
+) -> None:
+    channel_id = await make_dimmer_channel(db)
+    row = await lighting_crud.create_group(db, name="Stage row 1")
+    everything = await lighting_crud.create_group(db, name="Stage all", indicator_only=True)
+    for group in (row, everything):
+        await lighting_crud.set_group_members(db, group.id, [channel_id])
+    await login(client, OPERATOR_PASSWORD)
+
+    body = (await client.get(f"{LIGHTING}/channels/{channel_id}")).json()
+
+    assert body["group_ids"] == sorted([row.id, everything.id])
+    assert body["fader_group_ids"] == [row.id]
+
+
+async def test_a_group_a_binding_drives_cannot_become_indicator_only(
+    client: AsyncClient, db: Database
+) -> None:
+    from proskenion.db.crud import rules as rules_crud
+
+    group = await lighting_crud.create_group(db, name="Stage all")
+    switch = await knx_crud.create_address(
+        db, group_address="4/0/8", name="All", dpt="1.001", direction="both"
+    )
+    await rules_crud.create_rule(
+        db,
+        name="Stage all",
+        trigger_type="knx",
+        knx_address_id=switch.id,
+        match_type="any",
+        action_type="lighting_group",
+        lighting_group_id=group.id,
+        on_level=100.0,
+        off_level=0.0,
+    )
+    await login(client)
+
+    response = await client.put(
+        f"{LIGHTING}/groups/{group.id}",
+        json={"indicator_only": True},
+        headers={"If-Unmodified-Since-Version": group.updated_at},
+    )
+
+    assert response.status_code == 422, response.text
+    assert code(response) == "validation_failed"
+    assert "Stage all" in detail(response)["indicator_only"][0]
+    reloaded = await lighting_crud.get_group(db, group.id)
+    assert reloaded is not None and reloaded.indicator_only is False
 
 
 async def test_update_group_unknown_id_is_not_found(client: AsyncClient) -> None:

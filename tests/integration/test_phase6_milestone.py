@@ -1213,6 +1213,7 @@ ELEVEN_FOUR_TRIGGERS: Final[dict[str, tuple[str, str]]] = {
     "backup_failed": ("proskenion/core/backup.py", "AlertKind.BACKUP_FAILED"),
     "media_failed": ("proskenion/core/backup.py", "AlertKind.MEDIA_FAILED"),
     "backup_untrusted": ("proskenion/core/backup.py", "AlertKind.BACKUP_UNTRUSTED"),
+    "backup_missing": ("proskenion/core/backup.py", "AlertKind.BACKUP_MISSING"),
     "rollback": ("proskenion/core/update_service.py", "AlertKind.ROLLBACK"),
 }
 

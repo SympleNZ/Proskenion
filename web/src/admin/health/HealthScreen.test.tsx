@@ -109,6 +109,15 @@ describe("HealthScreen", () => {
     expect(screen.getByText("p50 1.2 ms · p99 8.4 ms")).toBeInTheDocument();
   });
 
+  it("carries the Restart, Reboot and Shut down controls, even before the report loads", async () => {
+    client.api.mockImplementation(() => new Promise(() => undefined));
+    renderWithProviders(<HealthScreen />, { route: "/admin/health" });
+
+    expect(screen.getByRole("button", { name: "Restart services" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Restart controller" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Shut down" })).toBeInTheDocument();
+  });
+
   it("reads a metric the platform cannot supply as \"not available\", never as a number", async () => {
     client.api.mockResolvedValue(UNSUPPORTED);
     renderWithProviders(<HealthScreen />, { route: "/admin/health" });

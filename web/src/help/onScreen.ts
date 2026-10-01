@@ -105,10 +105,10 @@ export const ADMIN_SCREEN_HELP: Readonly<Record<string, ScreenHelp>> = {
     summary: "Manage backup destinations and media, back up now, restore from a backup, and manage system images.",
   },
   updates: {
-    summary: "Upload and apply application updates, manage operating system slots, and restart or reboot the appliance.",
+    summary: "Upload and apply application updates, manage operating system slots, and restart, reboot or shut down the appliance.",
   },
   health: {
-    summary: "See the appliance's own health in detail: CPU, memory, storage, backup media, and every connected device's status.",
+    summary: "See the appliance's own health in detail: CPU, memory, storage, backup media, and every connected device's status. Restart, reboot or shut down the appliance from the bottom of the page.",
   },
   logs: {
     summary: "Look through the scene execution log, the security event log and the raw system log, and turn on debug logging.",

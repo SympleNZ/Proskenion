@@ -36,7 +36,8 @@ export const VALUES_STORAGE_KEY = "proskenion.lastKnown.values";
 
 // -- which values ---------------------------------------------------------------------
 
-const LIVE_PREFIXES: readonly string[] = ["level:", "colour:", "group:", "mixer:", "hdmi_destination:"];
+// No "group:": a group has no value of its own; its fader shows its members' levels.
+const LIVE_PREFIXES: readonly string[] = ["level:", "colour:", "mixer:", "hdmi_destination:"];
 const LIVE_KEYS: ReadonlySet<string> = new Set(["master", "projector"]);
 
 export function isLastKnownLiveKey(key: Key): boolean {

@@ -19,12 +19,13 @@
  * active at all — detected or manual, both count (§7.2.7 "behaviour while
  * active").
  *
- * The master and the group faders follow from the same row. Both scale stage
- * (DMX) output only; KNX house dimmers are outside them (§9.4, §9.5). So the
- * master acts only through the pass that external control suspends, and it
- * goes read-only with the DMX faders (§21.11: "faders … show observed
- * levels, live and read-only"). A group is read-only when it contains a DMX
- * fixture. **A group containing only KNX dimmers is unaffected by external
+ * The master and the group faders follow from the same row. The master
+ * scales stage (DMX) output only; KNX house dimmers are outside it (§9.5).
+ * So the master acts only through the pass that external control suspends,
+ * and it goes read-only with the DMX faders (§21.11: "faders … show observed
+ * levels, live and read-only"). A group fader sets its members' levels
+ * (owner decision 2026-09-30), so it is read-only when it contains a DMX
+ * fixture, as that fixture's own fader is. **A group containing only KNX dimmers is unaffected by external
  * control**: it holds no stage lighting, so its fader and a stage bank that
  * recalls it stay live, as house lighting always does. The controller agrees:
  * a binding on such a group still fires while a desk is connected, and its

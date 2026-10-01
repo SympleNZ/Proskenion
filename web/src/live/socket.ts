@@ -214,10 +214,27 @@ export class LiveSocket {
   }
 
   /**
-   * Ask for a full snapshot per domain. Meters are never replayed (§16.8);
-   * lamps are dropped the same way, because which lamp a connection may see
-   * can shrink between one resync and the next (a page reassigned, a
-   * hirer's access narrowed) and nothing should be left standing stale.
+   * A group's BUMP held (a press, or the refresh of one) or let go (owner
+   * decision 2026-10-01). Not a continuous write: it is an output overlay
+   * with no stored value, so there is no pending entry — its ack or nack
+   * matches nothing in the store and is ignored. Returns whether the frame
+   * went (`lighting/bump.ts`).
+   */
+  bump(groupId: number, held: boolean): boolean {
+    if (!this.isOpen()) return false;
+    const token = ++this.token;
+    this.post({ type: "set", domain: "lighting_bump", id: groupId, value: held ? 1 : 0, token });
+    return true;
+  }
+
+  /**
+   * Ask for a full snapshot per domain. Meters are cleared first and then
+   * answered with a fresh one-off `mixer_meters` frame, current at the
+   * moment of the resync rather than a replay of anything queued before it
+   * (§16.8, B58); lamps are dropped and not proactively resent, because
+   * which lamp a connection may see can shrink between one resync and the
+   * next (a page reassigned, a hirer's access narrowed) and nothing should
+   * be left standing stale.
    * Progress is dropped for the same reason: a `progress` frame
    * missed across a drop — the operation finished while this socket was
    * down — must not leave a card reading "running" forever with no
@@ -417,6 +434,11 @@ export function stopLiveSocket(): void {
 
 export function getLiveSocket(): LiveSocket | null {
   return current;
+}
+
+/** A BUMP press, refresh or release over the open socket. False when nothing was sent. */
+export function sendBump(groupId: number, held: boolean): boolean {
+  return current?.bump(groupId, held) ?? false;
 }
 
 /** A continuous write over the open socket (§21.2). Null when nothing was sent. */

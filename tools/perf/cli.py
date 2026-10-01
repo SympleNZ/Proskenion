@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
-from tools.perf import rig
+from tools.perf import onbox, rig
 from tools.perf.artnet_listener import DEFAULT_PORT as DMX_DEFAULT_PORT
 from tools.perf.client import DEFAULT_PASSWORD_ENV, LoginFailed, PerfClient, Safety, read_password
 from tools.perf.report import ScenarioResult, render_notes, render_table, write_json
@@ -43,8 +44,48 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--base-url",
-        required=True,
-        help="e.g. https://auditorium.obhs.school.nz or http://127.0.0.1:8000",
+        default=None,
+        help="e.g. https://auditorium.obhs.school.nz. Required off the box; with "
+        f"--mint-admin-session it defaults to {onbox.DIRECT_URL} ({onbox.NGINX_URL} with "
+        "--via-nginx).",
+    )
+    parser.add_argument(
+        "--mint-admin-session",
+        action="store_true",
+        help="ON THE APPLIANCE: no password. Mint a short admin session with the "
+        "installation's own secret (as tools/provision/stage_lighting.py does); run as the "
+        "application's user or root. Marks the run 'on-box'.",
+    )
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="Bootstrap config path for --mint-admin-session (default: the application's own "
+        "resolution, /etc/auditorium/config.toml).",
+    )
+    parser.add_argument(
+        "--via-nginx",
+        action="store_true",
+        help=f"With --mint-admin-session: measure through nginx ({onbox.NGINX_URL}, the public "
+        "Host header, certificate check off) instead of direct to the application.",
+    )
+    parser.add_argument(
+        "--onbox-hostname",
+        default=onbox.DEFAULT_HOSTNAME,
+        help="The public hostname presented on-box (Host and Origin headers; the server "
+        f"checks Origin against [server] hostname). Default {onbox.DEFAULT_HOSTNAME}.",
+    )
+    parser.add_argument(
+        "--dmx-method",
+        choices=("auto", "listener", "capture"),
+        default="auto",
+        help="How the DMX frame rate is observed: 'capture' = raw AF_PACKET capture of ArtDmx on "
+        "--dmx-capture-iface (root; sees unicast to the node), 'listener' = this tool's own "
+        "Art-Net listener. auto = capture on-box, listener otherwise.",
+    )
+    parser.add_argument(
+        "--dmx-capture-iface",
+        default="eth0",
+        help="The egress interface the DMX capture reads (default eth0).",
     )
     parser.add_argument(
         "--password-env",
@@ -108,6 +149,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--knx-burst-duration-s", type=float, default=4.0)
     parser.add_argument("--dmx-fade-s", type=float, default=3.0)
     return parser
+
+
+def capture_iface_for(args: argparse.Namespace) -> str | None:
+    """The interface to capture ArtDmx on, or ``None`` to use the listener."""
+    method = args.dmx_method
+    if method == "auto":
+        method = "capture" if args.mint_admin_session else "listener"
+    return str(args.dmx_capture_iface) if method == "capture" else None
 
 
 ScenarioRunner = Callable[[PerfClient, Safety], Awaitable[ScenarioResult]]
@@ -189,6 +238,7 @@ async def _build_runners(
                 fade_s=dmx_fade_s,
                 listen_host=args.dmx_listen_host,
                 listen_port=args.dmx_listen_port,
+                capture_iface=capture_iface_for(args),
             ),
         )
 
@@ -217,28 +267,76 @@ async def run_all(
 
 
 async def main_async(argv: list[str] | None = None) -> int:
-    args = build_arg_parser().parse_args(argv)
+    parser = build_arg_parser()
+    args = parser.parse_args(argv)
     try:
-        password = read_password(password_env=args.password_env)
-    except (EOFError, KeyboardInterrupt):
-        print("no password supplied", file=sys.stderr)
-        return 2
+        target = onbox.resolve_target(
+            base_url=args.base_url,
+            mint_admin_session=args.mint_admin_session,
+            via_nginx=args.via_nginx,
+            onbox_hostname=args.onbox_hostname,
+            origin=args.origin,
+            insecure=args.insecure,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    token: str | None = None
+    password = ""
+    if target.session == "minted":
+        try:
+            token = await asyncio.to_thread(onbox.mint_session, args.config)
+        except onbox.MintFailed as exc:
+            print(f"cannot mint a session: {exc}", file=sys.stderr)
+            return 2
+    else:
+        try:
+            password = read_password(password_env=args.password_env)
+        except (EOFError, KeyboardInterrupt):
+            print("no password supplied", file=sys.stderr)
+            return 2
 
     safety = Safety(
         allow_device_writes=args.allow_device_writes,
         allow_scene_triggers=args.allow_scene_triggers,
     )
+    capture_iface = capture_iface_for(args)
+    context = onbox.run_context(target, capture_iface=capture_iface)
+    print(f"Measuring {onbox.describe(target)}")
+    geteuid = getattr(os, "geteuid", None)
+    if (
+        capture_iface is not None
+        and geteuid is not None
+        and geteuid() != 0
+        and "dmx_frame_rate" not in args.skip
+    ):
+        print(
+            "  note: not root, so the DMX capture will be skipped (an AF_PACKET socket needs "
+            "root). Re-run under sudo for the DMX row, or --skip dmx_frame_rate."
+        )
+    if target.vantage == "off-box":
+        print(
+            "  (off the appliance: HTTP and WebSocket numbers include this machine's network "
+            "path; DMX is only visible on the box or its VLAN. Run it on the CM5 for the "
+            "server's own figures - see tools/perf/README.md.)"
+        )
 
     async with PerfClient(
-        args.base_url, origin=args.origin, verify=not args.insecure
+        target.base_url,
+        origin=target.origin,
+        verify=not target.insecure,
+        host_header=target.host_header,
     ) as client:
-        try:
-            tier = await client.login(password)
-        except LoginFailed as exc:
-            print(f"sign-in failed: {exc}", file=sys.stderr)
-            return 2
-
-        print(f"signed in to {args.base_url} as {tier}")
+        if token is not None:
+            tier = client.use_session_token(token)
+            print("session: admin, minted on this machine (short-lived)")
+        else:
+            try:
+                tier = await client.login(password)
+            except LoginFailed as exc:
+                print(f"sign-in failed: {exc}", file=sys.stderr)
+                return 2
+            print(f"signed in to {target.base_url} as {tier}")
         results = await run_all(client, safety, args)
 
     print()
@@ -247,7 +345,12 @@ async def main_async(argv: list[str] | None = None) -> int:
     print(render_notes(results))
 
     write_json(
-        args.output_json, results, base_url=args.base_url, tier=tier, safety=_safety_dict(safety)
+        args.output_json,
+        results,
+        base_url=target.base_url,
+        tier=tier,
+        safety=_safety_dict(safety),
+        context=context,
     )
     print(f"\nJSON report written to {args.output_json}")
 

@@ -217,6 +217,8 @@ as a freshly migrated database reports them.
 | verified_at | TEXT |  |  |
 | untrusted | INTEGER | yes | DEFAULT 0 |
 | untrusted_reason | TEXT |  |  |
+| checked_at | TEXT |  |  |
+| checked_destinations | TEXT | yes | DEFAULT '' |
 
 ### `backup_destination`
 
@@ -262,6 +264,7 @@ as a freshly migrated database reports them.
 | compare_state | TEXT |  |  |
 | created_at | TEXT | yes |  |
 | updated_at | TEXT | yes |  |
+| basis | TEXT | yes | DEFAULT 'level' |
 
 ### `devices`
 
@@ -410,6 +413,7 @@ as a freshly migrated database reports them.
 | sort_order | INTEGER | yes | DEFAULT 0 |
 | created_at | TEXT | yes |  |
 | updated_at | TEXT | yes |  |
+| indicator_only | INTEGER | yes | DEFAULT 0 |
 
 ### `matrix_inputs`
 

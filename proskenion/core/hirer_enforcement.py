@@ -74,8 +74,10 @@ def hirer_may_write(permissions: HirerPermissions, set_domain: str, target_id: i
     """Whether a hirer may write ``target_id`` in ``set_domain`` (module docstring).
 
     ``set_domain`` is a §16.8 ``set`` domain: ``mixer`` (a channel level),
-    ``lighting`` (a channel level), ``lighting_group`` (a group master) or
-    ``master``. A domain not named here, or a missing target, is refused.
+    ``lighting`` (a channel level), ``lighting_group`` (a group master),
+    ``lighting_bump`` (that group master's BUMP, reachable exactly as its
+    fader is) or ``master``. A domain not named here, or a missing target,
+    is refused.
     """
     if target_id is None:
         return False
@@ -83,7 +85,7 @@ def hirer_may_write(permissions: HirerPermissions, set_domain: str, target_id: i
         return permissions.mixer_reachable(target_id)
     if set_domain == "lighting":
         return permissions.lighting_writable(target_id)
-    if set_domain == "lighting_group":
+    if set_domain in ("lighting_group", "lighting_bump"):
         return permissions.group_reachable(target_id)
     return False
 

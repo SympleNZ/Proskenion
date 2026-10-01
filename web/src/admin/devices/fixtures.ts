@@ -136,7 +136,8 @@ export const PORTS: SerialPort[] = [
  * PJLink (§7.4, §21.24), shaped exactly like `proskenion/core/drivers/pjlink.py`
  * and `proskenion/core/transport/tcp.py` declare it: one TCP transport with
  * the shared host/port schema, defaulting to PJLink's registered port 4352,
- * and one optional, encrypted password field. Used to prove the generic
+ * one optional, encrypted password field and the minimum warm-up (§7.4,
+ * an int, 0–600 s, default 60). Used to prove the generic
  * Devices screen renders and tests a real driver's schema, not just the
  * fabricated one above.
  */
@@ -162,6 +163,16 @@ export const PJLINK_DRIVER: Driver = {
       required: false,
       encrypted: true,
       help: "Leave blank if the projector has no PJLink password set (§6.10).",
+    },
+    {
+      key: "min_warmup_s",
+      type: "int",
+      label: "Minimum warm-up (seconds)",
+      required: false,
+      default: 60,
+      min: 0,
+      max: 600,
+      help: "The projector may report 'on' before its lamp is fully warm. Power-off is refused until this long after power-on.",
     },
   ],
   capabilities: { inputs: [], supports_authentication: true },

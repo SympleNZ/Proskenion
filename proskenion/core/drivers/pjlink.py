@@ -223,6 +223,24 @@ class PJLinkDriver(Driver):
             encrypted=True,
             help="Leave blank if the projector has no PJLink password set (§6.10).",
         ),
+        # Read by the projector service, not by this driver: from a successful
+        # power-on until this long has passed the service shows the projector
+        # as warming and refuses power-off, even once PJLink reports "on" —
+        # the lamp is still warming then (§7.4, B52; owner decision
+        # 2026-09-30). 0 disables the hold.
+        Field(
+            "min_warmup_s",
+            type="int",
+            label="Minimum warm-up (seconds)",
+            required=False,
+            default=60,
+            min=0,
+            max=600,
+            help=(
+                "The projector may report 'on' before its lamp is fully warm. "
+                "Power-off is refused until this long after power-on."
+            ),
+        ),
     ]
 
     #: One command's connect-and-reply budget. Real PJLink devices answer in

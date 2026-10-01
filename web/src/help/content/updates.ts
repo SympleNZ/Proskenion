@@ -15,11 +15,15 @@ export const updates = {
     body: "Reboots the appliance back into the previous operating system slot immediately, cancelling any trial in progress.",
   },
   "updates.restart": {
-    term: "Restart application",
-    body: "Restarts the Proskenion application only — the operating system and appliance are not affected. It will be unavailable for about a minute, and everyone connected is disconnected.",
+    term: "Restart services",
+    body: "Restarts the controller software only, for when the screens respond but something is stuck. The operating system keeps running. Control is unavailable for about a minute, and everyone connected is disconnected.",
   },
   "updates.reboot": {
-    term: "Reboot appliance",
-    body: "Reboots the whole appliance, including the operating system. It will be unavailable for about a minute, and everyone connected is disconnected.",
+    term: "Restart controller",
+    body: "Restarts the whole controller, operating system included, and it comes back on by itself; nobody needs to go to the rack. Control is unavailable for about a minute, and everyone connected is disconnected.",
+  },
+  "updates.shutdown": {
+    term: "Shut down",
+    body: "Powers the controller off cleanly. It does not come back on by itself: switch its power off and on at the rack (or unplug and replug it) to start it again. Lighting, sound and video control stop until then.",
   },
 } as const satisfies Record<string, HelpEntry>;

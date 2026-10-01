@@ -1,14 +1,16 @@
 """Fade engine: the one funnel into the level store (spec §7.2.6, §10.6, §8.14, B34).
 
 Fades write into the level store, never to the transport and never to a
-universe buffer. **Every** write into the level store — levels, colour and
-group multipliers — goes through this engine: a direct set is a zero-duration
-fade (§10.6). One funnel keeps ownership simple (one owner handle, B39) and
-makes the precedence rules below true everywhere rather than in each caller.
+universe buffer. **Every** write into the level store — levels and colour —
+goes through this engine: a direct set is a zero-duration fade (§10.6). A
+group fader is not a store input of its own: it sets its members' levels
+through :meth:`FadeEngine.fade_channel` (owner decision 2026-09-30). One
+funnel keeps ownership simple (one owner handle, B39) and makes the
+precedence rules below true everywhere rather than in each caller.
 
 Rules (§7.2.6)
 --------------
-* **At most one fade per channel** (and per group multiplier). Starting a new
+* **At most one fade per channel.** Starting a new
   one cancels the old **from its current value** — the old fade is evaluated
   at the moment of cancellation and that value stands, so nothing snaps back.
 * **Smoothstep easing**, ``t² × (3 − 2t)``.
@@ -39,7 +41,7 @@ writes, rules and status sync carry none.
     separate fades and carry on.
 ``critical``
     :meth:`FadeEngine.begin_critical` cancels **every** in-progress fade at its
-    current value — scene, operator and group fades alike — and locks the
+    current value — scene and operator fades alike — and locks the
     scene's channels. Any fade a critical run starts also locks its channel.
     A write to a locked channel from anyone but the lock holder raises
     :class:`ChannelLockedError`, which the WebSocket handler turns into a nack.
@@ -69,9 +71,6 @@ log = logging.getLogger(__name__)
 FADE_ENGINE_OWNER = "fade_engine"
 #: Step interval while anything is fading — 50 Hz, above the renderer's 40 fps cap.
 TICK_S = 0.02
-#: Group multipliers are stored to three decimals: 0.1 % of full, one decimal
-#: of the percentage the interface shows.
-MULTIPLIER_DECIMALS = 3
 #: A fade this close to its end when a step runs is finished on that step. A
 #: timer that fires a fraction of a millisecond early would otherwise leave a
 #: sub-millisecond sleep, which an OS timer can round up to a whole tick.
@@ -79,7 +78,7 @@ END_TOLERANCE_S = 0.001
 
 Priority = Literal["normal", "critical"]
 FadeOutcome = Literal["completed", "cancelled"]
-FadeKind = Literal["channel", "group"]
+FadeKind = Literal["channel"]
 Clock = Callable[[], float]
 Sleeper = Callable[[float], Awaitable[None]]
 FadeListener = Callable[[], None]
@@ -144,7 +143,7 @@ class UnknownGroupError(LookupError):
 class FadeHandle:
     """What a caller gets back from starting a fade.
 
-    ``target_level`` / ``target_multiplier`` are the values after clamping —
+    ``target_level`` is the value after clamping —
     the API compares them with what was asked for to report
     ``value_out_of_range`` with ``detail.clamped`` (§16.1). ``await
     handle.wait()`` returns ``"completed"`` when the fade reaches its target
@@ -161,7 +160,6 @@ class FadeHandle:
         "target_colour",
         "target_id",
         "target_level",
-        "target_multiplier",
     )
 
     def __init__(
@@ -172,14 +170,12 @@ class FadeHandle:
         *,
         target_level: float | None = None,
         target_colour: Colour | None = None,
-        target_multiplier: float | None = None,
     ) -> None:
         self.kind: FadeKind = kind
         self.target_id = target_id
         self.owner = owner
         self.target_level = target_level
         self.target_colour = target_colour
-        self.target_multiplier = target_multiplier
         self.finished_at: float | None = None
         self._outcome: FadeOutcome | None = None
         self._waiters: list[asyncio.Future[FadeOutcome]] = []
@@ -233,7 +229,7 @@ class _Fade:
 
 
 class FadeEngine:
-    """Owns every write into ``state.lighting`` levels, colour and group multipliers."""
+    """Owns every write into ``state.lighting`` levels and colour."""
 
     def __init__(
         self,
@@ -256,7 +252,6 @@ class FadeEngine:
         self._sleep: Sleeper = sleep or self._interruptible_sleep
         self._tick = tick_s
         self._ranges: dict[int, tuple[float, float]] = {}
-        self._groups: frozenset[int] = frozenset()
         self._fades: dict[tuple[FadeKind, int], _Fade] = {}
         self._locks: dict[int, SceneRun] = {}
         self._listeners: list[FadeListener] = []
@@ -265,21 +260,18 @@ class FadeEngine:
 
     # -- configuration -----------------------------------------------------
 
-    def configure(self, ranges: Mapping[int, tuple[float, float]], groups: Iterable[int]) -> None:
-        """The channels and groups that exist, and each channel's own range.
+    def configure(self, ranges: Mapping[int, tuple[float, float]]) -> None:
+        """The channels that exist, and each channel's own range.
 
-        A fade on a channel or group that has gone is dropped where it stands;
-        locks on removed channels are released.
+        A fade on a channel that has gone is dropped where it stands; locks
+        on removed channels are released.
         """
         self._ranges = dict(ranges)
-        self._groups = frozenset(groups)
         now = self._clock()
         changed = False
         for key in list(self._fades):
-            kind, target_id = key
-            if (kind == "channel" and target_id not in self._ranges) or (
-                kind == "group" and target_id not in self._groups
-            ):
+            _, target_id = key
+            if target_id not in self._ranges:
                 self._fades.pop(key).handle._finish("cancelled", now)
                 changed = True
         for channel_id in [c for c in self._locks if c not in self._ranges]:
@@ -356,31 +348,6 @@ class FadeEngine:
         if owner is not None and owner.critical:
             self._locks[channel_id] = owner
         return self._begin(("channel", channel_id), fade, now)
-
-    def fade_group(
-        self,
-        group_id: int,
-        multiplier: float,
-        *,
-        fade_ms: int = 0,
-        owner: SceneRun | None = None,
-    ) -> FadeHandle:
-        """Fade a group multiplier (0.0–1.0) over ``fade_ms`` (§16.5 takes a ``fade_ms``).
-
-        A binding rule's recall is ``fade_group(group, 1.0)`` — an ordinary
-        write the compositor needs no knowledge of (§8.8).
-        """
-        if group_id not in self._groups:
-            raise UnknownGroupError(group_id)
-        if not math.isfinite(multiplier):
-            raise ValueError(f"multiplier must be a finite number, got {multiplier!r}")
-        now = self._clock()
-        self._supersede(("group", group_id), now)
-        target = _clamp_multiplier(multiplier)
-        handle = FadeHandle("group", group_id, owner, target_multiplier=target)
-        start = self._view.group_multiplier(group_id)
-        fade = _Fade(handle, start, target, None, None, now, fade_ms / 1000)
-        return self._begin(("group", group_id), fade, now)
 
     def _begin(self, key: tuple[FadeKind, int], fade: _Fade, now: float) -> FadeHandle:
         if fade.duration <= 0:
@@ -531,13 +498,7 @@ class FadeEngine:
 
     def _apply(self, fade: _Fade, eased: float) -> None:
         """Write ``fade`` at eased parameter ``eased`` into the store, clamped."""
-        handle = fade.handle
-        if handle.kind == "group":
-            assert fade.start_level is not None and fade.target_level is not None
-            value = _interpolate(fade.start_level, fade.target_level, eased)
-            self._writer.set_item("group_multipliers", handle.target_id, _clamp_multiplier(value))
-            return
-        channel_id = handle.target_id
+        channel_id = fade.handle.target_id
         if fade.target_level is not None and fade.start_level is not None:
             min_value, max_value = self._ranges.get(channel_id, (0.0, 100.0))
             value = _interpolate(fade.start_level, fade.target_level, eased)
@@ -614,10 +575,6 @@ def _interpolate(start: float, target: float, eased: float) -> float:
     if eased >= 1.0:
         return target  # exact end value
     return start + (target - start) * eased
-
-
-def _clamp_multiplier(value: float) -> float:
-    return round(min(max(value, 0.0), 1.0), MULTIPLIER_DECIMALS)
 
 
 __all__ = [

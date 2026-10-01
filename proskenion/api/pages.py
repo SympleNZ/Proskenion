@@ -76,6 +76,7 @@ from proskenion.api.deps import (
 )
 from proskenion.api.errors import ApiError, ErrorCode
 from proskenion.api.lighting import (
+    NO_GROUPS,
     _channel_has_colour,
     _channel_model,
     _group_channel_ids,
@@ -308,9 +309,9 @@ async def _lighting_channel_object(
     db: Database, channel: lighting_crud.LightingChannel
 ) -> dict[str, Any]:
     """Exactly the object ``GET /lighting/channels/{id}`` returns (contract)."""
-    group_ids = (await _group_ids_by_channel(db)).get(channel.id, [])
+    groups = (await _group_ids_by_channel(db)).get(channel.id, NO_GROUPS)
     has_colour = await _channel_has_colour(db, channel)
-    return _channel_model(channel, group_ids=group_ids, has_colour=has_colour).model_dump()
+    return _channel_model(channel, groups=groups, has_colour=has_colour).model_dump()
 
 
 async def _lighting_group_object(
@@ -528,6 +529,11 @@ async def _resolve_item(
         group = await lighting_crud.get_group(db, item.group_id)
         if group is None:  # pragma: no cover - FK cascade keeps this consistent
             return None
+        if group.indicator_only:
+            # No fader anywhere (migration 011). An item placed before the
+            # group changed is left out rather than drawn; the next save of
+            # the page drops it.
+            return None
         if hirer:
             assert permissions is not None
             if not permissions.group_reachable(group.id):
@@ -679,6 +685,20 @@ def _item_input(body: PageItemBody) -> PageItemInput:
     )
 
 
+async def _validate_group_masters(db: Database, items: list[PageItemBody]) -> None:
+    """An indicator-only group has no fader, so no page may place its master."""
+    for item in items:
+        if item.kind != "group_master" or item.group_id is None:
+            continue
+        group = await lighting_crud.get_group(db, item.group_id)
+        if group is not None and group.indicator_only:
+            raise ApiError(
+                ErrorCode.VALIDATION_FAILED,
+                f"“{group.name}” is indicator-only: it has no fader to place on a page",
+                {"field": "group_id"},
+            )
+
+
 async def _validate_buttons(db: Database, items: list[PageItemBody]) -> None:
     """A rule or lamp that doesn't exist answers ``validation_failed`` with
     ``detail.field`` naming the button (contract)."""
@@ -712,6 +732,7 @@ async def replace_page(
 ) -> dict[str, Any]:
     version = _version_or_422(if_unmodified_since_version)
     await _page_or_404(db, page_id)
+    await _validate_group_masters(db, body.items)
     await _validate_buttons(db, body.items)
     try:
         await pages_crud.replace_page(

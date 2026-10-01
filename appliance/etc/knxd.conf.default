@@ -1,11 +1,19 @@
 # /data/config/knxd.conf — knxd options (§4.11), reached from /etc/knxd.conf
 # through a symlink so the gateway address can change without a rebuild (§4.3).
 #
-#   -e 0.0.1        knxd's own bus address
+#   -e 0.0.1        knxd's own address (local only, see -B single)
 #   -E 0.0.2:8      addresses handed to clients (the application is one)
+#   -B single       rewrite every outgoing source to the address the gateway
+#                   assigned the tunnel (1.1.3 at OBHS), so no 0.0.x address,
+#                   nor any client range, ever reaches the bus
+#   --arg=delay=40 -B pace
+#                   space outgoing telegrams 40 ms apart. The gateway dropped
+#                   telegrams from a burst (the panel's status lights, sent
+#                   together after a press), so rows 3 and 4 missed their
+#                   updates (found on site 30 Sep 2026).
 #   -b ipt:HOST     KNXnet/IP tunnelling to the gateway (§3.1: 10.2.30.252)
 #
 # Do NOT add -u, -i or -d: knxd.socket and knxd-net.socket provide the
 # sockets (/run/knx and TCP 6720) and the unit runs knxd in the foreground.
 # Verify at the bench with:  knxtool groupsocketlisten ip:localhost
-KNXD_OPTS="-e 0.0.1 -E 0.0.2:8 -b ipt:10.2.30.252"
+KNXD_OPTS="-e 0.0.1 -E 0.0.2:8 --arg=delay=40 -B pace -B single -b ipt:10.2.30.252"

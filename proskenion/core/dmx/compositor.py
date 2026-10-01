@@ -1,11 +1,10 @@
 """The compositor: level store in, DMX slots and KNX dimmer writes out (spec §7.2.3).
 
-This resolves how individual levels, group faders and the master dimmer
-combine, and how DMX fixtures and KNX dimmers are driven from one model::
+This resolves how individual levels and the master dimmer combine, and how
+DMX fixtures and KNX dimmers are driven from one model::
 
     Level store  (levels 0–100 one decimal, colour r/g/b/w 0–255)
-    Group multipliers (0.0–1.0) ─┐
-    Master (0–100 %)            ─┴→ Compositor
+    Master (0–100 %)            ──→ Compositor
                                       ├─ DMX pass → universe buffers → frame renderer
                                       └─ KNX pass → dimmer writes    → KNX telegram queue
 
@@ -39,42 +38,91 @@ RGB / RGBW              level scales each component,       n/a
                         unless the profile has a dimmer:
                         then colour is written unscaled
 Colour changed only     recomposited (colour is stored)    n/a
-``min_value`` = 0       clamp, then group, then master     clamp only
+``min_value`` = 0       clamp, then master                 clamp only
 ``min_value`` > 0       clamp only; exempt                 clamp only
-Binding recall          group forced to 1.0 *by a write*;  level set directly; no
-                        the master applies normally        multiplier applies
-Several groups          highest multiplier, not product    n/a
+Group fader / recall    members' levels set; the master    members' levels set
+                        applies normally
 Level unchanged         no frame; keepalive covers it      no telegram; 0.5 % deadband
 Level changed           frame sent, capped at 40 fps       queued at priority 3
 ======================  =================================  ==========================
 
-The binding row needs no code here, and that is the point: the rules engine
-forces the group multiplier to 1.0 with an ordinary write, and the compositor
-applies whatever multipliers the store holds. It has no knowledge of bindings.
+Groups set levels; they do not scale (owner decision 2026-09-30)
+----------------------------------------------------------------
+§7.2.3 and §9.4 as written made a group fader a multiplier over its members'
+levels, a fixture in several groups taking the highest. The owner replaced
+that with a traditional desk's model: dragging a group fader, or a binding's
+recall, sets every member's *level*
+(:meth:`~proskenion.core.lighting.LightingService.set_group_level`), and
+fixture faders then trim individually. So the compositor has no group input
+and no knowledge of groups or bindings; the group row above needs no code.
 
 Arithmetic (§7.2.3 *Clamp point*, §9.5)
 ---------------------------------------
 For a DMX fixture the stored level is clamped to ``min_value``–``max_value``
-**first**, then scaled by the **highest** multiplier among the channel's groups
-(maximum, never the product, so a channel is never attenuated twice), then by
-the master. A channel with ``min_value`` above zero is a floor the master
-cannot scale below: it is exempt from group and master scaling entirely and
-gets its clamp only.
+**first**, then scaled by the master: ``output = level × master``. A channel
+with ``min_value`` above zero is a floor the master cannot scale below: it is
+exempt from master scaling and gets its clamp only.
 
-A KNX house dimmer gets its clamp and nothing else (§7.2.3, §9.4, §9.5).
-Group faders and the master scale stage lighting only, as a desk's grand
-master leaves architectural house lighting alone. So a dimmer follows its own
-fader, the wall panel and scenes one to one; moving the master or a group
-fader sends nothing to the KNX bus; and a level the wall panel reports (§9.6)
-is exactly what the dimmer is sent, so there is never a scaled value to send
-back.
+A KNX house dimmer gets its clamp and nothing else (§7.2.3, §9.4, §9.5). The
+master scales stage lighting only, as a desk's grand master leaves
+architectural house lighting alone. So a dimmer follows its own level one to
+one; moving the master sends nothing to the KNX bus; and a level the wall
+panel reports (§9.6) is exactly what the dimmer is sent, so there is never a
+scaled value to send back.
 
 Observed levels are never read (§7.2.7)
 ---------------------------------------
 The compositor reaches the state store only through :class:`LevelStoreView`,
-which exposes the four composited inputs — levels, colour, group multipliers,
-master — and nothing else. The Art-Net input's display-only field has no
+which exposes the three composited inputs — levels, colour and master — and
+nothing else. The Art-Net input's display-only field has no
 accessor here, so it cannot be composited by accident.
+
+Operator glide: the output follows a fader, it does not jump to it
+------------------------------------------------------------------
+Field finding 2026-09-30 (§7.2.3, §21.2, §23.1): a fader dragged on the web
+UI arrives as direct (``fade_ms`` 0) writes, throttled to ~30 a second but
+landing irregularly over Wi-Fi (gaps of 20–110 ms). Written straight to the
+buffers, each write was a jump whose size grew with the drag speed and whose
+timing followed the network, which the room saw as a slight flicker — worse
+on a group fader, which moves four fixtures at once.
+
+So a direct operator write (:meth:`Compositor.request_glide`, called by the
+lighting service for the WebSocket fader domains and the master) makes the
+DMX pass move the channel's **output** from where it last was to its new
+composited value in a straight line over :data:`GLIDE_S`, counted from one
+frame period before the frame that first carries it. The stored level is
+the target at once: the interface, persistence, snapshots and the ``level``
+basis of a derived status never see the glide. A glide follows the live
+target, so a master move or a fade started mid-glide is joined, not fought,
+and it ends on its deadline. Every channel a request names starts together,
+so a group's members glide in step and land on the same frame.
+
+Anything else — a scene, a binding recall, a fade, a REST write, a flash —
+requests nothing and the output follows the store exactly, so an explicit
+fade keeps its own timing. External control drops every glide: on resuming
+the pass composites the model as it stands (§7.2.7).
+
+Bump: a flash overlay while held (owner decision 2026-10-01, "Option A")
+-------------------------------------------------------------------------
+A group strip's BUMP button flashes the group while it is held, as a desk's
+flash key does. It is an **output overlay**, not a write: the lighting
+service tells the compositor which DMX channels are bumped
+(:meth:`Compositor.set_bumped`), and while a channel is in that set the DMX
+pass composites it as if its level were 100 — ``max(level, 100)`` — then
+clamps it to its own range and scales it by the master exactly as any level
+(a fixture capped at 80 % flashes to 80 %; the master still scales the
+flash). The stored level is never touched, so releasing the bump returns
+the output to the level the fader shows, and nothing a bump does reaches
+persistence, snapshots or the ``level`` basis of a derived status. KNX
+house dimmers are never bumped: like the master, the flash is a stage
+(DMX) overlay, and a house dimmer is outside it.
+
+A bump goes on and off **at once**, with no glide: a flash that eased in
+over three frames would read as soft. Any glide in progress on a channel
+whose bump changes is dropped, so the frame that carries the change is the
+full step. The first composite after a change sets :attr:`Compositor.overlay_moved`,
+which the renderer counts as motion, so an ``output``-basis derived status
+recomputes on the frame that carries the flash and on the one that ends it.
 
 Value scale (§9.2, B5)
 ----------------------
@@ -124,7 +172,7 @@ UNUSED_ROLE = "unused"
 
 #: The state-store fields the passes composite. Anything else in the lighting
 #: domain is not an input to either pass.
-COMPOSITED_FIELDS = frozenset({"levels", "colour", "group_multipliers", "master"})
+COMPOSITED_FIELDS = frozenset({"levels", "colour", "master"})
 
 #: §7.2.3: a KNX value within this many percent of the last one sent is not
 #: resent while its inputs are still moving.
@@ -139,6 +187,14 @@ KNX_DIMMER_PRIORITY = 3
 #: pass hands the write to the KNX queue. The reasoning is in
 #: :meth:`proskenion.core.lighting.LightingService.apply_knx_status`.
 KNX_ECHO_WINDOW_S = 0.5
+#: How long a direct operator write takes to reach the DMX output (see the
+#: module docstring). Three frames at 40 fps: long enough to bridge the
+#: usual gap between two fader writes arriving over Wi-Fi (median ~50 ms on
+#: the rig, 30 September 2026), short enough that a tap still feels immediate.
+GLIDE_S = 0.075
+#: A glide is counted from this long before the frame that first carries
+#: it — one frame period at 40 fps — so that frame already moves.
+GLIDE_LEAD_S = 0.025
 
 FadeMode = Literal["hardware", "software"]
 
@@ -167,19 +223,18 @@ def resolve_level(
     *,
     min_value: float,
     max_value: float,
-    group_multiplier: float,
     master: float,
 ) -> float:
-    """The compositor arithmetic: clamp → highest group multiplier → master.
+    """The compositor arithmetic: clamp → master.
 
-    ``group_multiplier`` is 0.0–1.0, already the maximum across the channel's
-    groups; ``master`` is 0–100 as the state store holds it. A channel with
-    ``min_value > 0`` is exempt from both (§7.2.3 *Clamp point*, §9.5).
+    ``master`` is 0–100 as the state store holds it. A channel with
+    ``min_value > 0`` is exempt from it (§7.2.3 *Clamp point*, §9.5). Groups
+    take no part: a group fader sets its members' levels (module docstring).
     """
     clamped = min(max(level, min_value), max_value)
     if min_value > 0:  # a floor the master cannot scale below
         return clamped
-    return clamped * group_multiplier * (master / LEVEL_MAX)
+    return clamped * (master / LEVEL_MAX)
 
 
 # -- colour ------------------------------------------------------------------
@@ -320,12 +375,18 @@ class LightingConfig:
     ``groups`` maps every group id — including groups with no members — to its
     member channel ids. ``power_on_colours`` holds each channel row's
     ``colour_*`` columns, loaded into the level store at startup (§7.2.3).
+
+    ``indicator_only`` holds the ids of indicator-only groups (migration 011,
+    owner decision 2026-09-30): they stay in ``groups`` — a derived status
+    reads their members' levels — but have no fader, so nothing sets their
+    members' levels through them.
     """
 
     dmx_channels: tuple[DmxChannel, ...] = ()
     knx_channels: tuple[KnxChannel, ...] = ()
     groups: Mapping[int, frozenset[int]] = field(default_factory=dict)
     power_on_colours: Mapping[int, Colour] = field(default_factory=dict)
+    indicator_only: frozenset[int] = frozenset()
 
     def channels(self) -> dict[int, Channel]:
         out: dict[int, Channel] = {c.id: c for c in self.dmx_channels}
@@ -336,14 +397,6 @@ class LightingConfig:
         """``{channel id: (min_value, max_value)}`` — what the fade engine clamps to."""
         return {c.id: (c.min_value, c.max_value) for c in self.channels().values()}
 
-    def groups_of(self) -> dict[int, tuple[int, ...]]:
-        """``{channel id: group ids}`` for every channel in at least one group."""
-        out: dict[int, list[int]] = {}
-        for group_id, members in sorted(self.groups.items()):
-            for channel_id in members:
-                out.setdefault(channel_id, []).append(group_id)
-        return {k: tuple(v) for k, v in out.items()}
-
 
 # -- inputs ------------------------------------------------------------------
 
@@ -351,8 +404,8 @@ class LightingConfig:
 class LevelStoreView:
     """The compositor's only window onto the state store (see the module docstring).
 
-    Four reads, and deliberately nothing else: the level, colour, group
-    multiplier and master that the passes composite. Reads are unrestricted
+    Three reads, and deliberately nothing else: the level, colour and master
+    that the passes composite. Reads are unrestricted
     in the store (§5.6); this narrows them so the control path *cannot* read
     display-only state.
     """
@@ -369,11 +422,6 @@ class LevelStoreView:
 
     def colour(self, channel_id: int) -> Colour | None:
         return Colour.from_store(self._lighting.get_item("colour", channel_id))
-
-    def group_multiplier(self, group_id: int) -> float:
-        """0.0–1.0; a group with nothing stored is at full (``1.0``)."""
-        value = _as_number(self._lighting.get_item("group_multipliers", group_id))
-        return 1.0 if value is None else min(max(value, 0.0), 1.0)
 
     def master(self) -> float:
         """0–100 as stored (§16.8 ``"master": 100.0``)."""
@@ -438,6 +486,14 @@ class KnxPassResult:
     retry_at: float | None
 
 
+@dataclass(slots=True)
+class _Glide:
+    """A DMX channel's output on its way to its composited value (module docstring)."""
+
+    start: float
+    t0: float
+
+
 # -- the compositor ----------------------------------------------------------
 
 
@@ -471,8 +527,22 @@ class Compositor:
         self._config = LightingConfig()
         self._dmx_channels: tuple[DmxChannel, ...] = ()
         self._knx_channels: tuple[KnxChannel, ...] = ()
-        self._groups_of: dict[int, tuple[int, ...]] = {}
         self._buffers: dict[UniverseKey, UniverseBuffer] = {}
+        # The operator glide (module docstring): each DMX channel's output as
+        # last composited (0–100, unrounded), the glides in progress, and the
+        # channels a direct write has asked to glide on the next composite.
+        self._output: dict[int, float] = {}
+        self._glides: dict[int, _Glide] = {}
+        self._glide_requests: set[int] = set()
+        self.glided = False
+        """Whether the last DMX composite moved any channel along a glide (landing included)."""
+        # The bump overlay (module docstring): DMX channels composited at full
+        # while a group's BUMP is held, and whether that set has changed since
+        # the last composite.
+        self._bumped: frozenset[int] = frozenset()
+        self._overlay_dirty = False
+        self.overlay_moved = False
+        """Whether the last DMX composite was the first to carry a bump going on or off."""
         self.dmx_channel_ids: frozenset[int] = frozenset()
         self.knx_channel_ids: frozenset[int] = frozenset()
         self.configure(config or LightingConfig())
@@ -495,7 +565,6 @@ class Compositor:
         self._config = config
         self._dmx_channels = tuple(sorted(config.dmx_channels, key=lambda c: c.id))
         self._knx_channels = tuple(sorted(config.knx_channels, key=lambda c: c.id))
-        self._groups_of = config.groups_of()
         self.dmx_channel_ids = frozenset(c.id for c in self._dmx_channels)
         self.knx_channel_ids = frozenset(c.id for c in self._knx_channels)
         keys = {UniverseKey(c.device_id, c.universe) for c in self._dmx_channels}
@@ -512,6 +581,14 @@ class Compositor:
             if channel.id not in self._last_sent_knx:
                 self._last_sent_knx[channel.id] = self._knx_value(channel)
         self._attributes = {k: v for k, v in self._attributes.items() if k in self.dmx_channel_ids}
+        for channel_id in [k for k in self._output if k not in self.dmx_channel_ids]:
+            del self._output[channel_id]
+        for channel_id in [k for k in self._glides if k not in self.dmx_channel_ids]:
+            del self._glides[channel_id]
+        self._glide_requests &= self.dmx_channel_ids
+        if not self._bumped <= self.dmx_channel_ids:
+            self._bumped &= self.dmx_channel_ids
+            self._overlay_dirty = True
         self._reported.clear()
 
     def group_members(self, group_id: int) -> frozenset[int]:
@@ -528,8 +605,8 @@ class Compositor:
     def touches_knx(self, field_name: str, item: str | None) -> bool:
         """Whether a change to ``lighting.<field_name>.<item>`` can change a dimmer value.
 
-        Only a dimmer's own level can: group multipliers and the master do not
-        scale house dimmers (§9.5), and colour has no KNX output.
+        Only a dimmer's own level can: the master does not scale house
+        dimmers (§9.5), and colour has no KNX output.
         """
         if field_name != "levels":
             return False
@@ -543,32 +620,21 @@ class Compositor:
         item_id = _item_id(item)
         if item_id is None:
             return True  # a whole-map write: assume it matters
-        if field_name == "group_multipliers":
-            return not self.group_members(item_id).isdisjoint(channels)
         return item_id in channels
 
     # -- resolution ----------------------------------------------------------
-
-    def effective_group_multiplier(self, channel_id: int) -> float:
-        """The highest multiplier among the channel's groups — maximum, not product.
-
-        A channel in no group is at full.
-        """
-        groups = self._groups_of.get(channel_id)
-        if not groups:
-            return 1.0
-        return max(self._store.group_multiplier(group_id) for group_id in groups)
 
     def resolve(
         self, channel: Channel, *, destination: bool = False, master: float | None = None
     ) -> float:
         """The channel's composited output, 0–100 (unrounded).
 
-        A DMX fixture is clamped, then scaled by its groups and the master. A
-        KNX house dimmer is clamped only: groups and the master do not scale
-        it (§7.2.3, §9.5), so its output is its own level. With
+        A DMX fixture is clamped, then scaled by the master. A KNX house
+        dimmer is clamped only: the master does not scale it (§7.2.3, §9.5),
+        so its output is its own level. With
         ``destination``, a channel whose level is fading is resolved from the
-        level it is fading *to*.
+        level it is fading *to*. A bumped DMX fixture resolves from full
+        (module docstring, *Bump*), still clamped and scaled.
         """
         level: float | None = None
         if destination:
@@ -577,19 +643,21 @@ class Compositor:
             level = self._store.level(channel.id)
         if isinstance(channel, KnxChannel):
             return min(max(level, channel.min_value), channel.max_value)
+        if channel.id in self._bumped:
+            level = LEVEL_MAX  # max(level, 100): the flash wins over the stored level
         return resolve_level(
             level,
             min_value=channel.min_value,
             max_value=channel.max_value,
-            group_multiplier=self.effective_group_multiplier(channel.id),
             master=self._store.master() if master is None else master,
         )
 
     def composited_level(self, channel_id: int) -> float | None:
         """Where a channel actually lands, 0–100 one decimal — the §9.4 ghost mark.
 
-        For a KNX house dimmer this is its own clamped level, whatever the
-        group faders and the master hold, because that is what it is sent.
+        A DMX fixture's is its clamped level × master. For a KNX house dimmer
+        it is its own clamped level, whatever the master holds, because that
+        is what it is sent.
         """
         channel = self._config.channels().get(channel_id)
         return None if channel is None else round(self.resolve(channel), 1)
@@ -601,25 +669,120 @@ class Compositor:
         return self._dmx_suspended
 
     def suspend_dmx(self, suspended: bool) -> None:
-        """Gate the DMX pass — external control (§7.2.7). Never touches the KNX pass."""
-        self._dmx_suspended = suspended
+        """Gate the DMX pass — external control (§7.2.7). Never touches the KNX pass.
 
-    def composite_dmx(self) -> bool:
+        Either way every glide is dropped: nothing is output while suspended,
+        and resuming composites the model as it stands.
+        """
+        self._dmx_suspended = suspended
+        self._glides.clear()
+        self._glide_requests.clear()
+
+    # -- the bump overlay (module docstring) ----------------------------------
+
+    @property
+    def bumped(self) -> frozenset[int]:
+        """The DMX channels a held BUMP is compositing at full."""
+        return self._bumped
+
+    def set_bumped(self, channel_ids: Iterable[int]) -> bool:
+        """Composite exactly these DMX channels at full from the next composite on.
+
+        KNX channels and unknown ids are ignored — a bump is a stage overlay,
+        as the master is. Returns whether the set changed; the caller marks
+        the renderer dirty. A glide in progress on a channel whose bump
+        changed is dropped, so the flash is instant both ways.
+        """
+        wanted = frozenset(c for c in channel_ids if c in self.dmx_channel_ids)
+        if wanted == self._bumped:
+            return False
+        changed = wanted ^ self._bumped
+        self._bumped = wanted
+        for channel_id in changed:
+            self._glides.pop(channel_id, None)
+            self._glide_requests.discard(channel_id)
+        self._overlay_dirty = True
+        return True
+
+    # -- the operator glide (module docstring) --------------------------------
+
+    def request_glide(self, channel_ids: Iterable[int] | None = None) -> None:
+        """Glide these DMX channels' output to their new values on the next composite.
+
+        Called straight after a direct operator write, in the same turn of
+        the event loop, so the composite that carries the write starts the
+        glide. ``None`` means every DMX channel — a master move. KNX channels
+        and unknown ids are ignored, and nothing is recorded while external
+        control suspends the DMX pass.
+        """
+        if self._dmx_suspended:
+            return
+        if channel_ids is None:
+            self._glide_requests |= self.dmx_channel_ids
+        else:
+            self._glide_requests.update(c for c in channel_ids if c in self.dmx_channel_ids)
+
+    @property
+    def dmx_gliding(self) -> bool:
+        """Whether any DMX channel's output is still on its way (or asked to be)."""
+        return bool(self._glides or self._glide_requests)
+
+    def is_gliding(self, channel_id: int) -> bool:
+        return channel_id in self._glides or channel_id in self._glide_requests
+
+    def output_level(self, channel_id: int) -> float | None:
+        """What a DMX fixture was last composited at, 0–100 one decimal — mid-glide
+        included. Before its first composite, and for a KNX dimmer, this is
+        :meth:`composited_level`."""
+        output = self._output.get(channel_id)
+        if output is None:
+            return self.composited_level(channel_id)
+        return round(output, 1)
+
+    def _glide_output(self, channel_id: int, target: float, now: float | None) -> float:
+        """The channel's output this composite: ``target``, or on the way to it."""
+        if now is None:  # composited without a clock: nothing can glide
+            self._glides.pop(channel_id, None)
+            return target
+        if channel_id in self._glide_requests:
+            previous = self._output.get(channel_id)
+            if previous is not None and previous != target:
+                # From wherever the output is now — mid-glide included — so a
+                # stream of fader writes never steps backwards.
+                self._glides[channel_id] = _Glide(previous, now - GLIDE_LEAD_S)
+        glide = self._glides.get(channel_id)
+        if glide is None:
+            return target
+        self.glided = True
+        progress = (now - glide.t0) / GLIDE_S
+        if progress >= 1.0 - 1e-9:  # a frame on the deadline lands, float rounding or not
+            del self._glides[channel_id]
+            return target
+        return glide.start + (target - glide.start) * progress
+
+    def composite_dmx(self, now: float | None = None) -> bool:
         """Sole writer of the universe buffers.
 
         Returns ``False``, having written nothing, while external control is
         active. Otherwise every buffer is rebuilt from zero and every patched
-        fixture's profile is driven from its composited level; where two
-        fixtures overlap (a warning, not an error — §9.1) the higher channel id
-        is written last.
+        fixture's profile is driven from its composited level — or, for a
+        channel gliding after a direct operator write, from where the glide
+        has reached at ``now`` (the renderer's clock; without one nothing
+        glides). Where two fixtures overlap (a warning, not an error — §9.1)
+        the higher channel id is written last.
         """
         if self._dmx_suspended:  # external control, §7.2.7
             return False
         master = self._store.master()
         for buffer in self._buffers.values():
             buffer.clear()
+        self.glided = False
+        self.overlay_moved, self._overlay_dirty = self._overlay_dirty, False
         for channel in self._dmx_channels:
-            self._write_profile(channel, self.resolve(channel, master=master))
+            level = self._glide_output(channel.id, self.resolve(channel, master=master), now)
+            self._output[channel.id] = level
+            self._write_profile(channel, level)
+        self._glide_requests.clear()
         return True
 
     def _write_profile(self, channel: DmxChannel, level: float) -> None:
@@ -636,7 +799,7 @@ class Compositor:
         is left at zero.
         """
         buffer = self._buffers[UniverseKey(channel.device_id, channel.universe)]
-        # ``level`` is already clamped and scaled by group and master.
+        # ``level`` is already clamped and scaled by the master.
         scale = 1.0 if channel.has_dimmer else level / LEVEL_MAX
         colour = self._store.colour(channel.id) if channel.has_colour else None
         attributes = self._attributes.get(channel.id, {})
@@ -667,15 +830,15 @@ class Compositor:
 
     def composite_knx(self, now: float) -> KnxPassResult:
         """Sole producer of KNX dimmer writes. Never gated by DMX state, and never
-        scaled by group or master: house dimmers follow their own level (§9.5).
+        scaled by the master: house dimmers follow their own level (§9.5).
 
         ``now`` is the event loop's clock. Returns the writes to queue at
         priority 3 and, if a write was held back by the per-channel rate
         limit, the time it falls due.
 
         A dimmer's value is its stored level clamped to its own range. Moving
-        a group fader or the master therefore changes no dimmer value and
-        sends nothing to the bus; a recall or a scene sets the level directly.
+        the master therefore changes no dimmer value and sends nothing to the
+        bus; a group fader, a recall or a scene sets the level directly.
 
         Why ``hardware`` channels send a fade's target once
         ----------------------------------------------------
@@ -865,6 +1028,8 @@ __all__ = [
     "COLOUR_COMPONENTS",
     "COLOUR_ROLES",
     "COMPOSITED_FIELDS",
+    "GLIDE_LEAD_S",
+    "GLIDE_S",
     "KNX_DEADBAND",
     "KNX_DIMMER_PRIORITY",
     "KNX_ECHO_WINDOW_S",

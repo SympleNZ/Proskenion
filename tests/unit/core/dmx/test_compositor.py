@@ -56,47 +56,41 @@ def test_value_scale_through_both_passes(state: StateStore) -> None:
 # -- compositor arithmetic -----------------------------------------------------
 
 
-def test_arithmetic_maximum_not_product_across_overlapping_groups() -> None:
-    # "Row 2" at 40 % and "Full Stage" at 100 %: Row 2 has no effect at all.
-    assert (
-        resolve_level(80.0, min_value=0, max_value=100, group_multiplier=max(0.4, 1.0), master=100)
-        == 80.0
-    )
-
-
-def test_arithmetic_through_the_compositor_uses_the_highest_group(state: StateStore) -> None:
+def test_arithmetic_output_is_level_times_master_whatever_the_groups(state: StateStore) -> None:
+    # Owner decision 2026-09-30: a group fader sets levels, so groups are no
+    # input to the compositor at all; a fixture in two groups lands at its
+    # own level × the master.
     rig = Rig(state, config(dmx(1, 1), knx(2), groups={10: {1, 2}, 11: {1, 2}}))
-    rig.set_level(1, 100.0)
-    rig.set_level(2, 100.0)
-    rig.set_group(10, 0.4)
-    rig.set_group(11, 0.6)
+    rig.set_level(1, 80.0)
+    rig.set_level(2, 80.0)
+    rig.set_master(50.0)
     ch1, ch2 = rig.compositor.config.dmx_channels[0], rig.compositor.config.knx_channels[0]
-    assert rig.compositor.resolve(ch1) == pytest.approx(60.0)  # max(0.4, 0.6), not 0.24
-    assert rig.compositor.resolve(ch2) == 100.0  # groups do not scale a house dimmer (§9.5)
-    assert rig.compositor.effective_group_multiplier(1) == 0.6
+    assert rig.compositor.resolve(ch1) == pytest.approx(40.0)
+    assert rig.compositor.resolve(ch2) == 80.0  # the master does not scale a house dimmer (§9.5)
+
+
+def test_the_store_has_no_group_input_for_the_compositor(state: StateStore) -> None:
+    rig = Rig(state, config(dmx(1, 1), groups={10: {1}}))
+    assert "group_multipliers" not in state.lighting.SPECS
+    assert not rig.compositor.touches_dmx("group_multipliers", "10")
 
 
 def test_arithmetic_clamps_before_scaling() -> None:
     # §7.2.3 Clamp point: max_value 80 with the master at 50 % outputs 40.
-    assert resolve_level(100.0, min_value=0, max_value=80, group_multiplier=1.0, master=50) == 40.0
+    assert resolve_level(100.0, min_value=0, max_value=80, master=50) == 40.0
 
 
-def test_arithmetic_min_value_above_zero_is_exempt_from_group_and_master() -> None:
-    kwargs = {"min_value": 20.0, "max_value": 100.0, "group_multiplier": 0.1, "master": 5.0}
+def test_arithmetic_min_value_above_zero_is_exempt_from_the_master() -> None:
+    kwargs = {"min_value": 20.0, "max_value": 100.0, "master": 5.0}
     assert resolve_level(60.0, **kwargs) == 60.0
     assert resolve_level(3.0, **kwargs) == 20.0  # the floor, applied to the output
 
 
-def test_arithmetic_min_value_zero_scales_by_group_then_master() -> None:
-    assert resolve_level(80.0, min_value=0, max_value=100, group_multiplier=0.5, master=50) == 20.0
+def test_arithmetic_min_value_zero_scales_by_the_master() -> None:
+    assert resolve_level(80.0, min_value=0, max_value=100, master=50) == 40.0
 
 
-def test_a_channel_in_no_group_is_at_full_group_multiplier(state: StateStore) -> None:
-    rig = Rig(state, config(dmx(1, 1)))
-    assert rig.compositor.effective_group_multiplier(1) == 1.0
-
-
-def test_an_unset_group_multiplier_is_full(state: StateStore) -> None:
+def test_a_channel_in_a_group_lands_at_its_own_level(state: StateStore) -> None:
     rig = Rig(state, config(dmx(1, 1), groups={10: {1}}))
     rig.set_level(1, 50.0)
     assert rig.compositor.composited_level(1) == 50.0
@@ -200,11 +194,10 @@ def test_the_ghost_mark_is_the_composited_level(state: StateStore) -> None:
     assert rig.state.lighting.get_item("levels", 1) == 85.0  # the thumb does not move
 
 
-def test_the_ghost_mark_of_a_house_dimmer_ignores_group_and_master(state: StateStore) -> None:
+def test_the_ghost_mark_of_a_house_dimmer_ignores_the_master(state: StateStore) -> None:
     # §9.5: a KNX house dimmer lands at its own level, which is what it is sent.
     rig = Rig(state, config(knx(2, max_value=80.0), groups={10: {2}}))
     rig.set_level(2, 85.0)
-    rig.set_group(10, 0.3)
     rig.set_master(50.0)
     assert rig.compositor.composited_level(2) == 80.0  # its clamp and nothing else
 

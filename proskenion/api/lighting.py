@@ -50,7 +50,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 from collections.abc import Callable
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Header, Request, Response
@@ -75,13 +75,13 @@ from proskenion.api.ws import SetHandler, SetRequest, SetResult, WriteRouter
 from proskenion.core.auth import TokenClaims
 from proskenion.core.broadcast import RESYNC_SOURCE, filter_for_hirer
 from proskenion.core.bus import EventBus
-from proskenion.core.dmx.compositor import COLOUR_ROLES, Colour
+from proskenion.core.dmx.compositor import COLOUR_ROLES, Colour, clamp_level
 from proskenion.core.dmx.desk import DeskInput
 from proskenion.core.dmx.fade import ChannelLockedError, UnknownChannelError, UnknownGroupError
 from proskenion.core.events import LightingConfigChanged
 from proskenion.core.hirer_enforcement import hirer_may_colour
 from proskenion.core.lifecycle import blackout_dmx_channels
-from proskenion.core.lighting import LightingService
+from proskenion.core.lighting import BumpRefusedError, IndicatorOnlyGroupError, LightingService
 from proskenion.core.state import StateStore
 from proskenion.db.connection import Database
 from proskenion.db.crud import devices as devices_crud
@@ -166,7 +166,6 @@ def _lighting_state_snapshot(state: StateStore) -> dict[str, Any]:
     observed = domain.get("observed")
     return {
         "channels": channels,
-        "groups": domain.get("group_multipliers"),
         "master": domain.get("master"),
         "external_control": domain.get("external_control"),
         "observed": observed if observed else None,
@@ -176,7 +175,6 @@ def _lighting_state_snapshot(state: StateStore) -> dict[str, Any]:
 #: What a hirer is sent while lighting is off for them (Q3): nothing to show.
 _EMPTY_HIRER_LOOK: dict[str, Any] = {
     "channels": {},
-    "groups": {},
     "master": None,
     "external_control": None,
     "observed": None,
@@ -187,8 +185,10 @@ _EMPTY_HIRER_LOOK: dict[str, Any] = {
 async def get_lighting_state(claims: Control, state: State) -> dict[str, Any]:
     """The current look (§16.5). A hirer's is filtered by the very function that
     filters the ``lighting_state`` frame, so the two cannot drift: reachable
-    channels, the multipliers the ghost mark needs, and ``master`` read-only;
-    nothing at all while lighting is off for them."""
+    channels (a group's members among them, so a group fader can show its
+    level) and ``master`` read-only; nothing at all while lighting is off for
+    them. There is no ``groups`` section: a group fader sets its members'
+    levels and has no stored value of its own (owner decision 2026-09-30)."""
     look = _lighting_state_snapshot(state)
     if not claims.is_hirer:
         return look
@@ -371,9 +371,17 @@ async def set_group_level(
     service: Lighting,
     group_id: int,
     body: LevelBody,
-) -> dict[str, float]:
-    """``{level, fade_ms?}`` 0–100 — divided by 100 before the service sees it.
-    A hirer needs the group's master on an assigned page."""
+) -> dict[str, Any]:
+    """``{level, fade_ms?}`` 0–100: every member's level to ``level`` (owner
+    decision 2026-09-30 — a group fader sets levels; it is no longer a
+    multiplier). A hirer needs the group's master on an assigned page.
+
+    Answers ``{level, levels}``: the level asked for (clamped to 0–100) and
+    each member's level after its own range clamped it — a member held to its
+    range is the group fader working as intended, not an error. Members a
+    critical scene holds are left alone and, once every other member has
+    been set, reported as 403 ``permission_denied`` with ``detail.locked``,
+    as ``POST /lighting/levels`` does."""
     await _refuse_unless(
         state.hirer.permissions.group_reachable(group_id),
         request,
@@ -383,11 +391,28 @@ async def set_group_level(
         reason="unreachable",
     )
     try:
-        handle = service.set_group_multiplier(group_id, body.level / 100.0, fade_ms=body.fade_ms)
+        result = service.set_group_level(group_id, body.level, fade_ms=body.fade_ms)
     except UnknownGroupError as exc:
         raise ApiError(ErrorCode.NOT_FOUND, "There is no lighting group with that id") from exc
-    assert handle.target_multiplier is not None
-    return {"level": handle.target_multiplier * 100.0}
+    except IndicatorOnlyGroupError as exc:
+        raise ApiError(
+            ErrorCode.VALIDATION_FAILED,
+            "This group is indicator-only: it has no fader",
+            {"group_id": ["an indicator-only group has no fader"]},
+        ) from exc
+    except ValueError as exc:
+        raise ApiError(ErrorCode.VALIDATION_FAILED, str(exc), {"level": [str(exc)]}) from exc
+    if result.refused:
+        raise ApiError(
+            ErrorCode.PERMISSION_DENIED,
+            "Some of this group's channels are locked by a running scene",
+            {"locked": [str(c) for c in result.refused]},
+        )
+    levels: dict[str, float] = {}
+    for channel_id, handle in result.handles.items():
+        assert handle.target_level is not None
+        levels[str(channel_id)] = handle.target_level
+    return {"level": clamp_level(body.level), "levels": levels}
 
 
 @router.post("/lighting/master")
@@ -551,7 +576,12 @@ class ChannelModel(BaseModel):
     min_value: float
     max_value: float
     has_colour: bool
+    #: Every group the fixture belongs to (membership; writable on PUT).
     group_ids: list[int]
+    #: Of those, the groups with a fader — ``group_ids`` without
+    #: indicator-only groups (migration 011). Read-only: the Lighting view
+    #: places a fixture's strip under the first of them.
+    fader_group_ids: list[int]
     bar_id: int | None
     position: float
     visible_staff: bool
@@ -641,12 +671,29 @@ async def _channel_or_404(db: Database, channel_id: int) -> lighting_crud.Lighti
     return channel
 
 
-async def _group_ids_by_channel(db: Database) -> dict[int, list[int]]:
-    result: dict[int, list[int]] = {}
+@dataclass(frozen=True, slots=True)
+class ChannelGroups:
+    """A fixture's groups: every membership, and those with a fader."""
+
+    ids: tuple[int, ...] = ()
+    with_fader: tuple[int, ...] = ()
+
+
+NO_GROUPS = ChannelGroups()
+
+
+async def _group_ids_by_channel(db: Database) -> dict[int, ChannelGroups]:
+    ids: dict[int, list[int]] = {}
+    with_fader: dict[int, list[int]] = {}
     for group in await lighting_crud.list_groups(db):
         for member in await lighting_crud.get_group_members(db, group.id):
-            result.setdefault(member.channel_id, []).append(group.id)
-    return result
+            ids.setdefault(member.channel_id, []).append(group.id)
+            if not group.indicator_only:
+                with_fader.setdefault(member.channel_id, []).append(group.id)
+    return {
+        channel_id: ChannelGroups(tuple(groups), tuple(with_fader.get(channel_id, ())))
+        for channel_id, groups in ids.items()
+    }
 
 
 async def _channel_has_colour(db: Database, channel: lighting_crud.LightingChannel) -> bool:
@@ -671,7 +718,7 @@ async def _channel_conflicts(
 def _channel_model(
     channel: lighting_crud.LightingChannel,
     *,
-    group_ids: list[int],
+    groups: ChannelGroups,
     has_colour: bool,
     conflicts: list[PatchConflictModel] | None = None,
 ) -> ChannelModel:
@@ -683,7 +730,8 @@ def _channel_model(
         min_value=channel.min_value,
         max_value=channel.max_value,
         has_colour=has_colour,
-        group_ids=sorted(group_ids),
+        group_ids=sorted(groups.ids),
+        fader_group_ids=sorted(groups.with_fader),
         bar_id=channel.bar_id,
         position=channel.position,
         visible_staff=channel.visible_staff,
@@ -713,7 +761,7 @@ async def list_channels(_: Staff, db: Db) -> ChannelsResponse:
         channels=[
             _channel_model(
                 c,
-                group_ids=group_ids.get(c.id, []),
+                groups=group_ids.get(c.id, NO_GROUPS),
                 has_colour=(
                     c.profile_id is not None
                     and c.profile_id in profiles
@@ -728,9 +776,9 @@ async def list_channels(_: Staff, db: Db) -> ChannelsResponse:
 @router.get("/lighting/channels/{channel_id}", response_model=ChannelModel)
 async def get_channel(_: Staff, db: Db, channel_id: int) -> ChannelModel:
     channel = await _channel_or_404(db, channel_id)
-    group_ids = (await _group_ids_by_channel(db)).get(channel_id, [])
+    groups = (await _group_ids_by_channel(db)).get(channel_id, NO_GROUPS)
     has_colour = await _channel_has_colour(db, channel)
-    return _channel_model(channel, group_ids=group_ids, has_colour=has_colour)
+    return _channel_model(channel, groups=groups, has_colour=has_colour)
 
 
 async def _profile_id_for_has_colour(db: Database, *, has_colour: bool) -> int | None:
@@ -958,10 +1006,10 @@ async def create_channel(
     # A new channel, and any group it joins, may be immediately reachable by
     # a hirer whose page already carries it (§6.7): wait for the rebuild.
     await settle_hirer_permissions(request, "channel_created")
-    group_ids = (await _group_ids_by_channel(db)).get(channel.id, [])
+    groups = (await _group_ids_by_channel(db)).get(channel.id, NO_GROUPS)
     has_colour = await _channel_has_colour(db, channel)
     conflicts = await _channel_conflicts(db, channel)
-    return _channel_model(channel, group_ids=group_ids, has_colour=has_colour, conflicts=conflicts)
+    return _channel_model(channel, groups=groups, has_colour=has_colour, conflicts=conflicts)
 
 
 @router.put("/lighting/channels/{channel_id}", response_model=ChannelModel)
@@ -992,14 +1040,14 @@ async def update_channel(
         raise ApiError(ErrorCode.NOT_FOUND, "There is no lighting channel with that id") from exc
     except ConflictError as exc:
         current_now = await _channel_or_404(db, channel_id)
-        current_groups = (await _group_ids_by_channel(db)).get(channel_id, [])
+        current_groups = (await _group_ids_by_channel(db)).get(channel_id, NO_GROUPS)
         current_colour = await _channel_has_colour(db, current_now)
         raise ApiError(
             ErrorCode.CONFLICT,
             "This fixture was changed by someone else since you loaded it",
             {
                 "current": _channel_model(
-                    current_now, group_ids=current_groups, has_colour=current_colour
+                    current_now, groups=current_groups, has_colour=current_colour
                 ).model_dump()
             },
         ) from exc
@@ -1020,11 +1068,11 @@ async def update_channel(
     await _emit_config_changed(bus, "channel_updated")
     # A channel's group membership decides what a hirer's tray reaches (§6.7).
     await settle_hirer_permissions(request, "channel_updated")
-    final_group_ids = (await _group_ids_by_channel(db)).get(channel_id, [])
+    final_groups = (await _group_ids_by_channel(db)).get(channel_id, NO_GROUPS)
     has_colour = await _channel_has_colour(db, channel)
     conflicts = await _channel_conflicts(db, channel)
     return _channel_model(
-        channel, group_ids=final_group_ids, has_colour=has_colour, conflicts=conflicts
+        channel, groups=final_groups, has_colour=has_colour, conflicts=conflicts
     )
 
 
@@ -1062,6 +1110,9 @@ class GroupModel(BaseModel):
     name: str
     colour: str
     sort_order: int
+    #: Never scales output and has no fader anywhere; kept so a derived
+    #: status can read its members' levels (migration 011).
+    indicator_only: bool
     channel_ids: list[int]
     updated_at: str
 
@@ -1077,6 +1128,7 @@ class GroupCreate(BaseModel):
     channel_ids: list[int] = ModelField(default_factory=list)
     colour: str = "#2E86C1"
     sort_order: int = 0
+    indicator_only: bool = False
 
 
 class GroupUpdate(BaseModel):
@@ -1085,6 +1137,7 @@ class GroupUpdate(BaseModel):
     name: str | None = None
     colour: str | None = None
     sort_order: int | None = None
+    indicator_only: bool | None = None
     channel_ids: list[int] | None = None
 
 
@@ -1094,6 +1147,7 @@ def _group_model(group: lighting_crud.LightingGroup, *, channel_ids: list[int]) 
         name=group.name,
         colour=group.colour,
         sort_order=group.sort_order,
+        indicator_only=group.indicator_only,
         channel_ids=sorted(channel_ids),
         updated_at=group.updated_at,
     )
@@ -1131,7 +1185,11 @@ async def create_group(
     _: Admin, request: Request, db: Db, bus: Bus, body: GroupCreate
 ) -> GroupModel:
     group = await lighting_crud.create_group(
-        db, name=body.name, colour=body.colour, sort_order=body.sort_order
+        db,
+        name=body.name,
+        colour=body.colour,
+        sort_order=body.sort_order,
+        indicator_only=body.indicator_only,
     )
     if body.channel_ids:
         await lighting_crud.set_group_members(db, group.id, body.channel_ids)
@@ -1158,6 +1216,18 @@ async def update_group(
         group = await lighting_crud.update_group(db, group_id, version, **fields)
     except NotFoundError as exc:
         raise ApiError(ErrorCode.NOT_FOUND, "There is no lighting group with that id") from exc
+    except lighting_crud.IndicatorOnlyBindingError as exc:
+        raise ApiError(
+            ErrorCode.VALIDATION_FAILED,
+            "A binding drives this group, so it cannot be indicator-only: a binding forces "
+            "the group's level to full, which an indicator-only group does not have. "
+            "Delete or re-point the binding first",
+            {
+                "indicator_only": [
+                    f"driven by binding “{r.name}” (rule {r.id})" for r in exc.references
+                ]
+            },
+        ) from exc
     except ConflictError as exc:
         current = await _group_or_404(db, group_id)
         raise ApiError(
@@ -1594,7 +1664,8 @@ def _channel_write_handler(service: LightingService) -> SetHandler:
         except UnknownChannelError:
             return SetResult.rejected(ErrorCode.NOT_FOUND)
         try:
-            handle_ = service.set_level(channel_id, request.value)
+            # A fader, key step or tap: the output glides (§21.2, compositor).
+            handle_ = service.set_level(channel_id, request.value, glide=True)
         except ChannelLockedError:
             return SetResult.rejected(
                 ErrorCode.PERMISSION_DENIED, service.composited_level(channel_id)
@@ -1616,10 +1687,70 @@ def _group_write_handler(service: LightingService) -> SetHandler:
             # handler in practice; this is the type-narrowing backstop.
             return SetResult.rejected(ErrorCode.VALIDATION_FAILED)
         try:
-            # Group values arrive 0–100 over the wire; the service takes 0–1.
-            service.set_group_multiplier(group_id, request.value / 100.0)
+            # A group level, 0–100, becomes every member's level (owner
+            # decision 2026-09-30); each member is clamped to its own range,
+            # which is the fader working, not a value_out_of_range.
+            result = service.set_group_level(group_id, request.value, glide=True)
         except UnknownGroupError:
             return SetResult.rejected(ErrorCode.NOT_FOUND)
+        except IndicatorOnlyGroupError:
+            # No fader offers it; a write here is a stale or hand-made client.
+            return SetResult.rejected(ErrorCode.VALIDATION_FAILED)
+        except ValueError:
+            return SetResult.rejected(ErrorCode.VALIDATION_FAILED)
+        if result.refused:
+            # A critical scene holds some members; the rest were set (§8.15).
+            # The nack carries what the fader now shows so the client settles
+            # on it rather than on the value it asked for.
+            shown = service.group_level(group_id)
+            if shown is None:
+                return SetResult.rejected(ErrorCode.PERMISSION_DENIED)
+            return SetResult.rejected(ErrorCode.PERMISSION_DENIED, shown)
+        return SetResult.accepted()
+
+    return handle
+
+
+#: ``lighting_bump`` values: the BUMP held (a press, or the refresh of one), or let go.
+BUMP_HELD = 1.0
+BUMP_RELEASED = 0.0
+
+
+def _bump_write_handler(service: LightingService) -> SetHandler:
+    """A group's BUMP: flash its DMX members to full while held (owner decision 2026-10-01).
+
+    ``{"type": "set", "domain": "lighting_bump", "id": <group>, "value": 1}``
+    presses the BUMP, and the client re-sends it every
+    :data:`~proskenion.core.dmx.bump.BUMP_REFRESH_S` while it stays held;
+    ``"value": 0`` lets go. The hold is the connection's
+    (:attr:`SetRequest.connection`): it ends with the socket, when the client
+    goes to the background, or when the refreshes stop
+    (:mod:`proskenion.core.dmx.bump`). Nothing is written to the level store,
+    so there is no authoritative value to carry on a nack.
+
+    Refused presses: ``not_found`` (no such group), ``validation_failed`` (an
+    indicator-only group, which has no strip; a group with no DMX member,
+    which a bump could not light; a value other than 0 or 1), and
+    ``conflict`` while external control suspends stage output (§7.2.7). A
+    release is always acknowledged.
+    """
+
+    async def handle(request: SetRequest, claims: TokenClaims) -> SetResult:
+        group_id = request.id
+        if group_id is None or request.connection is None:
+            return SetResult.rejected(ErrorCode.NOT_FOUND)
+        if request.value not in (BUMP_HELD, BUMP_RELEASED):
+            return SetResult.rejected(ErrorCode.VALIDATION_FAILED)
+        try:
+            service.bump_group(group_id, request.connection, held=request.value == BUMP_HELD)
+        except UnknownGroupError:
+            return SetResult.rejected(ErrorCode.NOT_FOUND)
+        except IndicatorOnlyGroupError:
+            return SetResult.rejected(ErrorCode.VALIDATION_FAILED)
+        except BumpRefusedError as exc:
+            if exc.reason == "external_control":
+                return SetResult.rejected(ErrorCode.CONFLICT)
+            return SetResult.rejected(ErrorCode.VALIDATION_FAILED)
         return SetResult.accepted()
 
     return handle
@@ -1631,14 +1762,15 @@ def _master_write_handler(service: LightingService) -> SetHandler:
             # See _channel_write_handler: null never reaches a non-mixer
             # handler in practice; this is the type-narrowing backstop.
             return SetResult.rejected(ErrorCode.VALIDATION_FAILED)
-        service.set_master(request.value)
+        service.set_master(request.value, glide=True)
         return SetResult.accepted()
 
     return handle
 
 
 def register_write_handlers(writes: WriteRouter, service: LightingService) -> None:
-    """Wire the ``lighting``, ``lighting_group`` and ``master`` WS domains (§16.8).
+    """Wire the ``lighting``, ``lighting_group``, ``lighting_bump`` and ``master``
+    WS domains (§16.8), and let a closing or backgrounded connection's bumps go.
 
     Idempotent through :meth:`WriteRouter.handles`: a caller that has already
     registered its own handler for one of these domains (a test exercising
@@ -1647,11 +1779,13 @@ def register_write_handlers(writes: WriteRouter, service: LightingService) -> No
     handlers: dict[str, Callable[[LightingService], SetHandler]] = {
         "lighting": _channel_write_handler,
         "lighting_group": _group_write_handler,
+        "lighting_bump": _bump_write_handler,
         "master": _master_write_handler,
     }
     for domain, factory in handlers.items():
         if not writes.handles(domain):
             writes.register(domain, factory(service))
+    writes.on_release(service.release_bumps)
 
 
 __all__ = ["register_write_handlers", "router"]

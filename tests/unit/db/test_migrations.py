@@ -281,6 +281,8 @@ async def test_shipped_migrations_apply_and_create_the_schema(raw_db: Database) 
         "008_backup.sql",
         "009_images.sql",
         "010_password_status.sql",
+        "011_lighting_indicators.sql",
+        "012_backup_checked.sql",
     ]
     assert await _tables(raw_db) == {
         "schema_versions",
@@ -669,9 +671,15 @@ async def test_006_applies_on_a_database_at_005_with_derived_status_rows(
     address = await knx.create_address(
         raw_db, group_address="4/1/1", name="House", dpt="1.001", direction="outgoing"
     )
-    status = await rules.create_derived_status(
-        raw_db, name="House", knx_address_id=address.id, source_type="device_state"
-    )
+    # Inserted by hand: the CRUD writes columns later migrations add (011's basis).
+    async with raw_db.write() as conn:
+        cursor = await conn.execute(
+            "INSERT INTO derived_status (name, enabled, knx_address_id, source_type, "
+            "created_at, updated_at) VALUES ('House', 1, ?, 'device_state', 'x', 'x')",
+            (address.id,),
+        )
+        status_id = cursor.lastrowid
+    assert status_id is not None
     scene = await scenes.create_scene(raw_db, name="House up")
     button_rule = await rules.create_rule(
         raw_db, name="Panel button", trigger_type="surface", action_type="run_scene",
@@ -691,10 +699,19 @@ async def test_006_applies_on_a_database_at_005_with_derived_status_rows(
         "008_backup.sql",
         "009_images.sql",
         "010_password_status.sql",
+        "011_lighting_indicators.sql",
+        "012_backup_checked.sql",
     ]
 
-    reloaded = await rules.get_derived_status(raw_db, status.id)
-    assert reloaded == status, "the derived_status row must survive the rebuild unchanged"
+    status = await rules.get_derived_status(raw_db, status_id)
+    assert status is not None, "the derived_status row must survive the rebuild"
+    assert (status.name, status.enabled, status.knx_address_id, status.source_type) == (
+        "House",
+        True,
+        address.id,
+        "device_state",
+    ), "the derived_status row must survive the rebuild unchanged"
+    assert (status.created_at, status.updated_at, status.basis) == ("x", "x", "level")
 
     assert {
         "pages", "page_items", "page_buttons", "hirer_pages", "mixer_desk_scene_observed",
@@ -780,6 +797,8 @@ async def test_006_applies_on_a_database_at_005_with_derived_status_rows(
 
 async def test_shipped_migrations_revert(db: Database) -> None:
     assert await revert_to(db, 5) == [
+        "012_backup_checked.sql",
+        "011_lighting_indicators.sql",
         "010_password_status.sql",
         "009_images.sql",
         "008_backup.sql",
@@ -888,3 +907,80 @@ def test_a_schema_ahead_of_the_code_exits_two(
 
     assert migrations_main(["--check", str(database)]) == EXIT_MIGRATION_FAILED
     assert "newer than this application version" in capsys.readouterr().err
+
+
+async def _columns(db: Database, table: str) -> set[str]:
+    async with db.read() as conn:
+        cursor = await conn.execute(f"PRAGMA table_info({table})")
+        return {str(r["name"]) for r in await cursor.fetchall()}
+
+
+async def test_011_adds_indicator_only_and_basis_with_todays_behaviour_as_default(
+    db: Database,
+) -> None:
+    """011_lighting_indicators.sql on a database already holding a group and a
+    status: both keep today's behaviour (an ordinary group, a stored-level
+    status) until someone says otherwise, and the new values are constrained."""
+    assert await revert_to(db, 10) == ["012_backup_checked.sql", "011_lighting_indicators.sql"]
+    address = await knx.create_address(
+        db, group_address="4/0/9", name="All status", dpt="1.001", direction="both"
+    )
+    async with db.write() as conn:
+        cursor = await conn.execute(
+            "INSERT INTO lighting_groups (name, created_at, updated_at) "
+            "VALUES ('Stage all', 'x', 'x')"
+        )
+        group_id = cursor.lastrowid
+        cursor = await conn.execute(
+            "INSERT INTO derived_status (name, enabled, knx_address_id, source_type, "
+            "lighting_group_id, compare_level, created_at, updated_at) "
+            "VALUES ('Stage all indicator', 1, ?, 'lighting_group_all_at', ?, 100, 'x', 'x')",
+            (address.id, group_id),
+        )
+        status_id = cursor.lastrowid
+    assert group_id is not None and status_id is not None
+
+    assert await migrate(db) == ["011_lighting_indicators.sql", "012_backup_checked.sql"]
+    group = await lighting.get_group(db, group_id)
+    assert group is not None and group.indicator_only is False
+    status = await rules.get_derived_status(db, status_id)
+    assert status is not None and status.basis == "level"
+
+    for sql in (
+        "UPDATE lighting_groups SET indicator_only = 2",
+        "UPDATE derived_status SET basis = 'observed'",
+    ):
+        with pytest.raises(sqlite3.IntegrityError):
+            async with db.write() as conn:
+                await conn.execute(sql)
+
+    assert await revert_to(db, 10) == ["012_backup_checked.sql", "011_lighting_indicators.sql"]
+    assert "indicator_only" not in await _columns(db, "lighting_groups")
+    assert "basis" not in await _columns(db, "derived_status")
+
+
+async def test_012_adds_the_after_backup_check_columns_to_existing_archives(
+    db: Database,
+) -> None:
+    """012_backup_checked.sql on a database already holding an archive row: the
+    row reads as "not checked after backup" (NULL, '') rather than failing."""
+    assert await revert_to(db, 11) == ["012_backup_checked.sql"]
+    async with db.write() as conn:
+        await conn.execute(
+            "INSERT INTO backup_archives (id, created_at, source, size_bytes, sha256, "
+            "schema_version, app_version, local_present) "
+            "VALUES ('auditorium-20260927-0301', '2026-09-27T03:01:00+13:00', 'scheduled', "
+            "1, 'x', 11, '0.1.16', 1)"
+        )
+
+    assert await migrate(db) == ["012_backup_checked.sql"]
+    async with db.read() as conn:
+        cursor = await conn.execute(
+            "SELECT checked_at, checked_destinations FROM backup_archives"
+        )
+        row = await cursor.fetchone()
+    assert row is not None and (row[0], row[1]) == (None, "")
+
+    assert await revert_to(db, 11) == ["012_backup_checked.sql"]
+    assert "checked_at" not in await _columns(db, "backup_archives")
+    assert "checked_destinations" not in await _columns(db, "backup_archives")

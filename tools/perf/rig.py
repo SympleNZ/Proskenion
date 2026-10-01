@@ -53,11 +53,13 @@ async def current_lighting_level(client: PerfClient, channel_id: int) -> float |
     response = await client.http.get(client.api("/lighting/state"))
     if response.status_code != 200:
         return None
-    for channel in response.json().get("channels", []):
-        if channel.get("id") == channel_id:
-            level = channel.get("level")
-            return float(level) if level is not None else None
-    return None
+    # `/lighting/state` keys its channels by id ({"1": {"level": 0.0}, ...});
+    # it is not a list (the DMX row first ran on the CM5 on 1 Oct 2026).
+    channel = response.json().get("channels", {}).get(str(channel_id))
+    if not isinstance(channel, dict):
+        return None
+    level = channel.get("level")
+    return float(level) if level is not None else None
 
 
 async def discover_knx_address(client: PerfClient) -> tuple[int, str, str] | None:

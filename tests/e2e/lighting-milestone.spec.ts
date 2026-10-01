@@ -32,6 +32,7 @@ import {
   HOUSE_DIMMER,
   lastValue,
   ON_DMX,
+  ON_LEVEL,
 } from "./fixtures/rig";
 import { expect, test, type Stubs } from "./fixtures/stubs";
 
@@ -46,7 +47,7 @@ function fader(page: Page, name: string): Locator {
 async function bankOn(page: Page, stubs: Stubs): Promise<void> {
   await stubs.telegram(BANK_COMMAND, "1.001", true);
   await expect.poll(() => lastValue(stubs, BANK_STATUS)).toBe(true);
-  await expect(page.getByRole("button", { name: BANK_NAME })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: BANK_NAME, exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(fader(page, FIXTURE_NAMES[0])).toHaveAttribute("aria-valuetext", "80.0%");
 }
 
@@ -54,7 +55,7 @@ test.describe("slice A milestone", () => {
   test("dragging a fixture down on the Lighting view writes the bank's status 0", async ({ page, stubs }) => {
     await buildRig(page.request, stubs);
     await page.goto("/app/lighting");
-    await expect(page.getByRole("button", { name: BANK_NAME })).toHaveAttribute("aria-pressed", "false");
+    await expect(page.getByRole("button", { name: BANK_NAME, exact: true })).toHaveAttribute("aria-pressed", "false");
     await bankOn(page, stubs);
 
     const statusWrites = (await stubs.knxWrites(BANK_STATUS, "1.001")).length;
@@ -65,13 +66,17 @@ test.describe("slice A milestone", () => {
     // The Fixtures row sits below the fold of a laptop-sized viewport; a
     // finger would scroll to it first, and so does the pointer.
     await slider.scrollIntoViewIfNeeded();
-    const box = await slider.boundingBox();
+    // Positions are read against the thumb's own travel, which is inset from
+    // the slider's hit area by half the thumb at each end (`FaderStrip`): the
+    // press lands on the thumb at 80 %, exactly where a finger would take it.
+    const box = await slider.locator(".fader-travel").boundingBox();
     if (!box) throw new Error("the fixture fader has no box");
     const x = box.x + box.width / 2;
-    await page.mouse.move(x, box.y + box.height * 0.2);
+    const at = (level: number): number => box.y + box.height * (1 - level);
+    await page.mouse.move(x, at(ON_LEVEL / 100));
     await page.mouse.down();
-    await page.mouse.move(x, box.y + box.height * 0.5, { steps: 8 });
-    await page.mouse.move(x, box.y + box.height * 0.7, { steps: 8 });
+    await page.mouse.move(x, at(0.5), { steps: 8 });
+    await page.mouse.move(x, at(0.3), { steps: 8 });
     await page.mouse.up();
 
     // The room: the node receives the fixture well below 80 %, the others untouched.
@@ -92,7 +97,7 @@ test.describe("slice A milestone", () => {
     expect(left!.at).toBeLessThan(cleared[0]!.received_at);
 
     // The screen: the bank reads off, and the fader shows where it was left.
-    await expect(page.getByRole("button", { name: BANK_NAME })).toHaveAttribute("aria-pressed", "false");
+    await expect(page.getByRole("button", { name: BANK_NAME, exact: true })).toHaveAttribute("aria-pressed", "false");
     const shown = Number.parseFloat((await slider.getAttribute("aria-valuetext")) ?? "");
     expect(shown).toBeLessThan(60);
   });
@@ -124,7 +129,7 @@ test.describe("slice A milestone", () => {
     // §9.5), which is suspended, so they are read-only too.
     await expect(fader(page, "Master")).toHaveAttribute("aria-readonly", "true");
     await expect(fader(page, BANK_NAME)).toHaveAttribute("aria-readonly", "true");
-    await expect(page.getByRole("button", { name: BANK_NAME })).toBeDisabled();
+    await expect(page.getByRole("button", { name: BANK_NAME, exact: true })).toBeDisabled();
     await expect(page.getByText("Locked out — external control active")).toBeVisible();
 
     // The room: no DMX frame, not even a keepalive. Absence is observed over
@@ -160,7 +165,7 @@ test.describe("slice A milestone", () => {
     // The bank is the panel's again, and it reads off, as its indicator
     // does: the house dimmer, one of its members, was taken to 70 % meanwhile,
     // so not every member is at the on level (§8.6).
-    const bank = page.getByRole("button", { name: BANK_NAME });
+    const bank = page.getByRole("button", { name: BANK_NAME, exact: true });
     await expect(bank).toBeEnabled();
     await expect(bank).toHaveAttribute("aria-pressed", "false");
     expect(await lastValue(stubs, BANK_STATUS)).toBe(false);
@@ -183,7 +188,7 @@ test.describe("slice A milestone", () => {
     });
     await buildRig(page.request, stubs);
     await page.goto("/app/lighting");
-    await expect(page.getByRole("button", { name: BANK_NAME })).toHaveAttribute("aria-pressed", "false");
+    await expect(page.getByRole("button", { name: BANK_NAME, exact: true })).toHaveAttribute("aria-pressed", "false");
 
     const dimmerWrites = (await stubs.knxWrites(HOUSE_DIMMER, "5.001")).length;
     const before = knxStatuses.length;
@@ -193,7 +198,7 @@ test.describe("slice A milestone", () => {
 
     // The panel's bank button, pressed as soon as the dimmer has moved.
     await stubs.telegram(BANK_COMMAND, "1.001", true);
-    await expect(page.getByRole("button", { name: BANK_NAME })).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("button", { name: BANK_NAME, exact: true })).toHaveAttribute("aria-pressed", "true");
     // Nothing happened to KNX on the way: no status frame for it at all.
     expect(knxStatuses.slice(before)).toEqual([]);
   });

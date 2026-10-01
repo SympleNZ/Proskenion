@@ -49,12 +49,16 @@ function OfflineDevice({ name }: { name: DeviceName }) {
   );
 }
 
+/** One device offline; `DEVICES_OFFLINE_KEY` is two or more. Both restate what `ConnectionAnnouncer` says, so neither is live (§24.3). */
+export const DEVICE_OFFLINE_KEY = "device_offline";
+
 function DevicesOfflineBanner({ tone, text }: { tone: BannerTone; text: string }) {
   const [open, setOpen] = useState(false);
   const listId = useId();
   return (
     <Banner
       tone={tone}
+      live={false}
       action={
         <Button variant="ghost" aria-expanded={open} aria-controls={open ? listId : undefined} onClick={() => setOpen((was) => !was)}>
           {open ? "Hide details" : "Details"}
@@ -82,7 +86,7 @@ export function SystemBanners() {
         banner.key === DEVICES_OFFLINE_KEY ? (
           <DevicesOfflineBanner key={banner.key} tone={TONE_BY_LEVEL[banner.level]} text={banner.text} />
         ) : (
-          <Banner key={banner.key} tone={TONE_BY_LEVEL[banner.level]}>
+          <Banner key={banner.key} tone={TONE_BY_LEVEL[banner.level]} live={banner.key !== DEVICE_OFFLINE_KEY}>
             {banner.text}
           </Banner>
         ),

@@ -1,0 +1,7 @@
+Main,Middle,Sub,Name,Description,Data Type
+0,0,2,House Lights Feedback,ETS project; data type inferred from the name,DPST-1-1
+4,0,4,Stage bank 1 feedback,observed on the bus 28 Sep 2026; not in the ETS project,DPST-1-1
+4,0,5,Stage bank 2 feedback,observed on the bus 28 Sep 2026; not in the ETS project,DPST-1-1
+4,0,6,Stage bank 3 feedback,observed on the bus 28 Sep 2026; not in the ETS project,DPST-1-1
+4,0,7,Stage bank 4 feedback,observed on the bus 28 Sep 2026; not in the ETS project,DPST-1-1
+4,0,9,Stage all banks feedback,observed on the bus 28 Sep 2026; not in the ETS project,DPST-1-1

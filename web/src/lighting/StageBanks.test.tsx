@@ -127,6 +127,80 @@ describe("StageBanks", () => {
     expect(house).toBeDisabled();
   });
 
+  describe("one button per wall-panel switch (owner decision 2026-09-30)", () => {
+    // The rig: four "Stage all → row N" bindings on the panel's all switch
+    // (address 8), plus a row switch of its own (address 1).
+    const ALL = [11, 12, 13, 14].map((id, index) => ({
+      id,
+      name: `Stage all → row ${index + 1}`,
+      lighting_group_id: 1,
+      on_level: 100,
+      off_level: 0,
+      enabled: true,
+      trigger_type: "knx",
+      knx_address_id: 8,
+    }));
+    const ROW_1 = { id: 21, name: "Stage row 1", lighting_group_id: 1, on_level: 100, off_level: 0, enabled: true, trigger_type: "knx", knx_address_id: 1 };
+
+    function serveRules(rules: readonly object[]): void {
+      client.api.mockImplementation((path: string) => {
+        if (path.startsWith("/rules?")) return Promise.resolve({ rules });
+        if (path.match(/\/rules\/\d+\/fire/)) return Promise.resolve(undefined);
+        if (path.startsWith("/lighting/channels")) return Promise.resolve(CHANNELS);
+        if (path.startsWith("/lighting/groups")) return Promise.resolve(GROUPS);
+        return Promise.reject(new Error(`unexpected path ${path}`));
+      });
+    }
+
+    it("renders the four rules on one address as one button named by their shared prefix", async () => {
+      serveRules([...ALL, ROW_1]);
+      renderWithProviders(<StageBanks />);
+      expect(await screen.findByRole("button", { name: "Stage all" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Stage row 1" })).toBeInTheDocument();
+      expect(screen.getAllByRole("button")).toHaveLength(2);
+      expect(screen.queryByText(/→/)).not.toBeInTheDocument();
+    });
+
+    it("fires every enabled rule on the address with the same value", async () => {
+      serveRules([...ALL.slice(0, 3), { ...ALL[3], enabled: false }]);
+      renderWithProviders(<StageBanks />);
+      fireEvent.click(await screen.findByRole("button", { name: "Stage all" }));
+      await waitFor(() => {
+        for (const id of [11, 12, 13]) {
+          expect(client.api).toHaveBeenCalledWith(`/rules/${id}/fire`, { method: "POST", body: { value: 1 } });
+        }
+      });
+      expect(client.api).not.toHaveBeenCalledWith("/rules/14/fire", expect.anything());
+    });
+
+    it("lights its lamp only while every rule's binding is on, and then presses off", async () => {
+      serveRules(ALL);
+      renderWithProviders(<StageBanks />);
+      const all = await screen.findByRole("button", { name: "Stage all" });
+      act(() => applyMessage({ type: "lighting_state", bindings: { "11": true, "12": true, "13": true } }));
+      expect(all).toHaveAttribute("aria-pressed", "false"); // row 4 is still off
+      act(() => applyMessage({ type: "lighting_state", bindings: { "14": true } }));
+      expect(all).toHaveAttribute("aria-pressed", "true");
+
+      fireEvent.click(all);
+      await waitFor(() => {
+        for (const id of [11, 12, 13, 14]) {
+          expect(client.api).toHaveBeenCalledWith(`/rules/${id}/fire`, { method: "POST", body: { value: 0 } });
+        }
+      });
+    });
+
+    it("falls back to the first rule's name when the rules share no prefix", async () => {
+      serveRules([
+        { ...ROW_1, id: 31, name: "Front", knx_address_id: 5 },
+        { ...ROW_1, id: 32, name: "Back → row 2", knx_address_id: 5 },
+      ]);
+      renderWithProviders(<StageBanks />);
+      expect(await screen.findByRole("button", { name: "Front" })).toBeInTheDocument();
+      expect(screen.getAllByRole("button")).toHaveLength(1);
+    });
+  });
+
   it("renders nothing when there are no stage banks configured", async () => {
     client.api.mockImplementation((path: string) => {
       if (path.startsWith("/rules?")) return Promise.resolve({ rules: [] });

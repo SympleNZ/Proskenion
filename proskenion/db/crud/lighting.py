@@ -648,6 +648,9 @@ class LightingGroup:
     sort_order: int
     created_at: str
     updated_at: str
+    #: Never scales output and has no fader anywhere; kept for a derived
+    #: status that reads its members' levels (migration 011).
+    indicator_only: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -664,11 +667,17 @@ def _group_from_row(row: base.Row) -> LightingGroup:
         sort_order=int(row["sort_order"]),
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
+        indicator_only=bool(row["indicator_only"]),
     )
 
 
 async def create_group(
-    db: Database, *, name: str, colour: str = "#2E86C1", sort_order: int = 0
+    db: Database,
+    *,
+    name: str,
+    colour: str = "#2E86C1",
+    sort_order: int = 0,
+    indicator_only: bool = False,
 ) -> LightingGroup:
     now = base.now_iso()
     async with db.write() as conn:
@@ -679,6 +688,7 @@ async def create_group(
                 "name": name,
                 "colour": colour,
                 "sort_order": sort_order,
+                "indicator_only": int(indicator_only),
                 "created_at": now,
                 "updated_at": now,
             },
@@ -709,6 +719,7 @@ async def update_group(
     name: str | None = None,
     colour: str | None = None,
     sort_order: int | None = None,
+    indicator_only: bool | None = None,
 ) -> LightingGroup:
     values: dict[str, Any] = {}
     if name is not None:
@@ -717,11 +728,46 @@ async def update_group(
         values["colour"] = colour
     if sort_order is not None:
         values["sort_order"] = sort_order
+    if indicator_only is not None:
+        values["indicator_only"] = int(indicator_only)
     async with db.write() as conn:
+        if indicator_only:
+            bindings = await _bindings_on_group(conn, group_id)
+            if bindings:
+                raise IndicatorOnlyBindingError(group_id, bindings)
         row = await base.update_with_version(
             conn, GROUPS_TABLE, group_id, expected_updated_at, values
         )
     return _group_from_row(row)
+
+
+class IndicatorOnlyBindingError(base.CrudError):
+    """A group cannot become indicator-only while a binding drives it.
+
+    A binding (§8.2) does what the group's fader does — sets its members'
+    levels (§8.8, owner decision 2026-09-30); an indicator-only group has no
+    fader, so a binding on it is refused as a fader on it would be.
+    """
+
+    def __init__(self, group_id: int, references: list[Reference]) -> None:
+        super().__init__(
+            f"lighting group {group_id} is driven by {len(references)} binding(s) "
+            "and cannot be made indicator-only"
+        )
+        self.group_id = group_id
+        self.references = references
+
+
+async def _bindings_on_group(conn: aiosqlite.Connection, group_id: int) -> list[Reference]:
+    """Every ``lighting_group`` rule (enabled or not) that drives ``group_id``."""
+    rows = await base.list_rows(
+        conn,
+        "rules",
+        where_sql="action_type = 'lighting_group' AND lighting_group_id = ?",
+        params=(group_id,),
+        order_by="id",
+    )
+    return [Reference(entity="rules", id=int(r["id"]), name=str(r["name"])) for r in rows]
 
 
 async def _references_group(conn: aiosqlite.Connection, group_id: int) -> list[Reference]:

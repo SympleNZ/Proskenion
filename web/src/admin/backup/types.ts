@@ -155,11 +155,18 @@ export interface BackupRunStatus {
   destinations: Record<string, DestinationStatus>;
 }
 
+/** What a monthly check found (§13.4). Only `untrusted` says the archive is bad: `missing` means no
+ * destination still holds it, `unreachable` that the one holding it could not be reached. */
+export type VerifyOutcome = "verified" | "untrusted" | "missing" | "unreachable" | "none";
+
 export interface BackupVerifyStatus {
   verified_at: string;
   archive_id: string | null;
   ok: boolean;
   detail: string;
+  outcome: VerifyOutcome;
+  /** Which destination the checked copy was read from, when one was. */
+  destination: string | null;
 }
 
 export interface NetworkDifference {
@@ -231,6 +238,11 @@ export interface ArchiveSummary {
   verified_at: string | null;
   untrusted: boolean;
   untrusted_reason: string | null;
+  /** The backup run's own read-back of the copies it wrote — separate from the monthly check
+   * (`verified_at`). `null` for an archive from before that check existed. */
+  checked_at: string | null;
+  /** The destinations whose copy read back identical, in local, usb, network order. */
+  checked_destinations: string[];
 }
 
 export interface BackupHistory {

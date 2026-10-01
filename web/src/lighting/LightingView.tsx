@@ -7,6 +7,7 @@
 import { Lightbulb } from "lucide-react";
 
 import { ApiError } from "@/api/client";
+import { ScrollRow } from "@/components/scrollrow/ScrollRow";
 import { EmptyState, ErrorState, Skeleton } from "@/components/ui/EmptyState";
 
 import { useLightingChannels, useLightingGroups } from "./api";
@@ -14,6 +15,7 @@ import { ExternalControlBanner } from "./ExternalControlBanner";
 import { setFadeSeconds, useFadeSeconds } from "./fadeTime";
 import { FixtureStrip } from "./FixtureStrip";
 import { GroupStrip } from "./GroupStrip";
+import { faderGroupIds, hasFader } from "./indicatorGroups";
 import { LightingHeader } from "./LightingHeader";
 import { StageBanks } from "./StageBanks";
 import type { LightingChannel, LightingGroup } from "./types";
@@ -23,7 +25,7 @@ function statusLine(error: unknown): string | undefined {
 }
 
 function firstGroupColour(channel: LightingChannel, byId: ReadonlyMap<number, string>): string | undefined {
-  const firstId = channel.group_ids[0];
+  const firstId = faderGroupIds(channel)[0];
   return firstId !== undefined ? byId.get(firstId) : undefined;
 }
 
@@ -62,7 +64,10 @@ export function LightingView() {
   }
 
   const allChannels: readonly LightingChannel[] = channels.data?.channels ?? [];
-  const allGroups: readonly LightingGroup[] = [...(groups.data?.groups ?? [])].sort((a, b) => a.sort_order - b.sort_order);
+  // An indicator-only group has no fader (migration 011): it is not in the Groups row.
+  const allGroups: readonly LightingGroup[] = [...(groups.data?.groups ?? [])]
+    .filter(hasFader)
+    .sort((a, b) => a.sort_order - b.sort_order);
 
   if (allChannels.length === 0) {
     return (
@@ -73,7 +78,6 @@ export function LightingView() {
     );
   }
 
-  const groupNames = new Map(allGroups.map((group) => [group.id, group.name] as const));
   const groupColourById = new Map(allGroups.map((group) => [group.id, group.colour] as const));
   const channelsByGroup = new Map<number, LightingChannel[]>(allGroups.map((group) => [group.id, []]));
   for (const channel of allChannels) {
@@ -94,20 +98,20 @@ export function LightingView() {
       {allGroups.length > 0 ? (
         <section>
           <h2 className="lighting-section-title">Groups</h2>
-          <div className="lighting-scroller">
+          <ScrollRow className="lighting-scroller">
             {allGroups.map((group) => (
-              <GroupStrip key={group.id} group={group} channels={channelsByGroup.get(group.id) ?? []} groupNames={groupNames} />
+              <GroupStrip key={group.id} group={group} channels={channelsByGroup.get(group.id) ?? []} />
             ))}
-          </div>
+          </ScrollRow>
         </section>
       ) : null}
       <section>
         <h2 className="lighting-section-title">Fixtures</h2>
-        <div className="lighting-scroller">
+        <ScrollRow className="lighting-scroller">
           {allChannels.map((channel) => (
             <FixtureStrip key={channel.id} channel={channel} accentColour={firstGroupColour(channel, groupColourById)} />
           ))}
-        </div>
+        </ScrollRow>
       </section>
     </div>
   );

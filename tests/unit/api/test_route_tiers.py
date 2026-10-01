@@ -308,6 +308,8 @@ EXPECTED: Final[dict[tuple[str, str], frozenset[str]]] = {
     # alike, so neither is an operator's decision.
     ("POST", "/system/restart"): ADMIN,
     ("POST", "/system/reboot"): ADMIN,
+    # Power-off: the controller stays off until someone cycles its power.
+    ("POST", "/system/shutdown"): ADMIN,
     # -- venue baseline (contracts §5, §13.5): capture is "deliberate and
     # admin-only", and compare exposes the whole configuration.
     ("GET", "/system/baseline"): ADMIN,

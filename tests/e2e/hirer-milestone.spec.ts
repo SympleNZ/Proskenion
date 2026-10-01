@@ -62,7 +62,7 @@ test.describe("Phase 5 milestone: the hirer journey (§22.5)", () => {
 
     // -- only the assigned pages: two, so tabs; never Crew, never the default --
     const tabs = hirer.getByRole("navigation", { name: "Pages" }).getByRole("link");
-    await expect(tabs).toHaveText(["Performance", "Foyer"]);
+    await expect(tabs).toHaveText(["Performance, current page", "Foyer"]);
     await expect(hirer.getByText("Crew")).toHaveCount(0);
     await expect(hirer.getByRole("link", { name: /admin/i })).toHaveCount(0);
 

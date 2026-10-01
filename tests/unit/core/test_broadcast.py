@@ -229,6 +229,32 @@ async def test_an_ordinary_meter_update_never_carries_metering(
     assert frame["channels"] == {"5": [-8.0]}
 
 
+async def test_a_client_connecting_after_meters_settle_still_sees_every_channel(
+    state: StateStore, broadcaster: Broadcaster
+) -> None:
+    """The reported bug: on the real rig, silent inputs never showed a
+    meter — only Main LR, ST1 and ST2, whose readings kept changing. Their
+    single settled write happens before any view is open to see it; the
+    state store drops a write whose value is unchanged (§5.6), so nothing
+    dirties that channel again, and a client that opens later would get
+    nothing from a tick alone, however long it then stayed connected. The
+    resync's fresh ``mixer_meters`` catch-up closes that gap."""
+    mixer = state.mixer.writer("mixer_client")
+    mixer.set_item("meters", 1, [-9.4, -9.6])  # ST1: signal, still moving
+    mixer.set_item("meters", 5, [-60.0])  # a silent input, at the floor
+    broadcaster.tick()  # drained; nothing was subscribed to receive it
+
+    # The silent channel's next several "readings" are identical, exactly
+    # as a genuinely quiet input's would be, and are dropped as no-ops.
+    mixer.set_item("meters", 5, [-60.0])
+    assert broadcaster.tick() == 0
+
+    connection = broadcaster.connect(tier="operator", domains=["mixer"])
+    snapshot = broadcaster.snapshot(["mixer"], connection=connection)
+    meters = next(f for f in snapshot if f["type"] == "mixer_meters")
+    assert meters["channels"] == {"1": [-9.4, -9.6], "5": [-60.0]}
+
+
 async def test_scenes_running_changes_batch_to_one_frame(
     state: StateStore, broadcaster: Broadcaster
 ) -> None:
@@ -405,13 +431,17 @@ async def test_a_backgrounded_client_receives_no_continuous_frames_but_still_get
     ]
 
 
-async def test_resync_returns_a_full_snapshot_without_replaying_meters(
+async def test_resync_returns_a_full_snapshot_and_a_fresh_meter_catch_up(
     state: StateStore, broadcaster: Broadcaster
 ) -> None:
+    """A resync's per-domain snapshot never replays an old queued frame, but
+    a ``mixer_meters`` catch-up is still built fresh from live state and
+    sent alongside it (see ``_meter_snapshot_frame``) — otherwise a channel
+    whose reading has been constant since before this connection existed
+    (a silent input) would never reach it at all."""
     lighting = state.lighting.writer("fade_engine")
     lighting.set_item("levels", 1, 85.0)
     lighting.set_item("levels", 2, 78.5)
-    lighting.set_item("group_multipliers", 1, 0.85)
     mixer = state.mixer.writer("mixer_client")
     mixer.set_item("meters", 1, [-12.4])
     mixer.set("metering", {"available": False, "reason": "no_response"})
@@ -426,7 +456,7 @@ async def test_resync_returns_a_full_snapshot_without_replaying_meters(
 
     # Every tracked value, not only what changed, and marked as a resync.
     assert by_type["lighting_state"]["channels"] == {"1": {"level": 85.0}, "2": {"level": 78.5}}
-    assert by_type["lighting_state"]["groups"] == {"1": 0.85}
+    assert "groups" not in by_type["lighting_state"]  # a group has no value of its own
     assert by_type["lighting_state"]["master"] == 100.0
     assert by_type["lighting_state"]["source"] == "resync"
     assert by_type["mixer_state"]["source"] == "resync"
@@ -437,10 +467,13 @@ async def test_resync_returns_a_full_snapshot_without_replaying_meters(
         "state": "on",
         "input_ref": "31",
     }
-    # A stale meter is worse than none: never replayed (§16.8) — and neither
-    # is an availability change: a resyncing client learns the
-    # current reason from GET /mixer/state instead.
-    assert "mixer_meters" not in by_type
+    # Fresh, not stale — every channel's current reading, plus the current
+    # availability, read live at the moment of the resync.
+    assert by_type["mixer_meters"]["channels"] == {"1": [-12.4]}
+    assert by_type["mixer_meters"]["metering"] == {"available": False, "reason": "no_response"}
+    assert isinstance(by_type["mixer_meters"]["at"], float)
+    # mixer_state itself still never carries them.
+    assert "meters" not in by_type["mixer_state"]
 
 
 async def test_a_snapshot_is_the_shape_of_a_batched_frame(
@@ -561,6 +594,10 @@ def test_writing_is_checked_per_target_against_the_live_snapshot(
     assert not broadcaster.may_write(hirer, "lighting", 8)  # a tray member, read-only
     assert broadcaster.may_write(hirer, "lighting_group", 2)
     assert not broadcaster.may_write(hirer, "lighting_group", 3)
+    # A group's BUMP is reachable exactly as its fader is (owner decision 2026-10-01).
+    assert broadcaster.may_write(hirer, "lighting_bump", 2)
+    assert not broadcaster.may_write(hirer, "lighting_bump", 3)
+    assert broadcaster.may_write(operator, "lighting_bump", 3)
     assert not broadcaster.may_write(hirer, "master", None)
     assert not broadcaster.may_write(hirer, "nonsense", 5)
 

@@ -49,26 +49,6 @@ async def test_a_two_second_fade_on_a_hardware_channel_sends_the_target_once(
         await pipe.stop()
 
 
-async def test_moving_a_group_fader_sends_nothing_to_a_dimmer(state: StateStore) -> None:
-    # §9.4, §9.5: group faders scale stage (DMX) members only.
-    rig = config(
-        dmx(3, 1), knx(1, GA, "hardware"), knx(2, "1/1/2", "software"), groups={4: {1, 2, 3}}
-    )
-    pipe = Pipeline(state, rig)
-    for channel_id in (1, 2, 3):
-        pipe.rig.set_level(channel_id, 100.0)
-    pipe.rig.compositor.baseline_knx()  # the dimmers are at 100, as discovered
-    await pipe.start()
-    try:
-        await pipe.fades.fade_group(4, 0.5, fade_ms=300).wait()
-        pipe.fades.fade_group(4, 0.2)  # and a direct move
-        await wait_until(lambda: pipe.output.last()[0] == 51)  # the stage member follows
-        await asyncio.sleep(0.15)
-        assert pipe.knx.writes == []
-    finally:
-        await pipe.stop()
-
-
 async def test_a_two_second_fade_on_a_software_channel_steps_no_faster_than_ten_a_second(
     state: StateStore,
 ) -> None:
@@ -115,7 +95,7 @@ def test_the_deadband_holds_back_small_steps_while_a_software_fade_moves(
     rig = Rig(state, config(knx(1, GA, "software")))
     clock = ManualClock()
     fades = FadeEngine(state, owner="fade_engine_manual", clock=clock)
-    fades.configure({1: (0.0, 100.0)}, ())
+    fades.configure({1: (0.0, 100.0)})
     rig.compositor._destinations = fades  # this test's engine owns the fade
     fades.fade_channel(1, level=100.0, fade_ms=10_000)
 
@@ -246,7 +226,7 @@ def test_only_changes_to_knx_inputs_wake_the_pass(state: StateStore) -> None:
         return runner._wake.is_set()
 
     assert woke("levels", "2")
-    assert not woke("levels", "1") and not woke("group_multipliers", "5")
+    assert not woke("levels", "1")
     assert not woke("colour", "2")
-    # Groups and the master do not scale a house dimmer (§9.5), so they are not its inputs.
-    assert not woke("group_multipliers", "6") and not woke("master", None)
+    # The master does not scale a house dimmer (§9.5), so it is not its input.
+    assert not woke("master", None)

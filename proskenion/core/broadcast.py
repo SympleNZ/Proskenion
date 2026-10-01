@@ -25,8 +25,16 @@ Backgrounded connections (§16.8)
 ``{"type": "background"}`` drops a connection to discrete events only — a
 suspended tablet still has meters composed, batched and queued for it
 otherwise, and metering is the most expensive thing on the wire. A later
-``resync`` restores it and returns a full snapshot. Meters are deliberately
-**not** in a snapshot: a stale meter is worse than none.
+``resync`` restores it and returns a full snapshot. Meters are never part of
+that per-domain bundle and never a *replay* of an old queued frame — a stale
+meter is worse than none — but the connection does receive one fresh,
+one-off ``mixer_meters`` frame alongside it, built from live state at the
+moment of sending (see :func:`_meter_snapshot_frame`). Without that, a
+channel whose reading is perfectly steady (a silent input) is never dirtied
+again after its first write (§5.6's state store drops a write whose value is
+unchanged), so no later tick would ever carry it to a connection that opened
+after that first write, however long it stayed open — the value is current,
+never stale, so withholding it bought nothing.
 
 Per-tier filtering (§6.12)
 --------------------------
@@ -138,13 +146,14 @@ HIRER_TIER: Final = "hirer"
 #: ``set.domain`` values §16.8 declares. Phase 1 implements no handler for any
 #: of them; :class:`proskenion.api.ws.WriteRouter` answers ``not_found``.
 SETTABLE_DOMAINS: Final[frozenset[str]] = frozenset(
-    {"lighting", "lighting_group", "master", "mixer"}
+    {"lighting", "lighting_group", "lighting_bump", "master", "mixer"}
 )
 
 #: Which state domain a ``set`` writes, for the per-tier check.
 WRITE_DOMAIN_STATE: Final[Mapping[str, str]] = {
     "lighting": "lighting",
     "lighting_group": "lighting",
+    "lighting_bump": "lighting",
     "master": "lighting",
     "mixer": "mixer",
 }
@@ -301,10 +310,10 @@ def filter_for_hirer(message: Message, permissions: HirerPermissions) -> Message
       reachable, and ``null`` in a resync otherwise.
     - ``mixer_meters``: reachable channels only, with ``metering`` as for staff.
     - ``lighting_state``: nothing while lighting is off (Q3). Otherwise
-      reachable channels' levels and colour, and ``observed`` for them; the
-      multipliers of reachable groups and of every group a reachable channel
-      belongs to; and ``master`` and ``external_control`` — all read-only, so
-      the ghost mark is computed exactly as for staff (§21.9). Stage-bank
+      reachable channels' levels and colour (a placed group's members are
+      reachable, so its fader can show its level), and ``observed`` for them;
+      and ``master`` and ``external_control`` — all read-only, so the ghost
+      mark is computed exactly as for staff (§21.9). Stage-bank
       ``bindings`` are keyed by rule and never sent.
     - ``external_control``: while lighting is on.
     - ``status``: only the lamps in ``lamp_ids``.
@@ -399,10 +408,6 @@ def _hirer_lighting_state(message: Message, permissions: HirerPermissions) -> Me
         channels = _keep_ids(message["channels"], permissions.lighting_reachable)
         if channels or resync:
             frame["channels"] = channels
-    if "groups" in message:
-        groups = _keep_ids(message["groups"], permissions.multiplier_groups.__contains__)
-        if groups or resync:
-            frame["groups"] = groups
     for section in ("master", "external_control"):
         if section in message:
             frame[section] = message[section]
@@ -899,12 +904,21 @@ class Broadcaster:
             frame = _mixer_frame(domain, keys, source=source)
             if frame is not None:
                 built.append((frame, "continuous"))
-            # Meters travel in their own message and are never replayed on
-            # resync — a stale meter is worse than none (§16.8, B58).
-            if keys is not None:
-                meters = _meter_frame(domain, keys, at=time.monotonic())
-                if meters is not None:
-                    built.append((meters, "continuous"))
+            # Meters travel in their own message, never merged into
+            # mixer_state. A normal tick sends only the channels whose
+            # reading changed; a snapshot (keys is None — a new connection's
+            # resync, or one returning from the background) sends every
+            # channel's current reading once, built fresh from live state
+            # rather than replayed from an old queued frame (§16.8, B58; see
+            # _meter_snapshot_frame for why this is not the replay that rule
+            # forbids).
+            meters = (
+                _meter_snapshot_frame(domain, at=time.monotonic())
+                if keys is None
+                else _meter_frame(domain, keys, at=time.monotonic())
+            )
+            if meters is not None:
+                built.append((meters, "continuous"))
         elif name == "scenes":
             assert isinstance(domain, ScenesDomain)
             frame = _scenes_frame(domain, keys, source=source)
@@ -1005,7 +1019,10 @@ class Broadcaster:
         Carries every tracked value rather than only changes, and
         ``"source": "resync"`` where the shape has a source. Nothing is
         replayed: discrete events that fired during an outage are not re-sent
-        (§10.7), and meters are never in a snapshot (§16.8).
+        (§10.7), and a ``mixer_meters`` frame here is never a replay either —
+        it is built fresh from live state, the same one-off catch-up frame
+        :func:`_meter_snapshot_frame` builds for an ordinary tick's snapshot
+        (§16.8, B58).
         """
         messages: list[Message] = []
         for name in sorted(set(domains)):
@@ -1117,14 +1134,9 @@ def _lighting_frame(
     frame: Message = {"type": "lighting_state"}
     if channels or keys is None:
         frame["channels"] = channels
-    if _changed(keys, "group_multipliers") or _dirty_items(keys, "group_multipliers"):
-        groups = _as_map(domain.get("group_multipliers"))
-        dirty_groups = _dirty_items(keys, "group_multipliers")
-        frame["groups"] = (
-            groups
-            if dirty_groups is None
-            else {k: groups[k] for k in _order(dirty_groups) if k in groups}
-        )
+    # No ``groups`` section (§16.8 as amended by the owner decision of
+    # 2026-09-30): a group fader sets its members' levels and has no stored
+    # value of its own; clients show it from ``channels``.
     if _changed(keys, "master"):
         frame["master"] = domain.get("master")
     # Stage-bank states, keyed by rule id (§7.1, §21.11): whether every member
@@ -1187,11 +1199,11 @@ def _meter_frame(domain: MixerDomain, keys: set[str], *, at: float) -> Message |
     docstring). Keying this on ``metering`` having changed, not on
     ``channels`` being non-empty, is the fix: a frame is sent even with an
     empty ``channels`` on loss, and with whatever ``channels`` already holds
-    on recovery. This is only ever called with a concrete ``keys`` set, never
-    for a resync (``keys is None`` short-circuits in :meth:`Broadcaster._frames`
-    before this is reached), so an availability change is never replayed
-    either — a client not yet open learns the current reason from
-    ``GET /mixer/state`` instead.
+    on recovery. This is only ever called with a concrete ``keys`` set:
+    :meth:`Broadcaster._frames` calls :func:`_meter_snapshot_frame` instead
+    for a snapshot (``keys is None``), so a connection not yet open when
+    availability last changed still receives the current reason as part of
+    its one-off catch-up frame rather than only from ``GET /mixer/state``.
     """
     availability_changed = _changed(keys, "metering")
     dirty = _dirty_items(keys, "meters") or set()
@@ -1209,6 +1221,45 @@ def _meter_frame(domain: MixerDomain, keys: set[str], *, at: float) -> Message |
                 "available": bool(metering.get("available")),
                 "reason": metering.get("reason"),
             }
+    return frame
+
+
+def _meter_snapshot_frame(domain: MixerDomain, *, at: float) -> Message | None:
+    """A one-off ``mixer_meters`` catch-up frame: every channel's *current*
+    reading, sent once when a connection (re)gains the ``mixer`` domain — a
+    fresh connection's resync, or one returning from the background.
+
+    §16.8 rules out *replaying* meters on resync — sending whatever was last
+    queued for this connection, however old, because a stale meter is worse
+    than none. This is not that: it reads ``state.mixer.meters`` live, at the
+    moment of sending, exactly as :func:`_meter_frame` does for an ordinary
+    tick, so what it carries is exactly as current as the next tick would
+    have been.
+
+    The gap it closes: a completely silent input's meter value never
+    changes, so the state store drops its write as a no-op after the first
+    one (``StateStore._apply``, "a write whose value is unchanged") and it is
+    never dirtied again — no later tick carries it to a connection that
+    happened to open after that first write, no matter how long the
+    connection then stayed open. Bench evidence: Main LR, ST1 and ST2 kept
+    showing bars because programme audio kept their readings changing; a
+    silent input's reading settled and was never sent again.
+
+    A channel with no meter data yet is still absent, per the usual
+    absent-not-floor rule (B58) — this only reports *known* current values,
+    never invents one.
+    """
+    meters = _as_map(domain.get("meters"))
+    channels = {k: meters[k] for k in _order(meters)}
+    metering = domain.get("metering")
+    if not channels and not isinstance(metering, Mapping):
+        return None
+    frame: Message = {"type": "mixer_meters", "channels": channels, "at": at}
+    if isinstance(metering, Mapping):
+        frame["metering"] = {
+            "available": bool(metering.get("available")),
+            "reason": metering.get("reason"),
+        }
     return frame
 
 

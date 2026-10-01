@@ -52,6 +52,11 @@ class ArchiveRow:
     verified_at: str | None
     untrusted: bool
     untrusted_reason: str | None
+    #: The run's own read-back check of the copies it wrote (migration 012);
+    #: ``None``/empty for an archive from before it, or one adopted by the
+    #: index reconcile. Distinct from the monthly check above.
+    checked_at: str | None = None
+    checked_destinations: tuple[str, ...] = ()
 
     @property
     def any_present(self) -> bool:
@@ -73,6 +78,10 @@ def _archive_from_row(row: base.Row) -> ArchiveRow:
         verified_at=row.get("verified_at"),
         untrusted=bool(row["untrusted"]),
         untrusted_reason=row.get("untrusted_reason"),
+        checked_at=row.get("checked_at"),
+        checked_destinations=tuple(
+            d for d in str(row.get("checked_destinations") or "").split(",") if d
+        ),
     )
 
 
@@ -89,6 +98,8 @@ async def record_archive(
     local_present: bool,
     usb_present: bool,
     network_present: bool,
+    checked_at: str | None = None,
+    checked_destinations: tuple[str, ...] = (),
 ) -> ArchiveRow:
     """Record one archive. ``archive_id`` is the primary key (contracts §8's
     minute-granularity filename): an upsert rather than a plain insert, so
@@ -102,8 +113,9 @@ async def record_archive(
             f"""
             INSERT INTO {ARCHIVES_TABLE}
                 (id, created_at, source, size_bytes, sha256, schema_version, app_version,
-                 local_present, usb_present, network_present)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 local_present, usb_present, network_present,
+                 checked_at, checked_destinations)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 created_at = excluded.created_at,
                 source = excluded.source,
@@ -114,6 +126,8 @@ async def record_archive(
                 local_present = excluded.local_present,
                 usb_present = excluded.usb_present,
                 network_present = excluded.network_present,
+                checked_at = excluded.checked_at,
+                checked_destinations = excluded.checked_destinations,
                 verified_at = NULL,
                 untrusted = 0,
                 untrusted_reason = NULL
@@ -129,6 +143,8 @@ async def record_archive(
                 int(local_present),
                 int(usb_present),
                 int(network_present),
+                checked_at,
+                ",".join(checked_destinations),
             ),
         )
         cursor = await conn.execute(
@@ -153,6 +169,15 @@ async def list_archives(db: Database, *, limit: int = 100) -> list[ArchiveRow]:
         cursor = await conn.execute(
             f"SELECT * FROM {ARCHIVES_TABLE} ORDER BY created_at DESC LIMIT ?", (limit,)
         )
+        rows = await cursor.fetchall()
+    return [_archive_from_row(base.row_to_dict(r)) for r in rows]
+
+
+async def all_archives(db: Database) -> list[ArchiveRow]:
+    """Every row, oldest first — what reconciling the index against the
+    destinations walks (:func:`proskenion.core.backup.reconcile_presence`)."""
+    async with db.read() as conn:
+        cursor = await conn.execute(f"SELECT * FROM {ARCHIVES_TABLE} ORDER BY created_at ASC")
         rows = await cursor.fetchall()
     return [_archive_from_row(base.row_to_dict(r)) for r in rows]
 

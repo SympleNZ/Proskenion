@@ -1,6 +1,6 @@
 /*
- * An element's own content-box size, read live. `viewport.ts`'s
- * `useAtDesignTarget` already establishes this codebase's own pattern for
+ * An element's own content-box size, read live. `useDisplayScale.ts`'s
+ * store already establishes this codebase's own pattern for
  * reactive sizing — `useSyncExternalStore` plus a `window` `resize`
  * listener — rather than `ResizeObserver`, which nothing else here uses and
  * which jsdom does not implement; this hook is the same pattern turned into
@@ -11,6 +11,8 @@
  * real pixels, not a device-class guess.
  */
 import { useCallback, useMemo, useRef, useSyncExternalStore, type RefCallback } from "react";
+
+import { DISPLAY_SCALE_EVENT } from "./useDisplayScale";
 
 export interface ElementSize {
   width: number;
@@ -57,9 +59,13 @@ export function useElementSize<T extends HTMLElement>(): [RefCallback<T>, Elemen
     (onStoreChange: () => void) => {
       listenersRef.current.add(onStoreChange);
       window.addEventListener("resize", measure);
+      // A display-scale change (§21.9) resizes every element in logical px
+      // without resizing the window.
+      window.addEventListener(DISPLAY_SCALE_EVENT, measure);
       return () => {
         listenersRef.current.delete(onStoreChange);
         window.removeEventListener("resize", measure);
+        window.removeEventListener(DISPLAY_SCALE_EVENT, measure);
       };
     },
     [measure],

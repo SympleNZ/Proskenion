@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -22,11 +21,20 @@ from proskenion.core.dmx.compositor import (
     KnxChannel,
     LightingConfig,
 )
-from proskenion.core.dmx.fade import ChannelLockedError, SceneRun, UnknownChannelError
+from proskenion.core.dmx.fade import (
+    ChannelLockedError,
+    SceneRun,
+    UnknownChannelError,
+    UnknownGroupError,
+)
 from proskenion.core.events import DeviceStatusChanged, LightingConfigChanged
-from proskenion.core.lighting import LightingService, load_lighting_config
+from proskenion.core.lighting import (
+    IndicatorOnlyGroupError,
+    LightingService,
+    load_lighting_config,
+)
 from proskenion.core.persist import StatePersister
-from proskenion.core.state import Change, StateStore
+from proskenion.core.state import StateStore
 from proskenion.db.connection import Database
 from proskenion.db.crud import devices as devices_crud
 from proskenion.db.crud import knx as knx_crud
@@ -137,14 +145,18 @@ async def test_restore_at_boot_brings_the_model_back_and_sends_one_frame_on_conn
     persister = StatePersister(before, db)
     first, _, _ = service(before, EventBus(), db)
     await first.start()
-    first.set_level(venue.dimmer, 80.0)
-    first.set_channel(venue.rgb, level=50.0, colour=Colour(200, 100, 0))
-    first.set_group_multiplier(venue.group, 0.5)
+    first.set_group_level(venue.group, 90.0)  # a group fader sets levels; then trims
+    first.set_level(venue.dimmer, 40.0)
+    first.set_channel(venue.rgb, level=25.0, colour=Colour(200, 100, 0))
     first.set_level(venue.house, 60.0)
     first.set_master(30.0)
     await first.stop()
     await persister.stop()  # flushes, as graceful shutdown does (§12.4)
-    assert "master" not in await system_state.get_domain(db, "lighting")  # never persisted
+    persisted = await system_state.get_domain(db, "lighting")
+    assert "master" not in persisted  # never persisted
+    assert "group_multipliers" not in persisted  # groups have no state of their own
+    # A row an older release persisted, when a group was a multiplier, is ignored.
+    await system_state.set(db, "lighting", "group_multipliers", json.dumps({str(venue.group): 0.1}))
 
     # The reboot.
     bus = EventBus()
@@ -157,9 +169,9 @@ async def test_restore_at_boot_brings_the_model_back_and_sends_one_frame_on_conn
         await second.start()
         try:
             lighting = after.lighting
-            assert lighting.get_item("levels", venue.dimmer) == 80.0
+            assert lighting.get_item("levels", venue.dimmer) == 40.0
             assert lighting.get_item("colour", venue.rgb) == {"r": 200, "g": 100, "b": 0}
-            assert lighting.get_item("group_multipliers", venue.group) == 0.5
+            assert "group_multipliers" not in lighting.SPECS
             assert second.master == 100.0  # §12.3: the master resets to 100
 
             await asyncio.sleep(0.1)
@@ -172,8 +184,8 @@ async def test_restore_at_boot_brings_the_model_back_and_sends_one_frame_on_conn
             await asyncio.sleep(0.2)
             assert len(output.sent) == 1  # one frame (the keepalive follows at 1 s)
             frame = output.last()
-            assert frame[0] == 102  # 80 × group 0.5 × master 100 % = 40 %
-            assert list(frame[1:4]) == [50, 25, 0]  # 50 × 0.5 = 25 % of (200, 100, 0)
+            assert frame[0] == 102  # 40 × master 100 % = 40 %; the old 0.1 is ignored
+            assert list(frame[1:4]) == [50, 25, 0]  # 25 % of (200, 100, 0)
             assert sink.writes == []  # KNX dimmers hold their own state (§12.2)
         finally:
             await second.stop()
@@ -366,17 +378,17 @@ async def test_an_operator_handing_over_again_clears_the_override(
 # -- control -------------------------------------------------------------------
 
 
-async def test_the_master_applies_to_a_bank_whose_group_was_just_forced_to_full(
+async def test_the_master_applies_to_a_bank_recalled_after_its_fader_was_left_at_40(
     running: tuple[LightingService, FakeDevices, FakeKnx],
 ) -> None:
     svc, devices, sink = running
-    svc.set_group_multiplier(7, 0.4)
+    svc.set_group_level(7, 40.0)  # the row fader, left at 40 % the night before
     svc.set_master(50.0)
-    # The binding rule's recall: force the multiplier, then on_level.
+    # The binding rule's recall: every member to on_level.
     svc.recall_group(7, 100.0)
-    await wait_until(lambda: devices.output().last()[0] == 128)  # 50, not 100 and not 20
+    await wait_until(lambda: devices.output().last()[0] == 128)  # 100 × master 50 %
     # The house dimmer in the bank is outside the master (§9.5): exactly on_level.
-    await wait_until(lambda: sink.values(HOUSE_GA) == [100.0])
+    await wait_until(lambda: sink.values(HOUSE_GA)[-1:] == [100.0])
 
 
 async def test_control_calls_validate_and_clamp(
@@ -389,11 +401,40 @@ async def test_control_calls_validate_and_clamp(
     with pytest.raises(UnknownChannelError):
         svc.set_level(99, 10.0)
     assert svc.set_level(1, 104.0).target_level == 100.0  # the API reports the clamp
-    handle = svc.set_group_multiplier(7, 0.25, fade_ms=100)
-    assert await handle.wait() == "completed"
+    result = svc.set_group_level(7, 25.0, fade_ms=100)
+    assert await result.handles[1].wait() == "completed"
     assert svc.composited_level(1) == 0.0  # master still 0 from above
     svc.set_master(100.0)
     assert svc.composited_level(1) == 25.0
+    with pytest.raises(UnknownGroupError):
+        svc.set_group_level(99, 10.0)
+    with pytest.raises(ValueError):
+        svc.set_group_level(7, float("nan"))
+
+
+async def test_an_indicator_only_group_loads_as_such_and_has_no_fader(
+    db: Database, state: StateStore, bus: EventBus
+) -> None:
+    venue = await build_venue(db)
+    everything = await lighting_crud.create_group(db, name="Stage all", indicator_only=True)
+    await lighting_crud.set_group_members(db, everything.id, [venue.dimmer, venue.rgb])
+    cfg = await load_lighting_config(db)
+    assert cfg.indicator_only == frozenset({everything.id})
+    assert everything.id in cfg.groups  # a derived status still reads its members
+
+    svc, devices, _ = service(state, bus, keepalive_s=0.1)
+    devices.connect()
+    await svc.start(cfg)
+    try:
+        svc.set_level(venue.dimmer, 100.0)
+        with pytest.raises(IndicatorOnlyGroupError):
+            svc.set_group_level(everything.id, 10.0)
+        with pytest.raises(IndicatorOnlyGroupError):
+            svc.recall_group(everything.id, 10.0)
+        assert state.lighting.get_item("levels", venue.dimmer) == 100.0  # untouched
+        assert svc.composited_level(venue.dimmer) == 100.0
+    finally:
+        await svc.stop()
 
 
 async def test_an_operator_write_under_a_critical_scene_is_refused(
@@ -422,13 +463,12 @@ async def test_a_knx_status_report_updates_the_store_without_an_echo(
         svc.apply_knx_status(1, 10.0)  # a DMX channel has no status address
 
 
-async def test_a_status_report_under_a_low_master_and_group_is_never_sent_back(
+async def test_a_status_report_under_a_low_master_is_never_sent_back(
     running: tuple[LightingService, FakeDevices, FakeKnx], state: StateStore
 ) -> None:
     # §9.6: the store follows the wall panel, and nothing is sent back — not
-    # when the report lands, and not when the master or the group moves later.
+    # when the report lands, and not when the master or a stage fixture moves.
     svc, devices, sink = running
-    svc.set_group_multiplier(7, 0.4)
     svc.set_master(50.0)
     await asyncio.sleep(0.15)
     svc.apply_knx_status(4, 80.0)
@@ -436,7 +476,6 @@ async def test_a_status_report_under_a_low_master_and_group_is_never_sent_back(
     assert svc.composited_level(4) == 80.0  # the ghost mark agrees with the dimmer
     await asyncio.sleep(0.15)
     svc.set_master(100.0)
-    svc.set_group_multiplier(7, 1.0, fade_ms=100)
     svc.set_level(1, 100.0)
     await wait_until(lambda: devices.output().last()[0] == 255)  # the stage did move
     await asyncio.sleep(0.15)
@@ -447,9 +486,8 @@ async def test_a_recall_and_a_scene_still_set_a_house_dimmer(
     running: tuple[LightingService, FakeDevices, FakeKnx],
 ) -> None:
     # §9.4: a KNX house dimmer in a group is set directly by a recall or a
-    # scene, whatever the group fader and the master hold.
+    # scene, whatever the master holds.
     svc, _, sink = running
-    svc.set_group_multiplier(7, 0.4)
     svc.set_master(30.0)
     recall = svc.recall_group(7, 70.0, fade_ms=500)  # a hardware dimmer: the target, once
     await recall.handles[4].wait()
@@ -460,7 +498,7 @@ async def test_a_recall_and_a_scene_still_set_a_house_dimmer(
     await wait_until(lambda: sink.values(HOUSE_GA) == [70.0, 25.0])
 
 
-# -- group recall without a jump (§8.8, §9.4) -----------------------------------
+# -- a group fader sets levels (owner decision 2026-09-30) ----------------------
 
 
 class ManualClock:
@@ -471,101 +509,110 @@ class ManualClock:
         return self.now
 
 
-#: Fixture 1 in the recalled group only; fixture 3 also in group 8, which is
-#: higher and so holds it; fixture 2 a floor, exempt from group scaling.
-RECALL_RIG = config(
+#: Fixture 1 plain; fixture 2 with a 10 % floor; fixture 3 capped at 80 % and
+#: also in group 8; a KNX house dimmer; fixture 5 in no group.
+GROUP_RIG = config(
     dmx(1, 1),
     dmx(2, 2, min_value=10.0),
-    dmx(3, 3),
+    dmx(3, 3, max_value=80.0),
     knx(4, HOUSE_GA),
+    dmx(5, 5),
     groups={7: {1, 2, 3, 4}, 8: {3}},
 )
 
 
-def _outputs(svc: LightingService) -> dict[int, float]:
-    """Each stage fixture's composited output, as the DMX pass would write it."""
-    return {c.id: svc.compositor.resolve(c) for c in svc.config.dmx_channels}
-
-
-@pytest.mark.parametrize(
-    ("set_level", "recalled_to", "direction"),
-    [(85.0, 0.0, "off"), (50.0, 100.0, "on")],
-)
-async def test_a_recall_from_a_group_left_at_40_percent_is_continuous_and_monotonic(
-    state: StateStore, bus: EventBus, set_level: float, recalled_to: float, direction: str
-) -> None:
+def _group_service(state: StateStore, bus: EventBus) -> tuple[LightingService, ManualClock]:
     clock = ManualClock()
     svc = LightingService(state, bus, None, FakeDevices(), FakeKnx(), fade_clock=clock)
-    svc.apply_config(RECALL_RIG)
-    for channel_id in (1, 2, 3, 4):
-        svc.set_level(channel_id, set_level)
-    svc.set_group_multiplier(7, 0.4)
-    svc.set_group_multiplier(8, 0.6)
-    svc.set_master(80.0)
-    before = _outputs(svc)
-    assert before[1] == pytest.approx(set_level * 0.4 * 0.8)
-    assert before[3] == pytest.approx(set_level * 0.6 * 0.8)  # group 8 holds it
-
-    svc.recall_group(7, recalled_to, fade_ms=1000)
-    series = [before, _outputs(svc)]
-    while svc.fades.active_fades():
-        clock.now += 0.02
-        svc.fades.step()
-        series.append(_outputs(svc))
-
-    assert state.lighting.get_item("group_multipliers", 7) == 1.0  # forced, by a write
-    for channel_id in (1, 2, 3):
-        values = [outputs[channel_id] for outputs in series]
-        # Continuous: the recall itself moves nothing; no 20 ms step is more
-        # than smoothstep's steepest slope allows (1.5 × the span per second).
-        span = abs(values[-1] - values[0])
-        assert values[1] == pytest.approx(values[0], abs=0.05)
-        steps = [b - a for a, b in zip(values, values[1:], strict=False)]
-        assert max(abs(s) for s in steps) <= 1.5 * span * 0.02 + 0.1
-        # Monotonic, all the way to the recalled level under the master.
-        if direction == "off":
-            assert all(s <= 1e-9 for s in steps)
-        else:
-            assert all(s >= -1e-9 for s in steps)
-    assert series[-1][1] == pytest.approx(recalled_to * 0.8)  # the master still applies
-    assert series[-1][3] == pytest.approx(recalled_to * 0.8)
-    assert series[-1][2] == max(recalled_to, 10.0)  # the floor, never group-scaled
+    svc.apply_config(GROUP_RIG)
+    return svc, clock
 
 
-async def test_a_recall_rebases_forces_and_starts_its_fades_between_two_frames(
-    running: tuple[LightingService, FakeDevices, FakeKnx], state: StateStore
+def _levels(state: StateStore, *channel_ids: int) -> list[object]:
+    return [state.lighting.get_item("levels", c) for c in channel_ids]
+
+
+async def test_a_group_level_sets_every_member_within_its_own_range(
+    state: StateStore, bus: EventBus
 ) -> None:
-    svc, devices, _ = running
-    svc.set_level(1, 85.0)
-    svc.set_group_multiplier(7, 0.4)
-    await wait_until(lambda: devices.output().last()[0] == 87)  # 85 × 0.4 = 34 %
-    assert not inspect.iscoroutinefunction(svc.recall_group)  # nothing in it can yield
+    svc, _ = _group_service(state, bus)
+    svc.set_level(5, 33.0)
 
-    writes: list[tuple[str, str | None, object, int]] = []
+    result = svc.set_group_level(7, 90.0)
 
-    def record(change: Change) -> None:
-        if change.field in ("levels", "group_multipliers"):
-            writes.append((change.field, change.item, change.new, svc.renderer.composites))
+    assert result.refused == ()
+    assert {c: h.target_level for c, h in result.handles.items()} == {
+        1: 90.0,
+        2: 90.0,
+        3: 80.0,  # held to its max_value, as recall_group always did
+        4: 90.0,  # the KNX house dimmer is a member like any other
+    }
+    assert _levels(state, 1, 2, 3, 4, 5) == [90.0, 90.0, 80.0, 90.0, 33.0]
+    svc.set_group_level(7, 0.0)
+    assert _levels(state, 1, 2, 3, 4) == [0.0, 10.0, 0.0, 0.0]  # the floor holds
+    assert svc.group_level(7) == 10.0  # what the fader shows: the highest member
 
-    state.add_listener(record)
-    try:
-        sent = len(devices.output().sent)
-        recall = svc.recall_group(7, 0.0, fade_ms=400)
-    finally:
-        state.remove_listener(record)
 
-    # The rebase, then the multiplier, then the fades, all against one frame count.
-    assert writes[:2] == [
-        ("levels", "1", 34.0, writes[0][3]),
-        ("group_multipliers", "7", 1.0, writes[0][3]),
-    ]
-    assert {composites for *_, composites in writes} == {writes[0][3]}
-    # And every frame the renderer then sends shows the fixture no brighter than before.
-    await recall.handles[1].wait()
-    await wait_until(lambda: devices.output().last()[0] == 0)
-    fixture = [frame[0] for frame in devices.output().frames()[sent:]]
-    assert max(fixture) <= 87
-    assert fixture == sorted(fixture, reverse=True)
+async def test_a_group_level_fades_every_member_together_with_smoothstep(
+    state: StateStore, bus: EventBus
+) -> None:
+    svc, clock = _group_service(state, bus)
+    svc.set_level(1, 20.0)
+    svc.set_level(3, 60.0)
+
+    result = svc.set_group_level(7, 70.0, fade_ms=1000)
+
+    assert _levels(state, 1, 3) == [20.0, 60.0]  # nothing jumps
+    clock.now += 0.5
+    svc.fades.step()
+    assert _levels(state, 1, 3) == [45.0, 65.0]  # halfway on smoothstep, from each start
+    clock.now += 0.5
+    svc.fades.step()
+    assert _levels(state, 1, 3) == [70.0, 70.0]
+    assert all(h.outcome == "completed" for h in result.handles.values())
+
+
+async def test_a_group_level_leaves_members_a_critical_scene_holds(
+    state: StateStore, bus: EventBus
+) -> None:
+    svc, _ = _group_service(state, bus)
+    alarm = SceneRun(scene_id=12, priority="critical")
+    svc.begin_critical_scene(alarm, [3])
+
+    result = svc.set_group_level(7, 50.0)
+
+    assert result.refused == (3,)
+    assert set(result.handles) == {1, 2, 4}
+    assert _levels(state, 1, 3) == [50.0, None]
+    # The scene itself may still write it.
+    svc.set_group_level(8, 40.0, owner=alarm)
+    assert _levels(state, 3) == [40.0]
+
+
+async def test_a_group_level_is_not_refused_under_external_control(
+    state: StateStore, bus: EventBus
+) -> None:
+    # As a fixture fader is not: the store takes the levels, DMX output stays
+    # suspended until control returns (§7.2.7). Only a binding is suppressed.
+    svc, _ = _group_service(state, bus)
+    svc.set_external_manual(True)
+    svc.set_group_level(7, 60.0)
+    assert _levels(state, 1, 4) == [60.0, 60.0]
+
+
+async def test_a_member_stays_where_the_group_put_it_and_trims_from_there(
+    state: StateStore, bus: EventBus
+) -> None:
+    # The traditional desk the owner asked for: the group sets, the fixture
+    # fader trims, and the master scales the result (DMX only).
+    svc, _ = _group_service(state, bus)
+    svc.set_group_level(7, 60.0)
+    svc.set_level(1, 45.0)
+    svc.set_master(50.0)
+    assert svc.composited_level(1) == 22.5
+    assert svc.composited_level(3) == 30.0
+    assert svc.composited_level(4) == 60.0  # a house dimmer: its level, unscaled
+    assert svc.group_level(7) == 60.0
 
 
 # -- a dimmer's report during the controller's own fade (§9.6, §7.1) -----------

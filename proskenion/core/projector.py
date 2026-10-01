@@ -42,11 +42,32 @@ On success the driver is asked for a fresh, on-demand reading — the state
 after a power command, the input after an input command — so the response
 is accurate immediately rather than waiting out the next probe interval;
 this is a one-shot read the caller asked for, not a second poll.
+
+Minimum warm-up (§7.4, B52; owner decision 2026-09-30)
+-------------------------------------------------------
+On the rig the PT-EZ570 reports ``warming`` for only ~13 s and then ``on``
+while its lamp is still visibly warming, so B52's refusal alone let a
+power-off through at +20 s. From a successful power-on command this
+service therefore holds the projector at ``warming`` for the device's
+``min_warmup_s`` (driver setting, default 60 s, 0 disables), measured from
+*our* command rather than the projector's report. During the hold a
+reported ``warming`` or ``on`` is shown — in ``state.projector``, the
+``projector_state`` frame, :class:`ProjectorStateChanged` and therefore the
+rules and derived status — as ``warming``, so power and input stay refused
+exactly as in real warm-up, and the ``on`` transition (with its input
+read) happens once, when the hold ends. Any other report (``off``,
+``error``, ``cooling``, ``unreachable``) is shown as reported, immediately:
+the hold never masks a fault. The hold is only a time window; it is not
+persisted, so a restart during one simply trusts the projector.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import math
+import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast
 
@@ -84,6 +105,10 @@ PROJECTOR_OWNER = "projector"
 #: The status-bar / state-key slot the one configured projector occupies (§5.6),
 #: the same way :data:`~proskenion.core.video.HDMI_SLOT` names the matrix's.
 PROJECTOR_SLOT = slot_name(Category.PROJECTOR)
+
+#: The minimum warm-up when the running driver's configuration does not
+#: carry ``min_warmup_s`` — the PJLink driver's own schema default (§7.4).
+DEFAULT_MIN_WARMUP_S = 60
 
 
 class DeviceSource(Protocol):
@@ -175,6 +200,8 @@ class ProjectorService:
         devices: DeviceSource,
         *,
         broadcaster: Publisher | None = None,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self._state = state
         self._bus = bus
@@ -186,12 +213,21 @@ class ProjectorService:
         self._device_id: int | None = None
         self._key: str | None = None
         self._registered_driver: Driver | None = None
-        #: The service's own last-applied state, so a listener notification
-        #: and a late "already discovered" reread (see the module docstring)
-        #: are both idempotent regardless of which one runs first. Starts at
-        #: the driver's own initial sentinel for the same reason the driver
-        #: itself never reports it: nothing is known yet.
+        #: The service's own last-applied *effective* state — what
+        #: ``state.projector.state`` holds, the minimum warm-up applied (see
+        #: the module docstring) — so a listener notification and a late
+        #: "already discovered" reread are both idempotent regardless of
+        #: which one runs first. Starts at the driver's own initial sentinel
+        #: for the same reason the driver itself never reports it: nothing
+        #: is known yet.
         self._last_state: ProjectorState = ProjectorState.UNREACHABLE
+        #: What the projector itself last reported, before the hold.
+        self._reported: ProjectorState = ProjectorState.UNREACHABLE
+        #: ``clock()`` time the minimum warm-up hold ends, or ``None``.
+        self._hold_until: float | None = None
+        self._hold_task: asyncio.Task[None] | None = None
+        self._clock = clock
+        self._sleep = sleep
         self._subscription: Subscription | None = None
         self._started = False
 
@@ -217,6 +253,7 @@ class ProjectorService:
         )
 
     async def stop(self) -> None:
+        self._cancel_hold()
         if self._subscription is not None:
             self._bus.unsubscribe(self._subscription)
             self._subscription = None
@@ -236,6 +273,16 @@ class ProjectorService:
             state=None if state is None else str(state),
             input_ref=None if input_ref is None else str(input_ref),
         )
+
+    def warmup_remaining_s(self) -> float | None:
+        """Whole seconds left of the minimum warm-up hold, for ``remaining_s``
+        (§16.5, §21.14's countdown) — ``None`` outside a hold, and ``None``
+        whenever the state shown is not ``warming`` (a fault during the hold
+        shows as reported, with no countdown)."""
+        if self._hold_until is None or self._last_state is not ProjectorState.WARMING:
+            return None
+        left = self._hold_until - self._clock()
+        return float(math.ceil(left)) if left > 0 else None
 
     # -- driver attachment (§7.4) ----------------------------------------------
 
@@ -261,6 +308,7 @@ class ProjectorService:
         if new_id != self._device_id:
             self._device_id = new_id
             self._registered_driver = None
+            self._cancel_hold()
         if self._device_id is not None:
             await self._attach_listener()
 
@@ -287,7 +335,25 @@ class ProjectorService:
 
     # -- state.projector (§5.6, B39) -------------------------------------------
 
-    async def _apply_state(self, new: ProjectorState) -> None:
+    async def _apply_state(self, reported: ProjectorState) -> None:
+        """Record what the projector reported and apply the effective state."""
+        self._reported = reported
+        await self._apply_effective()
+
+    def _effective(self) -> ProjectorState:
+        """The reported state with the minimum warm-up applied: ``warming``
+        or ``on`` inside the hold shows as ``warming``; anything else —
+        a fault, off, cooling, unreachable — shows as reported."""
+        if (
+            self._hold_until is not None
+            and self._clock() < self._hold_until
+            and self._reported in (ProjectorState.WARMING, ProjectorState.ON)
+        ):
+            return ProjectorState.WARMING
+        return self._reported
+
+    async def _apply_effective(self) -> None:
+        new = self._effective()
         previous = self._last_state
         if previous is new:
             return
@@ -298,6 +364,46 @@ class ProjectorService:
             await self._read_input_into_store()
         self._publish_frame()
         self._bus.emit(ProjectorStateChanged(self._device_id, new.value, previous.value))
+
+    # -- the minimum warm-up hold (§7.4, B52) -------------------------------------
+
+    def _min_warmup_s(self) -> int:
+        """The running projector's ``min_warmup_s`` driver setting (§7.4)."""
+        raw = self._devices.running_driver(self._device_id) if self._device_id else None
+        value = None if raw is None else raw.config.get("min_warmup_s")
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            # Absent (a driver without the field) or not a sane value — it is
+            # validated on save, but never trusted blindly here.
+            return DEFAULT_MIN_WARMUP_S
+        return value
+
+    def _start_hold(self, seconds: int) -> None:
+        self._cancel_hold()
+        if seconds <= 0:
+            return
+        self._hold_until = self._clock() + seconds
+        self._hold_task = asyncio.create_task(
+            self._end_hold_after(float(seconds)), name="projector:min-warmup"
+        )
+
+    def _cancel_hold(self) -> None:
+        self._hold_until = None
+        if self._hold_task is not None and not self._hold_task.done():
+            self._hold_task.cancel()
+        self._hold_task = None
+
+    async def _end_hold_after(self, seconds: float) -> None:
+        """Wake when the hold ends and apply the reported state — the
+        effective ``warming`` -> ``on`` transition happens here, once."""
+        await self._sleep(seconds)
+        self._hold_until = None
+        self._hold_task = None
+        if self._device_id is None:
+            return
+        try:
+            await self._apply_effective()
+        except Exception:  # pragma: no cover - a timer task never dies loudly
+            log.exception("projector: applying the state at the end of the warm-up hold failed")
 
     async def _read_input_into_store(self) -> None:
         """Read the projector's current input and record it (§7.4).
@@ -372,6 +478,11 @@ class ProjectorService:
             # behind. Reported as unreachable, not a 500 (§16.5, the
             # contract's device_unavailable/unreachable shape).
             raise ProjectorUnavailable(state="unreachable", reason=None) from exc
+        if on and self._last_state is not ProjectorState.ON:
+            # The minimum warm-up runs from our own accepted power-on, not
+            # from the projector's report (see the module docstring). An
+            # "on" to a projector already shown on starts nothing.
+            self._start_hold(self._min_warmup_s())
         new_state = await driver.read_state()  # fresh, on-demand — not a poll (§7.4)
         await self._apply_state(new_state)
 
@@ -397,6 +508,7 @@ class ProjectorService:
 
 
 __all__ = [
+    "DEFAULT_MIN_WARMUP_S",
     "PROJECTOR_OWNER",
     "DeviceSource",
     "NoProjectorConfigured",

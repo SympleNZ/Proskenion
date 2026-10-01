@@ -123,9 +123,16 @@ export const lighting = {
     term: "Members",
     body: "Which fixtures this group's fader controls. A fixture can belong to several groups; ticking one here never removes it from another.",
   },
+  "lighting.group.indicator-only": {
+    term: "Indicator only",
+    body:
+      "An indicator-only group has no fader anywhere and never dims its fixtures, so it can never hold another group's fixtures up or down. " +
+      "It exists so a derived status can light a wall-panel lamp from its members — \"Stage all\" lighting the panel's all-on indicator, say. " +
+      "The Master fader is the whole-stage fader. A binding cannot drive an indicator-only group; delete or re-point any binding on it first.",
+  },
   "lighting.group.save": {
     term: "Save",
-    body: "Saves this group's name, colour and membership.",
+    body: "Saves this group's name, colour, whether it is indicator only, and its membership.",
   },
   "lighting.group.delete": {
     term: "Delete group",

@@ -121,3 +121,55 @@ describe("contrast (spec §24.4)", () => {
     expect(contrast(FOREGROUNDS["text-muted"], BACKGROUNDS["bg-surface"])).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
   });
 });
+
+/*
+ * The overlay layers (§24.4, §24.7: "No text-muted on bg-elevated or
+ * bg-overlay anywhere"). The tests above measure token pairs; these read
+ * the stylesheet and check what each overlay container actually resolves
+ * `--color-text-muted` to against the background it actually paints. A
+ * container that paints bg-elevated or bg-overlay and lets the global
+ * muted token through fails here.
+ */
+const componentsCss = readFileSync(join(here, "components.css"), "utf8");
+
+/** The declaration block of the first rule whose selector list is exactly `selector`. */
+function ruleBlock(selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(String.raw`(?:^|\n)${escaped}\s*\{([^}]*)\}`).exec(componentsCss);
+  if (!match) throw new Error(`components.css: no rule for ${selector}`);
+  return match[1]!;
+}
+
+/** Resolves `prop: var(--color-x)` in a block to that token's hex, or undefined if the block does not set it. */
+function resolveColour(block: string, prop: string): string | undefined {
+  const match = new RegExp(String.raw`${prop}:\s*var\(--color-([a-z0-9-]+)\)`).exec(block);
+  return match ? token(`color-${match[1]!}`) : undefined;
+}
+
+const OVERLAY_LAYERS: readonly { name: string; selector: string; background: string }[] = [
+  { name: "menu (bg-overlay)", selector: ".menu-content", background: "background" },
+  { name: "help popover (bg-overlay)", selector: ".help-popover", background: "background" },
+  { name: "toast (bg-elevated)", selector: "[data-sonner-toaster]", background: "--normal-bg" },
+  { name: "sheet (bg-elevated)", selector: ".sheet-content", background: "background" },
+  { name: "dialog (bg-elevated)", selector: ".dialog-content", background: "background" },
+];
+
+describe("text-muted on menus, toasts, popovers, sheets and dialogs (spec §24.4, §24.7)", () => {
+  for (const layer of OVERLAY_LAYERS) {
+    it(`${layer.name}: the muted token it resolves to meets 4.5:1 on its own background`, () => {
+      const block = ruleBlock(layer.selector);
+      const background = resolveColour(block, layer.background);
+      const muted = resolveColour(block, "--color-text-muted");
+      expect(background, `${layer.selector} must paint a background token`).toBeDefined();
+      expect(muted, `${layer.selector} must redefine --color-text-muted (the global value fails AA on this layer)`).toBeDefined();
+      expect(contrast(muted!, background!), `${muted} on ${background}`).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+    });
+  }
+
+  it("toast variants all paint bg-elevated (so the toast row above covers every variant)", () => {
+    const block = ruleBlock("[data-sonner-toaster]");
+    for (const variant of ["normal", "success", "error", "warning", "info"]) {
+      expect(resolveColour(block, `--${variant}-bg`), variant).toBe(BACKGROUNDS["bg-elevated"]);
+    }
+  });
+});

@@ -128,6 +128,13 @@ export const rules = {
     term: "At level (%)",
     body: "On when every member channel of the group is at this level.",
   },
+  "rules.derived.basis": {
+    term: "Compare",
+    body:
+      "Stored level compares each fixture's own fader level, as the spec's §8.6 describes. " +
+      "What the room sees compares each fixture's actual output — its level scaled by the Master — so a wall-panel lamp " +
+      "follows the stage: with the Master pulled down it reads off even though the faders are up. Use it for panel indicators.",
+  },
   "rules.derived.device": {
     term: "Device",
     body: "Which device this status watches.",

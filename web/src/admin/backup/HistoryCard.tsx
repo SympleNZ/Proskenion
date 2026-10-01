@@ -7,9 +7,12 @@
  * automatic renewal there and a nightly scheduled backup here are both work
  * that can start without this tab's own button.
  *
- * An archive the monthly integrity check flagged untrusted (§13.4) is shown
- * as such and offers no restore action — `RestoreCard`'s picker excludes it
- * for the same reason.
+ * Two checks, shown apart because they answer different questions (§13.4):
+ * "Checked after backup" is the run's own read-back of every copy it wrote
+ * ("was it written correctly?"), and "Monthly check" is the random sample
+ * that catches later decay on the USB or the NAS ("is it still good?"). An
+ * archive the monthly check flagged untrusted is shown as such and offers no
+ * restore action — `RestoreCard`'s picker excludes it for the same reason.
  */
 import { Check, Database, X } from "lucide-react";
 
@@ -19,11 +22,12 @@ import { Banner } from "@/components/ui/Banner";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { formatTime } from "@/lib/time";
 import { useProgress } from "@/live/store";
 
 import { downloadUrl, useBackupHistory, useRunBackupNow, useVerifyBackup } from "./api";
 import { formatBytes, formatWhen } from "./format";
-import { BACKUP_RUN_OPERATION, BACKUP_RUN_STEPS, type ArchiveSummary, type BackupStatus } from "./types";
+import { BACKUP_RUN_OPERATION, BACKUP_RUN_STEPS, type ArchiveSummary, type BackupStatus, type BackupVerifyStatus } from "./types";
 
 function statusLine(error: unknown): string | undefined {
   return error instanceof ApiError ? `${error.status} ${error.code}` : undefined;
@@ -38,12 +42,35 @@ function DestinationBadges({ archive }: { archive: ArchiveSummary }) {
   return <span className="text-fg-muted text-sm">{present.join(" + ")}</span>;
 }
 
-function VerifiedMark({ archive }: { archive: ArchiveSummary }) {
+const DESTINATION_LABELS: Record<string, string> = { local: "Local", usb: "USB", network: "Network" };
+
+function CheckedAfterBackup({ archive }: { archive: ArchiveSummary }) {
+  if (archive.checked_at === null) {
+    return <span className="text-fg-muted text-sm">Not checked (older backup)</span>;
+  }
+  if (archive.checked_destinations.length === 0) {
+    return (
+      <span className="inline-flex items-center gap-2 text-danger-text">
+        <X aria-hidden="true" strokeWidth={3} className="size-4" />
+        No copy read back correctly
+      </span>
+    );
+  }
+  const where = archive.checked_destinations.map((d) => DESTINATION_LABELS[d] ?? d).join(", ");
+  return (
+    <span className="inline-flex items-center gap-2 text-success-text">
+      <Check aria-hidden="true" strokeWidth={3} className="size-4" />
+      {where} · {formatTime(archive.checked_at)}
+    </span>
+  );
+}
+
+function MonthlyCheck({ archive }: { archive: ArchiveSummary }) {
   if (archive.untrusted) {
     return (
       <span className="inline-flex items-center gap-2 text-danger-text" title={archive.untrusted_reason ?? undefined}>
         <X aria-hidden="true" strokeWidth={3} className="size-4" />
-        Untrusted
+        Failed · untrusted
       </span>
     );
   }
@@ -51,11 +78,26 @@ function VerifiedMark({ archive }: { archive: ArchiveSummary }) {
     return (
       <span className="inline-flex items-center gap-2 text-success-text">
         <Check aria-hidden="true" strokeWidth={3} className="size-4" />
-        Verified
+        Passed {formatWhen(archive.verified_at)}
       </span>
     );
   }
-  return <span className="text-fg-muted text-sm">Not yet verified</span>;
+  return <span className="text-fg-muted text-sm">Not checked yet</span>;
+}
+
+const MONTHLY_RESULT: Record<BackupVerifyStatus["outcome"], string> = {
+  verified: "passed",
+  none: "nothing to check yet",
+  untrusted: "failed",
+  missing: "the archive it chose is missing",
+  unreachable: "could not reach the archive",
+};
+
+function monthlyResult(verify: BackupVerifyStatus): string {
+  // A status saved before outcomes existed has none: fall back to pass/fail.
+  const outcome = verify.outcome as BackupVerifyStatus["outcome"] | undefined;
+  if (outcome === undefined) return verify.ok ? "passed" : "failed";
+  return MONTHLY_RESULT[outcome];
 }
 
 export interface HistoryCardProps {
@@ -102,7 +144,7 @@ export function HistoryCard({ status }: HistoryCardProps) {
         )}
         {status?.last_verify ? (
           <span>
-            Last verified {formatWhen(status.last_verify.verified_at)} · {status.last_verify.ok ? "Passed" : "Failed"}
+            Last monthly check {formatWhen(status.last_verify.verified_at)} · {monthlyResult(status.last_verify)}
           </span>
         ) : null}
       </div>
@@ -129,7 +171,8 @@ export function HistoryCard({ status }: HistoryCardProps) {
                 <th scope="col">Date</th>
                 <th scope="col">Size</th>
                 <th scope="col">Destination</th>
-                <th scope="col">Verified</th>
+                <th scope="col">Checked after backup</th>
+                <th scope="col">Monthly check</th>
                 <th scope="col">
                   <span className="sr-only">Download</span>
                 </th>
@@ -144,7 +187,10 @@ export function HistoryCard({ status }: HistoryCardProps) {
                     <DestinationBadges archive={archive} />
                   </td>
                   <td>
-                    <VerifiedMark archive={archive} />
+                    <CheckedAfterBackup archive={archive} />
+                  </td>
+                  <td>
+                    <MonthlyCheck archive={archive} />
                   </td>
                   <td>
                     <a className="btn btn-secondary btn-icon" href={downloadUrl(archive.id)} download aria-label={`Download the ${formatWhen(archive.created_at)} backup`}>

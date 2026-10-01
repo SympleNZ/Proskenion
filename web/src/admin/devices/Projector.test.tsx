@@ -6,8 +6,8 @@
  * actually renders and tests PJLink correctly, against the driver's real
  * field definitions (`proskenion/core/drivers/pjlink.py`,
  * `proskenion/core/transport/tcp.py`): host and port from the shared TCP
- * transport schema, one optional encrypted password from the driver's own
- * schema, and §7.4's exact test-connection wording arriving as the probe
+ * transport schema, one optional encrypted password and the minimum warm-up
+ * from the driver's own schema, and §7.4's exact test-connection wording arriving as the probe
  * stage's detail.
  */
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
@@ -93,7 +93,56 @@ describe("Devices screen — PJLink projector", () => {
     expect(body.config.driver).not.toHaveProperty("password");
   });
 
-  it("sends a typed password, and no other field, as the protocol setting", async () => {
+  it("renders the minimum warm-up with its default and help text (§7.4)", async () => {
+    renderProjector();
+    const field = await screen.findByLabelText(/^Minimum warm-up \(seconds\)/);
+    expect(field).toHaveValue(60);
+    expect(field).toHaveAttribute("min", "0");
+    expect(field).toHaveAttribute("max", "600");
+    expect(
+      screen.getByText(
+        "The projector may report 'on' before its lamp is fully warm. Power-off is refused until this long after power-on.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("saves an edited minimum warm-up as a number", async () => {
+    const sent: { body?: unknown }[] = [];
+    client.api.mockImplementation((path: string, options?: { method?: string; body?: unknown }) => {
+      if (path === "/devices/2/capabilities") return Promise.resolve(CAPABILITIES);
+      if (path === "/devices/2" && options?.method === "PUT") {
+        sent.push({ body: options.body });
+        return Promise.resolve(PJLINK_DEVICE);
+      }
+      return Promise.resolve({});
+    });
+    renderProjector();
+
+    fireEvent.change(await screen.findByLabelText(/^Minimum warm-up/), { target: { value: "90" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(sent).toHaveLength(1));
+    const body = sent[0]?.body as { config: { driver: Record<string, unknown> } };
+    expect(body.config.driver).toEqual({ min_warmup_s: 90 });
+  });
+
+  it("refuses a minimum warm-up above 600 seconds before saving", async () => {
+    const sent: unknown[] = [];
+    client.api.mockImplementation((path: string, options?: { method?: string }) => {
+      if (path === "/devices/2/capabilities") return Promise.resolve(CAPABILITIES);
+      if (options?.method === "PUT") sent.push(path);
+      return Promise.resolve({});
+    });
+    renderProjector();
+
+    fireEvent.change(await screen.findByLabelText(/^Minimum warm-up/), { target: { value: "601" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByText("Must be 600 or less")).toBeInTheDocument();
+    expect(sent).toEqual([]);
+  });
+
+  it("sends a typed password, alongside the stored settings, as the protocol setting", async () => {
     const sent: { body?: unknown }[] = [];
     client.api.mockImplementation((path: string, options?: { method?: string; body?: unknown }) => {
       if (path === "/devices/2/capabilities") return Promise.resolve(CAPABILITIES);
@@ -110,7 +159,8 @@ describe("Devices screen — PJLink projector", () => {
 
     await waitFor(() => expect(sent).toHaveLength(1));
     const body = sent[0]?.body as { config: { driver: Record<string, unknown> } };
-    expect(body.config.driver).toEqual({ password: "s3cret" });
+    // The minimum warm-up travels at its default, as every seeded field does.
+    expect(body.config.driver).toEqual({ password: "s3cret", min_warmup_s: 60 });
   });
 
   it("shows §7.4's exact wording when authentication is required but no password is configured", async () => {

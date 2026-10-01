@@ -110,13 +110,21 @@ def render_notes(results: list[ScenarioResult]) -> str:
 
 
 def to_json(
-    results: list[ScenarioResult], *, base_url: str, tier: str | None, safety: dict[str, bool]
+    results: list[ScenarioResult],
+    *,
+    base_url: str,
+    tier: str | None,
+    safety: dict[str, bool],
+    context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "generated_at": datetime.now(UTC).isoformat(),
         "base_url": base_url,
         "signed_in_as": tier,
         "safety": safety,
+        # Where the numbers were measured from: vantage (on-box/off-box),
+        # path (direct/nginx/remote), session kind, euid, DMX capture iface.
+        "run_context": context or {},
         "spec": "docs/proskenion-spec-v3.1.html §23.1, §23.2",
         "results": [
             {
@@ -148,8 +156,9 @@ def write_json(
     base_url: str,
     tier: str | None,
     safety: dict[str, bool],
+    context: dict[str, Any] | None = None,
 ) -> None:
-    payload = to_json(results, base_url=base_url, tier=tier, safety=safety)
+    payload = to_json(results, base_url=base_url, tier=tier, safety=safety, context=context)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8", newline="\n")
 

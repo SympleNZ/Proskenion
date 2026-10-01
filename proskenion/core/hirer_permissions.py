@@ -151,9 +151,6 @@ class HirerPermissions:
     lighting_channels: frozenset[int] = frozenset()
     writable_lighting_channels: frozenset[int] = frozenset()
     groups: frozenset[int] = frozenset()
-    #: Reachable groups, plus every group any reachable channel belongs to:
-    #: the multipliers a hirer is sent read-only for the ghost mark (§21.9).
-    multiplier_groups: frozenset[int] = frozenset()
     buttons: frozenset[tuple[int, int]] = frozenset()
     rules: frozenset[int] = frozenset()
     lamp_ids: frozenset[int] = frozenset()
@@ -250,10 +247,9 @@ def changed_domains(before: HirerPermissions, after: HirerPermissions) -> frozen
         after.main_reachable,
     ):
         domains.add("mixer")
-    if (before.lighting_enabled, before.lighting_channels, before.multiplier_groups) != (
+    if (before.lighting_enabled, before.lighting_channels) != (
         after.lighting_enabled,
         after.lighting_channels,
-        after.multiplier_groups,
     ):
         domains.add("lighting")
     if before.lamp_ids != after.lamp_ids:
@@ -327,13 +323,8 @@ def resolve(config: HirerConfiguration) -> HirerPermissions:
         lighting = frozenset(direct_lighting | through_groups)
         writable = lighting if config.individual_fixtures else frozenset(direct_lighting)
         groups = frozenset(placed_groups)
-        multiplier_groups = groups | frozenset(
-            group_id
-            for group_id, members in config.group_members.items()
-            if not lighting.isdisjoint(members)
-        )
     else:
-        lighting = writable = groups = multiplier_groups = frozenset()
+        lighting = writable = groups = frozenset()
 
     scenes = frozenset(config.rule_scenes[r] for r in rules if r in config.rule_scenes)
     desk_scenes: set[int] = set()
@@ -357,7 +348,6 @@ def resolve(config: HirerConfiguration) -> HirerPermissions:
         lighting_channels=lighting,
         writable_lighting_channels=writable,
         groups=groups,
-        multiplier_groups=multiplier_groups,
         buttons=frozenset(buttons),
         rules=frozenset(rules),
         lamp_ids=frozenset(lamps),
@@ -375,9 +365,12 @@ async def load_configuration(db: Database) -> HirerConfiguration:
         if page is not None:
             pages.append(page)
     channels = {c.id: c for c in await mixer_crud.list_channels(db)}
+    # An indicator-only group has no fader (migration 011): a hirer can never
+    # reach it.
     group_members = {
         group.id: tuple(m.channel_id for m in await lighting_crud.get_group_members(db, group.id))
         for group in await lighting_crud.list_groups(db)
+        if not group.indicator_only
     }
     rule_scenes = {
         rule.id: rule.scene_id

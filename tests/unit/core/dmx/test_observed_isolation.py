@@ -40,6 +40,9 @@ async def test_wild_observed_values_change_no_output(state: StateStore) -> None:
         pipe.fades.fade_channel(2, level=60.0, colour=Colour(255, 128, 0))
         pipe.fades.fade_channel(3, level=25.0)
         await wait_until(lambda: pipe.output.last()[0] == 102 and len(pipe.knx.writes) == 1)
+        # Let the steady cadence that follows a change run out (renderer module
+        # docstring): from here only the 1 s keepalive would send.
+        await wait_until(lambda: not pipe.renderer.cadence_running)
         frame, composites = pipe.output.last(), pipe.renderer.composites
         sent, knx_writes = len(pipe.output.sent), list(pipe.knx.writes)
 
@@ -86,7 +89,6 @@ async def test_no_pass_reads_observed_while_the_pipeline_runs(state: StateStore)
         pipe.fades.fade_channel(1, level=90.0, fade_ms=200)
         pipe.fades.fade_channel(2, level=50.0, colour=Colour(1, 2, 3), fade_ms=200)
         pipe.fades.fade_channel(3, level=70.0, fade_ms=200)
-        pipe.fades.fade_group(4, 0.5, fade_ms=200)
         pipe.rig.set_master(80.0)
         await asyncio.sleep(0.35)
         pipe.renderer.suspend()
@@ -94,7 +96,7 @@ async def test_no_pass_reads_observed_while_the_pipeline_runs(state: StateStore)
         await asyncio.sleep(0.05)
     finally:
         await pipe.stop()
-    assert {"levels", "colour", "group_multipliers", "master"} <= recording.read
+    assert {"levels", "colour", "master"} <= recording.read
     assert "observed" not in recording.read
 
 
@@ -130,4 +132,4 @@ def test_no_control_path_module_names_observed_in_its_code() -> None:
 
 def test_the_compositors_view_of_the_store_has_no_accessor_for_observed() -> None:
     public = {name for name in dir(LevelStoreView) if not name.startswith("_")}
-    assert public == {"level", "colour", "group_multiplier", "master"}
+    assert public == {"level", "colour", "master"}

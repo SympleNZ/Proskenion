@@ -19,7 +19,6 @@ from proskenion.core.dmx.fade import (
     FadeEngine,
     SceneRun,
     UnknownChannelError,
-    UnknownGroupError,
     smoothstep,
 )
 from proskenion.core.state import Change, StateStore
@@ -42,13 +41,11 @@ class ManualClock:
         return self.now
 
 
-def engine(
-    state: StateStore, *channels: int, groups: tuple[int, ...] = (), **ranges: float
-) -> tuple[FadeEngine, ManualClock]:
+def engine(state: StateStore, *channels: int, **ranges: float) -> tuple[FadeEngine, ManualClock]:
     clock = ManualClock()
     fades = FadeEngine(state, clock=clock)
     lo, hi = ranges.get("min_value", 0.0), ranges.get("max_value", 100.0)
-    fades.configure({c: (lo, hi) for c in channels}, groups)
+    fades.configure({c: (lo, hi) for c in channels})
     return fades, clock
 
 
@@ -100,25 +97,10 @@ def test_levels_are_clamped_on_write_and_the_handle_carries_the_clamped_target(
     assert all(round(value, 1) == value for _, _, value in writes)  # one decimal
 
 
-def test_group_multipliers_fade_with_smoothstep_and_clamp(state: StateStore) -> None:
-    fades, clock = engine(state, groups=(5,))
-    handle = fades.fade_group(5, 1.7, fade_ms=1000)
-    assert handle.target_multiplier == 1.0  # clamped; a group with nothing stored is at full
-    clock.now += 0.5
-    fades.step()
-    assert state.lighting.get_item("group_multipliers", 5) == 1.0
-    fades.fade_group(5, 0.0, fade_ms=1000)
-    clock.now += 0.25
-    fades.step()
-    assert state.lighting.get_item("group_multipliers", 5) == pytest.approx(1 - 0.15625, abs=1e-3)
-
-
 def test_unknown_targets_and_bad_values_are_refused(state: StateStore) -> None:
-    fades, _ = engine(state, 1, groups=(2,))
+    fades, _ = engine(state, 1)
     with pytest.raises(UnknownChannelError):
         fades.fade_channel(9, level=1.0)
-    with pytest.raises(UnknownGroupError):
-        fades.fade_group(9, 1.0)
     with pytest.raises(ValueError):
         fades.fade_channel(1, level=float("nan"))
     with pytest.raises(ValueError):
@@ -191,7 +173,7 @@ async def test_a_ten_second_fade_completes_within_10ms_under_simulated_load(
 ) -> None:
     clock = VirtualClock()
     fades = FadeEngine(state, clock=clock, sleep=clock.sleep)
-    fades.configure({1: (0.0, 100.0)}, ())
+    fades.configure({1: (0.0, 100.0)})
     await fades.start()
     try:
         t0 = clock()
@@ -212,7 +194,7 @@ async def test_a_ten_second_fade_completes_within_10ms_under_simulated_load(
 async def test_two_fades_started_together_finish_together(state: StateStore) -> None:
     clock = VirtualClock()
     fades = FadeEngine(state, clock=clock, sleep=clock.sleep)
-    fades.configure({1: (0.0, 100.0), 2: (0.0, 100.0)}, ())
+    fades.configure({1: (0.0, 100.0), 2: (0.0, 100.0)})
     writes = record_levels(state, clock)
     await fades.start()
     try:
@@ -237,7 +219,7 @@ async def test_a_fade_keeps_time_on_the_real_event_loop_under_blocking_load(
     state: StateStore,
 ) -> None:
     fades = FadeEngine(state)
-    fades.configure({1: (0.0, 100.0)}, ())
+    fades.configure({1: (0.0, 100.0)})
     stop = asyncio.Event()
 
     async def load() -> None:  # a busy neighbour hogging the loop 3 ms at a time
@@ -287,7 +269,7 @@ def test_a_level_fade_on_a_coloured_fixture_does_not_shift_hue(state: StateStore
     rig = Rig(state, config(dmx(1, 1, RGB)))
     clock = ManualClock()
     fades = FadeEngine(state, owner="fade_engine_2", clock=clock)
-    fades.configure({1: (0.0, 100.0)}, ())
+    fades.configure({1: (0.0, 100.0)})
     fades.fade_channel(1, level=0.0, colour=Colour(240, 120, 60))
     fades.fade_channel(1, level=100.0, fade_ms=2000)
     for _ in range(19):
@@ -374,18 +356,16 @@ def test_a_critical_scene_locks_every_channel_it_fades(state: StateStore) -> Non
 def test_a_critical_scene_starting_cancels_every_fade_at_its_current_value(
     state: StateStore,
 ) -> None:
-    fades, clock = engine(state, 1, 2, groups=(7,))
+    fades, clock = engine(state, 1, 2)
     scene = SceneRun(scene_id=1)
     a = fades.fade_channel(1, level=100.0, fade_ms=1000, owner=scene)
     b = fades.fade_channel(2, level=100.0, fade_ms=1000)
-    g = fades.fade_group(7, 0.0, fade_ms=1000)
     clock.now += 0.5
 
     fades.begin_critical(SceneRun(scene_id=2, priority="critical"), [1, 2])
 
-    assert (a.outcome, b.outcome, g.outcome) == ("cancelled", "cancelled", "cancelled")
+    assert (a.outcome, b.outcome) == ("cancelled", "cancelled")
     assert level(state, 1) == 50.0 and level(state, 2) == 50.0
-    assert state.lighting.get_item("group_multipliers", 7) == 0.5
     assert fades.active_fades() == 0
 
 

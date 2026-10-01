@@ -1,0 +1,7 @@
+Main,Middle,Sub,Name,Description,Data Type
+0,0,1,House Lights Switching,ETS project; data type inferred from the name,DPST-1-1
+4,0,0,Stage bank 1 switching,observed on the bus 28 Sep 2026; ETS names it 'Stage lights switching',DPST-1-1
+4,0,1,Stage bank 2 switching,observed on the bus 28 Sep 2026; ETS names it 'Stage lights dimming',DPST-1-1
+4,0,2,Stage bank 3 switching,observed on the bus 28 Sep 2026; not in the ETS project,DPST-1-1
+4,0,3,Stage bank 4 switching,observed on the bus 28 Sep 2026; not in the ETS project,DPST-1-1
+4,0,8,Stage all banks switching,observed on the bus 28 Sep 2026; not in the ETS project,DPST-1-1

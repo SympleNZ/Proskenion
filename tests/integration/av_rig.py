@@ -180,7 +180,10 @@ async def configure_av(
                 "name": "PT-EZ570E",
                 "config": {
                     "transport": {"type": "tcp", "host": "127.0.0.1", "port": pjlink.port},
-                    "driver": {"password": PJLINK_PASSWORD},
+                    # The stub's own warm-up is what these milestones time;
+                    # the controller's minimum warm-up hold (§7.4) would add
+                    # 60 s to every one, and has its own unit tests.
+                    "driver": {"password": PJLINK_PASSWORD, "min_warmup_s": 0},
                 },
             },
         ),

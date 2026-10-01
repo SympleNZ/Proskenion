@@ -13,6 +13,7 @@
 import { HeartPulse } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { RestartRebootCard } from "@/admin/updates/RestartRebootCard";
 import { ApiError } from "@/api/client";
 import { Banner } from "@/components/ui/Banner";
 import { Card } from "@/components/ui/Card";
@@ -235,6 +236,9 @@ export function HealthScreen() {
       ) : (
         <EmptyState icon={HeartPulse} title="No health report" detail="The controller returned nothing to show." />
       )}
+
+      {/* Power controls stay available even when the report cannot be read. */}
+      <RestartRebootCard />
     </div>
   );
 }

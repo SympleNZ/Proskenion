@@ -25,8 +25,8 @@ following `docs/hardware/setup.md`.
 | Cable ordered | 2026-09-11 |
 | Longer run | USB-RS232-WE-5000-BT_0.0 (5 m) if the controller and switcher are not adjacent |
 | Order from | An authorised distributor only — Mouser, DigiKey, element14/Farnell NZ or RS Components NZ |
-| Cable serial | *to be recorded at commissioning* |
-| Device path | `/dev/serial/by-id/usb-FTDI_…` *— to be recorded at commissioning* |
+| Cable serial | `AV0M87RY` (recorded 24–25 September 2026) |
+| Device path | `/dev/serial/by-id/usb-FTDI_USB-RS232-WE_AV0M87RY-if00-port0` — on the CM5 over USB, not a network device |
 
 Why it matters (§7.5). The vendor manual says "RS-232 3 Pin" without stating a
 voltage, and that phrasing is used for both true RS-232 and TTL-level serial.
@@ -348,3 +348,227 @@ finds the right zone without knowing where the boundary is. No change needed.
   `AVC-BACKUP`, prepared on the appliance with `sfdisk`/`mkfs.ext4` (the image
   has no `gdisk`), with its root `chown`ed to `auditorium` — without that the
   backup job cannot write to it (a hand-off defect, carried to wave B).
+
+
+## KNX group addresses seen on the bus (28 September 2026)
+
+Recorded with `knxtool groupsocketlisten` on the controller while Simon pressed
+the wall panel's buttons. The controller's tunnel to the gateway (`10.2.30.252`)
+works. This is what the installation *uses*, observed; the ETS project is the
+authority, and its export (wave D) supersedes this table.
+
+| Function | Command (sent by the panel, `1.1.27`) | Status (sent by the actuator) |
+|---|---|---|
+| Stage bank 1 | `4/0/0` (1-bit) | `4/0/4` from `1.1.2` |
+| Stage bank 2 | `4/0/1` | `4/0/5` |
+| Stage bank 3 | `4/0/2` | `4/0/6` |
+| Stage bank 4 | `4/0/3` | `4/0/7` |
+| All stage banks | `4/0/8` | `4/0/9`, on only while all four are on |
+| House lights on/off | `0/0/1` (1-bit) | `0/0/2` (1-bit) from dimmers `1.1.19` and `1.1.20` |
+| House lights brightness | not seen: probably `0/0/3` or `0/0/4` (check ETS) | `0/0/5` (1 byte; `FF` = 100%, sent when the fade-up ended) |
+
+Observations:
+- **The dimmers fade by themselves.** The panel sends only on/off; the
+  dimmers ramp over about 4 s. "On" status is sent at the start of the ramp,
+  "off" at the end.
+- `1.1.19` repeats its status several times while ramping; that's harmless.
+- **The individual addresses** are: panel `1.1.27`, stage actuator `1.1.2`,
+  house dimmers `1.1.19` and `1.1.20`. They're on area 1.1, as the site survey
+  found. knxd's own `0.0.x` individual addresses are unrelated to the `0/0/x`
+  *group* addresses above.
+
+**The controller writes too (28 Sep, 14:16).** `knxtool groupswrite` through
+knxd sent: all on, banks 4, 3, 2 and 1 off, then all on. Actuator `1.1.2`
+confirmed every command within the same second. The controller's telegrams
+came from knxd's client range (`0.0.2`–`0.0.9`); the gateway accepted them.
+**Done 29 Sep:** knxd now runs with `-B single` (see "The stage swap-over"
+below), so everything the controller sends leaves as the tunnel's assigned
+`1.1.3`, not the `0.0.x` client range.
+
+
+## eDMX8 MAX ports, and the first DMX to real fixtures (28 September 2026)
+
+**The node's own ArtPollReply** (8 bind indexes, one port each), confirmed in
+the DMXking configuration tool. This replaces the site survey's "inputs on 0–1".
+
+| Port | Direction | Art-Net universe | Notes |
+|---|---|---|---|
+| A | output | 0 | Merge **HTP**, failsafe **Hold Last**, 40 Hz. Now cabled into the old eDMX4's DMX input |
+| B | input | 1 | the only input (booth DMX-IN), no signal |
+| C–H | output | 2–7 | nothing connected downstream |
+
+**The chain as re-patched by Simon:** the new controller sends Art-Net
+universe 0 to eDMX8 port A, which is cabled to the old eDMX4's input, which
+drives the stage fixtures 1–15 (plain white). The legacy controller's USB DMX
+interface is unplugged, and its app was terminated.
+
+**Feedback loop, found and broken.** The eDMX4 (`.220`) re-broadcasts its
+DMX input as Art-Net universe 0. With port A feeding that input, the eDMX4
+heard its own output back: the loop held the stage at full, and HTP let no
+lower level in. It was broken by unplugging the eDMX4 from the network. Its
+DMX input still passes to its outputs without it. **The eDMX4 has no setting to stop re-broadcasting its input** (Simon,
+29 Sep), so after the swap-over it **stays off the network**; the network is
+only needed to configure it. To configure it: unplug eDMX8 port A's cable
+from its input first, reconnect the network, configure, unplug the network,
+then re-patch port A. This is §7.2.7's
+"verify on the bench" feedback case, met in practice.
+
+**Proved:** all 15 fixtures went off on command, then lit one at a time at
+50% in order (14:44:54–14:45:36), then off. The stage is left **off**, held
+by port A's Hold Last.
+
+
+## The ETS project against the live installation (28 September 2026)
+
+`site/OBHS Auditorium.knxproj` (private, gitignored; the password was removed
+by Simon) holds 44 group addresses. It is **not what is programmed today**:
+- The Side of Stage Touch Panel (`1.1.27`), which sent every press
+  observed, has no links in it.
+- `1.1.2`, which answered every stage-bank status, isn't in it at all (it was
+  the legacy controller's KNX interface, confirmed 29 Sep); nor is house dimmer `1.1.19`.
+- For the stage it has only `4/0/0` "Stage lights switching" and `4/0/1`
+  "Stage lights dimming", while the bus uses `4/0/0`–`4/0/9` as four banks,
+  their statuses, and all.
+
+It does confirm house-light **level control**: `0/0/3` relative, `0/0/4`
+absolute (set brightness), `0/0/5` value; the proscenium has the same at
+`0/1/2`–`0/1/4`. Import files built from the project plus the bus capture:
+`site/knx-commands-both.csv` (29 rows, direction both) and
+`site/knx-feedback-incoming.csv` (23, incoming). Both parse with no warnings.
+
+
+## Stage lighting rows (Simon, 28 September 2026)
+
+Plain white fixtures on DMX universe 0 (eDMX8 port A, then the eDMX4), one
+channel each:
+
+| Row | Position | Fixtures (DMX channels) | KNX switch / status |
+|---|---|---|---|
+| 1 | front of stage | 1–4 | `4/0/0` / `4/0/4` |
+| 2 | | 5–8 | `4/0/1` / `4/0/5` |
+| 3 | | 9–12 | `4/0/2` / `4/0/6` |
+| 4 | back of stage | 13–15 | `4/0/3` / `4/0/7` |
+| all | | 1–15 | `4/0/8` / `4/0/9` |
+
+
+## The stage swap-over (29 September 2026)
+
+The new controller drives the stage from the wall panel. The legacy controller
+application is stopped.
+- **DMX:** eDMX8 port A (u0, HTP, Hold Last) feeds the eDMX4's DMX input; the
+  eDMX4 is off the network (it cannot stop re-broadcasting, see above).
+- **KNX:** the 5 bindings (`4/0/0-3`, `4/0/8` → "Stage row 1"–"4" and "Stage
+  all") and the 5 statuses (`4/0/4-7`, `4/0/9`) are enabled. Simon tested each
+  row on and off, all on and all off, and the panel indicators; all correct.
+- **`1.1.2` was the legacy controller's KNX interface.** With the legacy
+  controller stopped it sends nothing; the stage statuses now come only from
+  this controller. There is no KNX stage actuator: the stage is DMX only.
+- **Status reads get no answer**, with either knxd setting: nothing on the bus
+  answers a read of `4/0/4` or `4/0/9` while the legacy interface is off.
+- **knxd sends as `1.1.3`:** `KNXD_OPTS` gained `-B single` (also in
+  `appliance/etc/knxd.conf.default`). The filter rewrites every outgoing
+  source to the address the gateway assigned the tunnel, so no 0.0.x address
+  and no client range reaches the bus, and nothing can clash with an
+  undocumented 1.1.x device. `knxtool groupsocketlisten` on the controller
+  still shows the local `0.0.x` source (it sees the telegram before the
+  filter). Proven by the panel test after the change: the indicators the
+  controller writes followed every press. The previous file is kept at
+  `/data/config/knxd.conf.bak-2026-09-29`.
+
+
+## The wall panel's projector button (29 September 2026)
+
+Observed on the bus: the panel (`1.1.27`) sends `3/0/0` = `1` for on and `0`
+for off, matching the ETS project's "Projector 1 Control". The feedback is
+the ETS project's `3/0/1` "Projector 1 Feedback"; it can't be observed
+directly (the legacy controller used to write it), but the panel's icon follows
+our writes there. Projectors 2–4 (`3/1/x`–`3/3/x`) are in the ETS project
+only; the auditorium has one projector.
+
+**The panel flips its own icon when pressed**, red to green or back, before
+anything happens. Hence v0.1.10's re-assert. After each press has been
+handled, the controller re-sends every indicator's true value. So a press
+that was refused (the projector warming or cooling, B52), failed (unreachable)
+or blocked is corrected within about a second.
+
+On the controller:
+- scenes "Projector on" and "Projector off" (one `projector_power` step each);
+- rules "Panel projector on" and "Panel projector off" (`3/0/0` equal 1 / 0 →
+  the scene);
+- status "Projector indicator": device_state, the projector,
+  `on_or_warming` → `3/0/1`. Its direction was changed to both.
+
+**Tested 29 Sep:** on and off from the panel both worked, on v0.1.9. That test
+also found the indicator never went green. The status read only the connection
+state, which v0.1.10 fixes. **Still to test on v0.1.10:** green through
+warm-up; a second press during warm-up returns to green; a press on during
+cool-down returns to red.
+
+
+
+## The rest of the wall panel, from the bus (1 October 2026)
+
+Simon pressed the remaining panel buttons (in no recorded order) while the
+controller listened. Names come from the imported ETS project and the
+observed behaviour.
+
+| Panel sends (`1.1.27`) | ETS name | Who answers | Feedback |
+|---|---|---|---|
+| `0/2/0` on/off | Foyer Lights Switching | actuator `1.1.22` | `0/2/1` (from `1.1.22` and `1.1.18`) |
+| `0/3/0` on/off | Stage Working Lights Switching | `1.1.18` | `0/3/1` |
+| `0/5/0` on/off | Aisle Spots Switching | `1.1.22` | `0/5/1` |
+| `0/6/0` on/off | Walkway Spots Switching | `1.1.22` | `0/6/1` (from `1.1.22` and `1.1.18`) |
+| `1/0/3` on/off | Speakers on/off | (no feedback seen) | — |
+| **`5/2/0` on/off** | **not in the ETS project** | `1.1.18` fans it out | `5/2/2` |
+
+**`5/2/0` is a scene/mode button**, sequenced by `1.1.18`, which looks like a
+logic or scene controller:
+- **on:** reading light `0/7/0` on; house lights on, fading to full (`0/0/2`
+  = 1, `0/0/5` = FF from dimmers `1.1.19` and `1.1.20`); Proscenium on at 80 %
+  (`0/1/1` = 1, `0/1/4` = CC from `1.1.21`); walkway spots off.
+- **off:** house lights and Proscenium off; walkway spots on; aisle spots off;
+  working lights off; `5/2/2` = 0.
+
+**Confirmed by Simon:** this is the panel's **"Lights on/off" button**. On
+turns the house lights and Proscenium on and the walkway spots off; off does
+the reverse. (The reading light, aisle spots and working lights also follow,
+as seen above.)
+
+**New devices seen:** `1.1.18` (logic/scene controller, also answers working
+lights and the reading light), `1.1.21` (Proscenium dimmer), `1.1.22`
+(switching actuator: foyer, aisle, walkway).
+
+**Not pressed individually this time:** house lights `0/0/1` and Proscenium
+`0/1/0`. They moved only through `5/2/0`.
+
+**Still to capture:** the alarm's arm and disarm telegrams. Simon: arming
+turns all lights off, disarming turns on only the walk spots. Expect `1.1.18`
+or a `5/x` address.
+
+**The alarm (Simon, 1 Oct):** the alarm panel sends no KNX itself. It closes
+a relay that a KNX I/O module reads (high = armed, low = disarmed), and that
+module sends the telegram the lights respond to (all off when armed; only the
+walk spots on when disarmed).
+- **The ETS project doesn't contain it.** It has no `1.1.18` (the logic/scene
+  device that runs "Lights on/off" `5/2/0` and answers the working lights and
+  reading light) and no dimmer `1.1.19`.
+- The project's binary-input modules (`1.1.23` HDMI, `1.1.24` Projector,
+  `1.1.25` Stage lights; Zennio BIN 2X/4X) look like the legacy controller's
+  interfaces.
+- **Most likely the alarm I/O is `1.1.18`**, sending on a `5/2/x` scene
+  address.
+- An overnight capture (`/data/tmp/knx-overnight.log`) will show it.
+
+**Captured overnight, 1–2 Oct** (a listen-only unit on the CM5):
+- **20:30:31:** `1.1.18` sent **`5/1/0` = 0**. Foyer, working lights,
+  walkway spots, aisle spots and the reading light all reported off.
+- **06:00:34:** `1.1.18` sent **`5/1/1` = 1**. Foyer and walkway spots on.
+- So `5/1/0` is "all off" and `5/1/1` is the morning "walk lights on". Both
+  come from `1.1.18`, the I/O and logic module. **To confirm with Simon:**
+  06:00:34 looks like a timer; whether 20:30 was the alarm being set.
+- The back-of-house panel (`1.1.26`) uses the same addresses as the side
+  panel (`1.1.27`): projector `3/0/0`, stage `4/0/x`, "Lights on/off"
+  `5/2/0`, and so on.
+- `1.1.32` is the Reading Light switch (in the ETS project).
+- **Proposed** (awaiting Simon): bind `5/1/0` to a critical "Alarm — All Off"
+  scene taking the 15 stage fixtures to 0 %. Nothing for `5/1/1`.

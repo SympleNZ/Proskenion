@@ -21,6 +21,7 @@ import {
   getColour,
   getDisplayLevel,
   getFeedback,
+  getGroup,
   getHdmiDestinationState,
   getLamp,
   getLevel,
@@ -216,6 +217,11 @@ describe("per-key notification", () => {
       source: "fade",
     });
     expect(one).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores an older server's groups section: a group has no value of its own now", () => {
+    applyMessage({ type: "lighting_state", groups: { "1": 0.85 }, source: "fade" });
+    expect(getGroup(1)).toBeNull();
   });
 
   it("says nothing when a frame repeats a value", () => {

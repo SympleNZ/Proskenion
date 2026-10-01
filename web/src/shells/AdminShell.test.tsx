@@ -83,10 +83,10 @@ describe("AdminShell", () => {
     // sidebar also carries the "Main interface" link (below), which is not
     // one of ADMIN_NAV's own sections.
     const nav = screen.getByRole("navigation", { name: "Admin" });
-    expect(within(nav).getAllByRole("link").map((a) => a.textContent)).toEqual(WITHOUT_CONTROL_SURFACE);
+    expect(within(nav).getAllByRole("link").map((a) => a.textContent?.replace(", current page", ""))).toEqual(WITHOUT_CONTROL_SURFACE);
     const groups = Array.from(nav.querySelectorAll(".nav-group-label")).map((el) => el.textContent);
     expect(groups).toEqual(["Control", "Configure", "System", "Account"]);
-    expect(within(nav).getByRole("link", { name: "Scenes" })).toHaveAttribute("aria-current", "page");
+    expect(within(nav).getByRole("link", { name: "Scenes, current page" })).toHaveAttribute("aria-current", "page");
   });
 
   it("shows Control Surface once a control-surface device is configured (spec §21.25)", async () => {
@@ -94,7 +94,7 @@ describe("AdminShell", () => {
     renderWithProviders(<AdminShell />, { route: "/admin/scenes", path: "/admin", nested: true, status: "authenticated", tier: "admin" });
     await settle();
     const nav = screen.getByRole("navigation", { name: "Admin" });
-    expect(within(nav).getAllByRole("link").map((a) => a.textContent)).toEqual(WITH_CONTROL_SURFACE);
+    expect(within(nav).getAllByRole("link").map((a) => a.textContent?.replace(", current page", ""))).toEqual(WITH_CONTROL_SURFACE);
   });
 
   it("links back to the main interface, so admin is never a dead end without editing the URL (25 Sep 2026, v0.1.2)", () => {

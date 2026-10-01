@@ -7,7 +7,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { resetLiveState, resolveAck, setExternalControl, setGroup, setLevel, setMaster, setObserved, type WriteDomain } from "@/live/store";
+import { resetLiveState, resolveAck, setExternalControl, setLevel, setMaster, setObserved, type WriteDomain } from "@/live/store";
 
 import { ChannelFader } from "./ChannelFader";
 import type { LightingChannel } from "./types";
@@ -59,12 +59,14 @@ beforeEach(() => {
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(RECT as DOMRect);
 });
 
-describe("ChannelFader — ghost mark tracks the group multiplier while the thumb does not move (§9.4, §22.2)", () => {
-  it("re-renders the ghost on a group frame without moving the set value", () => {
+// Rewritten from "the ghost tracks the group multiplier": a group fader sets
+// levels now (owner decision 2026-09-30), so a DMX fixture's ghost is its
+// level × the master and nothing else.
+describe("ChannelFader — ghost mark is level × master while the thumb does not move (§9.4, §22.2)", () => {
+  it("re-renders the ghost on a master frame without moving the set value", () => {
     const ch = channel({ id: 7, group_ids: [1] });
     setLevel(7, 85);
-    setGroup(1, 0.65);
-    setMaster(100);
+    setMaster(65);
     render(<ChannelFader channel={ch} />);
 
     const slider = screen.getByRole("slider", { name: "Fixture 1 fader" });
@@ -72,26 +74,30 @@ describe("ChannelFader — ghost mark tracks the group multiplier while the thum
     expect(screen.getByText("85.0%")).toBeInTheDocument();
     expect(screen.getByText("→55.3%")).toBeInTheDocument(); // 85 × 0.65
 
-    act(() => setGroup(1, 0.5)); // the group fader moves; the channel's own level does not
+    act(() => setMaster(50)); // the master moves; the channel's own level does not
     expect(slider.getAttribute("aria-valuenow")).toBe(before); // the thumb has not moved
     expect(screen.getByText("85.0%")).toBeInTheDocument(); // still what was set
     expect(screen.getByText("→42.5%")).toBeInTheDocument(); // 85 × 0.5, the ghost alone moved
   });
 
-  it("a knx_dimmer's ghost ignores the master and group faders — it lands at its own level (§9.5)", () => {
+  it("a group in the channel's group_ids scales nothing: at full master there is no ghost", () => {
+    setLevel(7, 85);
+    setMaster(100);
+    render(<ChannelFader channel={channel({ id: 7, group_ids: [1, 2] })} />);
+    expect(screen.getByText("85.0%")).toBeInTheDocument();
+    expect(screen.queryByText(/→/)).not.toBeInTheDocument();
+  });
+
+  it("a knx_dimmer's ghost ignores the master — it lands at its own level (§9.5)", () => {
     const ch = channel({ id: 6, type: "knx_dimmer", group_ids: [1] });
     setLevel(6, 85);
-    setGroup(1, 0.4);
     setMaster(50);
     render(<ChannelFader channel={ch} />);
 
     expect(screen.getByText("85.0%")).toBeInTheDocument();
     expect(screen.queryByText(/→/)).not.toBeInTheDocument(); // no divergence to show
 
-    act(() => {
-      setGroup(1, 0.2);
-      setMaster(10);
-    });
+    act(() => setMaster(10));
     expect(screen.queryByText(/→/)).not.toBeInTheDocument();
   });
 });
@@ -136,7 +142,6 @@ describe("ChannelFader — the three external-control states (§21.11, §7.2.7)"
   it("off: interactive, showing the controller's own model with a ghost", () => {
     const ch = channel({ id: 5, group_ids: [1] });
     setLevel(5, 40);
-    setGroup(1, 1.0);
     render(<ChannelFader channel={ch} />);
     const slider = screen.getByRole("slider", { name: "Fixture 1 fader" });
     expect(slider).not.toHaveAttribute("aria-readonly");
@@ -171,7 +176,6 @@ describe("ChannelFader — the three external-control states (§21.11, §7.2.7)"
   it("a knx_dimmer channel stays interactive under detected — house lighting is never gated by DMX state (§7.2.3)", () => {
     const ch = channel({ id: 6, type: "knx_dimmer", group_ids: [1] });
     setLevel(6, 40);
-    setGroup(1, 1.0);
     act(() => {
       setExternalControl("detected");
       setObserved(6, 92.3); // observed exists for this id but must not be shown or used

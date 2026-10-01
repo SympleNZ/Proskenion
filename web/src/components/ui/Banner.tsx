@@ -15,6 +15,12 @@ export interface BannerProps {
   children?: ReactNode;
   action?: ReactNode;
   className?: string;
+  /**
+   * Announce as a polite live region (the default). Off for a banner whose
+   * condition `ConnectionAnnouncer` already speaks (device offline), so one
+   * change is one announcement.
+   */
+  live?: boolean;
 }
 
 const ICONS: Record<BannerTone, typeof Info> = {
@@ -24,10 +30,10 @@ const ICONS: Record<BannerTone, typeof Info> = {
   success: CircleCheck,
 };
 
-export function Banner({ tone = "info", title, children, action, className }: BannerProps) {
+export function Banner({ tone = "info", title, children, action, className, live = true }: BannerProps) {
   const Icon = ICONS[tone];
   return (
-    <div className={cn("banner", className)} data-tone={tone} role="status" aria-live="polite">
+    <div className={cn("banner", className)} data-tone={tone} role={live ? "status" : undefined} aria-live={live ? "polite" : undefined}>
       <Icon aria-hidden="true" className="banner-icon size-5" />
       <div className="banner-body">
         {title ? <div className="banner-title">{title}</div> : null}

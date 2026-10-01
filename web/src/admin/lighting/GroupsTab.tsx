@@ -89,6 +89,7 @@ export function GroupsTab() {
                 <span aria-hidden="true" className="colour-swatch" style={{ background: group.colour }} />
                 <div>
                   <p className="card-title">{group.name}</p>
+                  {group.indicator_only ? <p className="text-fg-muted text-sm">Indicator only — no fader; used for panel status lights</p> : null}
                   <p className="text-fg-muted text-sm">
                     {group.channel_ids.length === 0
                       ? "No members"

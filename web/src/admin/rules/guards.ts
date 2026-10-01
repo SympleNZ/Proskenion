@@ -55,4 +55,9 @@ export const GUARD_TYPE_LABELS: Readonly<Record<GuardType, string>> = {
 
 /** Known state names with a producer today (§8.3, §7.1) — a device's own states (`on`, `warming`…) are free text. */
 export const CONNECTION_STATES = ["connected", "degraded", "error", "unconfigured", "connecting"] as const;
-export const STATE_ALIASES = ["online", "offline"] as const;
+export const STATE_ALIASES = ["online", "offline", "on_or_warming"] as const;
+
+/** Plain-English hints for an alias whose bare name does not read naturally in a suggestion list. */
+export const STATE_ALIAS_LABELS: Readonly<Partial<Record<string, string>>> = {
+  on_or_warming: "on or warming up",
+};

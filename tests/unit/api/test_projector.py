@@ -170,7 +170,22 @@ async def test_post_projector_power_succeeds(
             response = await client.post(f"{PROJECTOR}/power", json={"on": True})
 
             assert response.status_code == 200, response.text
-            assert response.json()["state"] == "on"
+            # The stub reports "on" at once; the minimum warm-up hold (§7.4,
+            # default 60 s) shows warming, with the hold's countdown.
+            body = response.json()
+            assert body["state"] == "warming"
+            assert body["remaining_s"] == 60.0
+
+            # Power-off inside the hold: refused exactly as in real warm-up (B52).
+            refused = await client.post(f"{PROJECTOR}/power", json={"on": False})
+            assert refused.status_code == 503, refused.text
+            assert code(refused) == "device_unavailable"
+            assert detail(refused) == {"state": "warming", "reason": "transitioning"}
+            assert stub.power == "1"  # the off never reached the projector
+
+            state = await client.get(f"{PROJECTOR}/state")
+            assert state.json()["state"] == "warming"
+            assert 0 < state.json()["remaining_s"] <= 60.0
 
 
 async def test_post_projector_power_during_warm_up_is_device_unavailable(

@@ -33,11 +33,22 @@
   box-sizing: border-box;
 }
 
+/*
+ * Display scale (§21.9, B64): the operator and admin shells set
+ * `--display-scale` here (`lib/useDisplayScale.ts`), and the whole document
+ * — including everything portalled into <body> — grows together, laying
+ * out against the smaller logical viewport. Unset (the hirer, the login
+ * page, any screen below the design target) it is 1.
+ *
+ * `zoom` does not divide viewport units, so anything sized from `dvh`/`vw`
+ * divides by the factor itself (#root here, `.shell` in components.css).
+ */
 html {
   height: 100%;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
   background: var(--color-bg-base);
+  zoom: var(--display-scale, 1);
 }
 
 body {
@@ -55,7 +66,7 @@ body {
 }
 
 #root {
-  min-height: 100dvh;
+  min-height: calc(100dvh / var(--display-scale, 1));
   display: flex;
   flex-direction: column;
 }
@@ -198,7 +209,9 @@ hr {
 }
 
 /* Skip link (§24.7): off-screen until it is the focused element, then a
- * normal, visible link at the top of the page. */
+ * normal, visible link at the top of the page. `:focus`, not `:focus-visible`:
+ * assistive technology (Narrator's scan mode) moves focus by script, which
+ * browsers do not count as focus-visible, leaving a focused but invisible link. */
 .skip-link {
   position: absolute;
   top: calc(-1 * var(--touch-min));
@@ -211,6 +224,6 @@ hr {
   border: var(--hairline) solid var(--border-input);
 }
 
-.skip-link:focus-visible {
+.skip-link:focus {
   top: var(--space-2);
 }

@@ -7,6 +7,7 @@
  */
 import { linearLightingScale } from "@/components/fader/FaderScale";
 import { FaderStrip, type SceneRing } from "@/components/fader/FaderStrip";
+import { cn } from "@/lib/utils";
 import { send } from "@/live/socket";
 import { beginGesture, endGesture, levelKey, useColour, useControlsEnabled, useDisplayLevel, useExternalControl, useLevel, useMaster } from "@/live/store";
 
@@ -14,7 +15,6 @@ import { colourToCss } from "./colour";
 import { compositeLevel } from "./compositeLevel";
 import { isReadOnlyUnderExternalControl } from "./externalControl";
 import type { LightingChannel } from "./types";
-import { useGroupMultipliers } from "./useGroupMultipliers";
 
 const scale = linearLightingScale();
 
@@ -31,9 +31,23 @@ export interface ChannelFaderProps {
    * agree, and the ghost mark still needs the set value to composite against.
    */
   readOnly?: boolean;
+  /** The card's top edge: the colour of the fixture's first group (identity only, §21.3). */
+  accentColour?: string | undefined;
+  /** Where the card needs its own height (the stage plan's sheet, which has no row to take it from). */
+  className?: string;
 }
 
-export function ChannelFader({ channel, sceneRing = null, readOnly = false }: ChannelFaderProps) {
+/**
+ * The card's second line (the mock's "ch1"): where the fixture is patched —
+ * universe and start address for DMX, "KNX" for a house dimmer.
+ */
+function fixtureReference(channel: LightingChannel): string {
+  if (channel.type === "knx_dimmer") return "KNX";
+  if (channel.address !== undefined && channel.address !== null) return `U${channel.universe ?? 1}·${channel.address}`;
+  return "DMX";
+}
+
+export function ChannelFader({ channel, sceneRing = null, readOnly = false, accentColour, className }: ChannelFaderProps) {
   const externalControl = useExternalControl();
   const controlsEnabled = useControlsEnabled();
   // The controller's own model — the thumb's "what was set" (§9.4) — kept
@@ -46,7 +60,6 @@ export function ChannelFader({ channel, sceneRing = null, readOnly = false }: Ch
   // otherwise.
   const displayLevel = useDisplayLevel(channel.id) ?? 0;
   const master = useMaster() ?? 100;
-  const groupMultipliers = useGroupMultipliers(channel.group_ids);
   const colour = useColour(channel.id);
 
   // Only a DMX channel goes read-only under external control — the DMX pass
@@ -62,7 +75,8 @@ export function ChannelFader({ channel, sceneRing = null, readOnly = false }: Ch
   // ghost to add (§9.4, §7.2.7). A forced read-only carries no such
   // observed value, so its ghost mark still composites normally — that is
   // the whole point of a collapsed tray's member strips.
-  const ghostValue = externalReadOnly ? null : compositeLevel(channel, setLevel, groupMultipliers, master);
+  // Level × master for a stage fixture (groups set levels, they do not scale).
+  const ghostValue = externalReadOnly ? null : compositeLevel(channel, setLevel, master);
 
   function handleChange(next: number | null): void {
     // linearLightingScale never actually produces null — a lighting level
@@ -75,7 +89,10 @@ export function ChannelFader({ channel, sceneRing = null, readOnly = false }: Ch
 
   return (
     <FaderStrip
+      className={cn("lighting-fixture-strip", className)}
       label={channel.name}
+      sublabel={fixtureReference(channel)}
+      accentColour={accentColour}
       value={value}
       scale={scale}
       onChange={handleChange}

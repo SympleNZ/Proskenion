@@ -1,7 +1,8 @@
 /*
  * The operator Pages route (spec §21.9 — its wireframe is the specification
  * for this view): page tabs from `GET /pages`, the selected page's resolved
- * items from `GET /pages/{id}`, and the display-scale control. The tabs and
+ * items from `GET /pages/{id}`. (Display scale is app-wide and lives in the
+ * account chip menu, §21.7 — `@/lib/useDisplayScale`.) The tabs and
  * fetching here are operator-shell wiring; `PageSurface` is the reusable
  * piece the hirer shell (`@/shells/HirerShell`) also mounts directly.
  */
@@ -11,7 +12,6 @@ import { useState } from "react";
 import { ApiError } from "@/api/client";
 import { EmptyState, ErrorState, Skeleton } from "@/components/ui/EmptyState";
 
-import { DisplayScaleControl } from "./DisplayScaleControl";
 import { PageSurface } from "./PageSurface";
 import { usePage, usePages } from "./api";
 import type { PageSummary } from "./types";
@@ -111,7 +111,6 @@ export function PagesView() {
             </button>
           ))}
         </div>
-        <DisplayScaleControl />
       </div>
       <PageDetailPane key={active.id} pageId={active.id} pageName={active.name} />
     </div>

@@ -154,7 +154,7 @@ def recorder(monkeypatch: pytest.MonkeyPatch) -> Recorder:
         await set_level(self, refs, db)
 
     monkeypatch.setattr(StubMixerDriver, "set_level", recording_set_level)
-    for name in ("set_level", "set_colour", "set_group_multiplier"):
+    for name in ("set_level", "set_colour", "set_group_level"):
         original = getattr(LightingService, name)
 
         def recording(
@@ -462,7 +462,7 @@ def test_lighting_writes_follow_reach_and_the_switches(venue: Venue, recorder: R
     assert colour.status_code == 200, colour.text
     assert recorder.lighting == [
         ("set_level", ids["L1"]),
-        ("set_group_multiplier", ids["G1"]),
+        ("set_group_level", ids["G1"]),
         ("set_colour", ids["L1"]),
     ]
 
@@ -527,7 +527,6 @@ def test_lighting_off_for_hirers_refuses_every_lighting_write_and_empties_the_st
     state = venue.get(venue.hirer, f"{LIGHTING}/state").json()
     assert state == {
         "channels": {},
-        "groups": {},
         "master": None,
         "external_control": None,
         "observed": None,
@@ -547,13 +546,14 @@ def test_get_lighting_state_is_filtered_exactly_as_the_frame_is(venue: Venue) ->
         )
         assert response.status_code == 200
     hirer = venue.get(venue.hirer, f"{LIGHTING}/state").json()
-    assert set(hirer["channels"]) <= {str(ids["L1"]), str(ids["L2"]), str(ids["L3"])}
-    assert {str(ids["L1"]), str(ids["L2"])} <= set(hirer["channels"])
-    assert set(hirer["groups"]) == {str(ids["G1"])}
+    # A group fader sets its members' levels; there is no ``groups`` section.
+    assert set(hirer["channels"]) == {str(ids["L1"]), str(ids["L2"]), str(ids["L3"])}
+    assert hirer["channels"][str(ids["L2"])]["level"] == 90.0
+    assert "groups" not in hirer
     assert "master" in hirer
     staff = venue.get(venue.operator, f"{LIGHTING}/state").json()
-    assert str(ids["L4"]) in staff["channels"]
-    assert set(staff["groups"]) >= {str(ids["G1"]), str(ids["G2"])}
+    assert staff["channels"][str(ids["L4"])]["level"] == 90.0
+    assert "groups" not in staff
 
 
 # -- lighting over the socket --------------------------------------------------------------------
@@ -579,10 +579,12 @@ def test_socket_lighting_writes_hold_to_the_same_checks(venue: Venue, recorder: 
             "type": "ack",
             "token": 2,
         }
-        # A tray member is visible read-only: refused, with the value to settle at.
+        # A tray member is visible read-only: refused, with the value to settle
+        # at — 70, since G1's fader just set its members' levels (owner
+        # decision 2026-09-30: a group fader sets levels).
         member = answer(phone, lighting("lighting", ids["L2"], 90.0, 3))
         assert member["reason"] == "permission_denied"
-        assert member["value"] == 35.0
+        assert member["value"] == 70.0
         unplaced = answer(phone, lighting("lighting", ids["L4"], 90.0, 4))
         assert unplaced == {"type": "nack", "token": 4, "reason": "permission_denied"}
         group = answer(phone, lighting("lighting_group", ids["G2"], 90.0, 5))
@@ -591,7 +593,7 @@ def test_socket_lighting_writes_hold_to_the_same_checks(venue: Venue, recorder: 
         assert master["reason"] == "permission_denied"
     assert recorder.lighting == [
         ("set_level", ids["L1"]),
-        ("set_group_multiplier", ids["G1"]),
+        ("set_group_level", ids["G1"]),
     ]
     domains = {(d.get("domain"), d.get("id")) for d in venue.denials() if d.get("transport")}
     assert domains == {

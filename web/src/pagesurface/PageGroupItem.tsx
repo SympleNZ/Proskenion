@@ -24,6 +24,7 @@ import { useState, type CSSProperties } from "react";
 
 import { FixtureStrip } from "@/lighting/FixtureStrip";
 import { GroupFader } from "@/lighting/GroupFader";
+import { hasFader } from "@/lighting/indicatorGroups";
 import type { LightingChannel } from "@/lighting/types";
 
 import type { PageGroupMasterItem } from "./types";
@@ -48,13 +49,15 @@ export function PageGroupItem({ item, channelsById }: PageGroupItemProps) {
     .map((id) => channelsById.get(id))
     .filter((channel): channel is LightingChannel => channel !== undefined);
   const accentStyle = { "--accent-colour": item.group.colour } as CSSProperties;
+  // The master's BUMP (owner decision 2026-10-01); never on an indicator-only group.
+  const bump = hasFader(item.group);
 
   if (!item.tray) {
     return (
-      <div className="page-item lighting-fixture-strip page-group-solo" style={accentStyle} data-testid={`page-group-${item.id}`}>
-        <div className="lighting-fixture-accent" aria-hidden="true" />
-        <GroupFader groupId={item.group_id} label={item.group.name} members={members} />
-        <p className="page-group-member-count">{memberCountLabel(item.members.length)}</p>
+      <div className="page-item page-group-solo" data-testid={`page-group-${item.id}`}>
+        <GroupFader groupId={item.group_id} label={item.group.name} members={members} accentColour={item.group.colour} bump={bump}>
+          <p className="page-group-member-count">{memberCountLabel(item.members.length)}</p>
+        </GroupFader>
       </div>
     );
   }
@@ -72,8 +75,14 @@ export function PageGroupItem({ item, channelsById }: PageGroupItemProps) {
           <FixtureStrip key={member.id} channel={member} accentColour={item.group.colour} readOnly={item.members_writable === false} />
         ))}
       </div>
-      <div className="page-group-tray-master">
-        <GroupFader groupId={item.group_id} label={item.group.name} members={members} />
+      <GroupFader
+        groupId={item.group_id}
+        label={item.group.name}
+        members={members}
+        accentColour={item.group.colour}
+        className="page-group-tray-master"
+        bump={bump}
+      >
         <button
           type="button"
           className="page-group-tray-toggle"
@@ -83,7 +92,7 @@ export function PageGroupItem({ item, channelsById }: PageGroupItemProps) {
           <ChevronDown aria-hidden="true" className="chevron size-4" data-expanded={expanded} />
           {expanded ? "Collapse" : memberCountLabel(item.members.length)}
         </button>
-      </div>
+      </GroupFader>
     </div>
   );
 }

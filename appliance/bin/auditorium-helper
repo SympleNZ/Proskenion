@@ -826,6 +826,19 @@ def do_reboot(ctx: Context) -> None:
         ctx.command(["systemctl", "reboot"])
 
 
+# -- shutdown -----------------------------------------------------------------
+
+
+def do_shutdown(ctx: Context) -> None:
+    """Power the appliance off cleanly. Same shape as a normal reboot: systemd
+    stops auditorium-core.service (the §12.4 graceful path) on the way down.
+    Nothing brings the machine back; someone cycles its power at the rack."""
+    ctx.status.step_to(1, "Powering off")
+    # As in do_reboot: the machine goes away inside the next call.
+    ctx.status.write("done", step=1, message="Powering off")
+    ctx.command(["systemctl", "poweroff"])
+
+
 # -- apply-update -------------------------------------------------------------
 
 
@@ -1943,6 +1956,7 @@ VERBS: dict[str, Verb] = {
             args={"mode": named(mode_arg, "mode")},
             handler=do_reboot,
         ),
+        Verb("shutdown", steps=1, handler=do_shutdown),
         Verb(
             "apply-network", steps=3, operation="network_apply", handler=do_apply_network
         ),

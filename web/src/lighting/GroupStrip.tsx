@@ -1,44 +1,25 @@
 /*
- * One group's strip in the Groups row (spec §21.11, §9.4, §7.2.3). Colour
- * identity at the top (never status, §21.3), the group's own fader, and the
- * dominated-group hint naming whichever other group is actually holding its
- * members.
+ * One group's strip in the Groups row (spec §21.11). Colour identity at the
+ * top (never status, §21.3) and the group's own fader, which sets its
+ * members' levels and shows the row's level (owner decision 2026-09-30).
+ *
+ * The strip's BUMP (owner decision 2026-10-01) is the fader's own
+ * (`GroupFader`); an indicator-only group never reaches this row, and is
+ * refused a BUMP here as well in case it ever does.
+ *
+ * There is no "held by" hint any more: it named the group whose higher
+ * multiplier was holding this one's members, and groups no longer multiply.
  */
-import { useMemo, type CSSProperties } from "react";
-
-import { dominatedGroupHint, type DominatedChannel } from "./dominance";
 import { GroupFader } from "./GroupFader";
-import type { LightingGroup } from "./types";
-import { useGroupMultipliers } from "./useGroupMultipliers";
+import { hasFader } from "./indicatorGroups";
+import type { LightingChannel, LightingGroup } from "./types";
 
 export interface GroupStripProps {
   group: LightingGroup;
-  /** This group's member channels, each carrying every group it belongs to. */
-  channels: readonly DominatedChannel[];
-  groupNames: ReadonlyMap<number, string>;
+  /** This group's member channels. */
+  channels: readonly LightingChannel[];
 }
 
-export function GroupStrip({ group, channels, groupNames }: GroupStripProps) {
-  const relevantGroupIds = useMemo(() => {
-    const ids = new Set<number>([group.id]);
-    for (const channel of channels) {
-      for (const id of channel.group_ids) ids.add(id);
-    }
-    return [...ids].sort((a, b) => a - b);
-  }, [group.id, channels]);
-
-  const multipliers = useGroupMultipliers(relevantGroupIds);
-  const hint = dominatedGroupHint({ groupId: group.id, channels, groupMultipliers: multipliers, groupNames });
-
-  return (
-    <div className="lighting-group-strip" style={{ "--accent-colour": group.colour } as CSSProperties}>
-      <div className="lighting-group-accent" aria-hidden="true" />
-      <GroupFader groupId={group.id} label={group.name} members={channels} />
-      {hint ? (
-        <p className="lighting-dominated-hint">
-          {hint.count} fixture{hint.count === 1 ? "" : "s"} held by {hint.dominatingGroupName}
-        </p>
-      ) : null}
-    </div>
-  );
+export function GroupStrip({ group, channels }: GroupStripProps) {
+  return <GroupFader groupId={group.id} label={group.name} members={channels} accentColour={group.colour} bump={hasFader(group)} />;
 }

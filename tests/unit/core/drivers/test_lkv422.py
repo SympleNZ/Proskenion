@@ -243,6 +243,39 @@ async def test_garbage_reply_is_reported_as_unexpected(
         await driver.read_routing()
 
 
+@pytest.mark.parametrize("prefix", [b"\x00", b"\x00\x00\x00"])
+@pytest.mark.parametrize("gap_s", [0.0, 0.1])
+async def test_leading_nul_bytes_are_discarded_before_parsing(
+    wired: tuple[LKV422Driver, LKV422Stub], prefix: bytes, gap_s: float
+) -> None:
+    """A stray power-up byte, even one that arrives alone and ahead of the real
+    reply by longer than the quiet period, is line noise rather than an error."""
+    driver, stub = wired
+    stub.stray_prefix = prefix
+    stub.stray_gap_s = gap_s  # 0.1 s is well past driver.QUIET_PERIOD_S (0.03 s)
+    assert await driver.read_routing() == {"1": "1", "2": "1"}
+    result = await driver.probe()
+    assert result.alive, result.detail
+
+
+async def test_a_lone_nul_is_not_a_reply_and_times_out_as_no_reply(
+    wired: tuple[LKV422Driver, LKV422Stub],
+) -> None:
+    driver, stub = wired
+    stub.garbage_reply = b"\x00"
+    with pytest.raises(MatrixError, match="no reply"):
+        await driver.read_routing()
+
+
+async def test_nuls_do_not_mask_a_genuinely_malformed_reply(
+    wired: tuple[LKV422Driver, LKV422Stub],
+) -> None:
+    driver, stub = wired
+    stub.garbage_reply = b"\x00\x00\x01\x02 not a protocol reply"
+    with pytest.raises(MatrixError, match="unexpected reply"):
+        await driver.read_routing()
+
+
 async def test_a_slow_reply_still_arrives_within_the_read_timeout(
     wired: tuple[LKV422Driver, LKV422Stub],
 ) -> None:

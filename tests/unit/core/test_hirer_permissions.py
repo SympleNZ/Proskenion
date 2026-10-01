@@ -260,7 +260,6 @@ def test_lighting_off_reaches_nothing_lighting() -> None:
     assert not p.lighting_reachable(101)
     assert not p.lighting_writable(101)
     assert not p.group_reachable(21)
-    assert p.multiplier_groups == frozenset()
     # Mixer reach is untouched by the lighting switch.
     assert p.mixer_reachable(1)
 
@@ -294,8 +293,6 @@ def test_a_lighting_channel_alone_is_not_its_groups_master() -> None:
     p = resolve(config(_page(1, light_item(103))))
     assert p.lighting_reachable(103)
     assert not p.group_reachable(20) and not p.group_reachable(21)
-    # ...but both groups' multipliers travel, read-only, for the ghost mark.
-    assert p.multiplier_groups == frozenset({20, 21})
 
 
 def test_colour_follows_colour_enabled() -> None:
@@ -788,8 +785,6 @@ def _write_lighting(state: StateStore, ids: dict[str, int], level: float) -> Non
     for key in ("l1", "l2", "l3"):
         writer.set_item("levels", ids[key], level)
         writer.set_item("colour", ids[key], {"r": 255, "g": 0, "b": 0})
-    writer.set_item("group_multipliers", ids["wash"], 0.5)
-    writer.set_item("group_multipliers", 999, 0.25)
     writer.set_item("binding_states", ids["rule"], True)
     writer.set("master", 80.0)
 
@@ -828,21 +823,23 @@ async def test_main_is_null_in_a_hirer_snapshot_unless_reachable(world: World) -
     await _set_items(world.db, ids["page"], [PageItemInput(kind="channel", channel_id=ids["in2"])])
     await world.resolver.rebuild()
     hirer = world.broadcaster.connect(tier="hirer", session_id="s", domains=["mixer"])
-    [snapshot] = world.broadcaster.snapshot(["mixer"], connection=hirer)
-    assert snapshot == {
+    snapshot = _by_type(world.broadcaster.snapshot(["mixer"], connection=hirer))
+    assert snapshot["mixer_state"] == {
         "type": "mixer_state",
         "main": None,
         "outputs": {},
         "inputs": {str(ids["in2"]): _mixer_entry(-5.0)},
         "source": RESYNC_SOURCE,
     }
+    # The fresh meter catch-up is filtered the same way: only in2 reachable.
+    assert snapshot["mixer_meters"]["channels"] == {str(ids["in2"]): [-5.0]}
     # A partial frame that changes only Main is not sent at all.
     world.state.mixer.writer("mixer_service").set("main", _mixer_entry(-9.0))
     world.broadcaster.tick()
     assert await drain(hirer) == []
 
 
-async def test_lighting_frames_carry_reachable_channels_ghost_groups_and_master(
+async def test_lighting_frames_carry_reachable_channels_and_master(
     world: World,
 ) -> None:
     ids = world.ids
@@ -854,20 +851,20 @@ async def test_lighting_frames_carry_reachable_channels_ghost_groups_and_master(
     [frame] = await drain(hirer)
     assert set(frame["channels"]) == {str(ids["l1"]), str(ids["l2"])}
     assert frame["channels"][str(ids["l1"])] == {"level": 40.0, "r": 255, "g": 0, "b": 0}
-    assert frame["groups"] == {str(ids["wash"]): 0.5}
+    assert "groups" not in frame  # a group fader shows its members' levels
     assert frame["master"] == 80.0
     assert "bindings" not in frame
 
     [everything] = await drain(staff)
     assert set(everything["channels"]) == {str(ids[k]) for k in ("l1", "l2", "l3")}
-    assert set(everything["groups"]) == {str(ids["wash"]), "999"}
+    assert "groups" not in everything
     assert everything["bindings"] == {str(ids["rule"]): True}
 
 
-async def test_a_channels_group_multiplier_travels_even_when_its_master_is_not_placed(
+async def test_a_channel_placed_alone_travels_without_its_groups_master(
     world: World,
 ) -> None:
-    """The ghost mark needs every multiplier over a reachable channel (§21.9)."""
+    """A channel placed alone reaches the hirer; its group, unplaced, has no section."""
     ids = world.ids
     await _set_items(
         world.db, ids["page"], [PageItemInput(kind="channel", lighting_channel_id=ids["l1"])]
@@ -879,7 +876,7 @@ async def test_a_channels_group_multiplier_travels_even_when_its_master_is_not_p
     world.broadcaster.tick()
     [frame] = await drain(hirer)
     assert set(frame["channels"]) == {str(ids["l1"])}
-    assert frame["groups"] == {str(ids["wash"]): 0.5}
+    assert "groups" not in frame  # a group fader shows its members' levels
 
 
 async def test_lighting_off_sends_a_hirer_no_lighting_at_all(world: World) -> None:
@@ -964,16 +961,17 @@ async def test_a_removed_channel_stops_and_an_added_one_arrives_on_the_next_broa
     await until(lambda: world.resolver.rebuilds > rebuilds)
 
     # A filtered resync of the affected domain, at once: the added channel's
-    # value arrives, and the removed one is absent.
-    assert await drain(hirer) == [
-        {
-            "type": "mixer_state",
-            "main": None,
-            "outputs": {},
-            "inputs": {str(ids["in2"]): _mixer_entry(-5.0)},
-            "source": RESYNC_SOURCE,
-        }
-    ]
+    # value arrives, and the removed one is absent — its meter too, fresh
+    # from live state rather than replayed (§16.8, B58).
+    seen = _by_type(await drain(hirer))
+    assert seen["mixer_state"] == {
+        "type": "mixer_state",
+        "main": None,
+        "outputs": {},
+        "inputs": {str(ids["in2"]): _mixer_entry(-5.0)},
+        "source": RESYNC_SOURCE,
+    }
+    assert seen["mixer_meters"]["channels"] == {str(ids["in2"]): [-5.0]}
 
     writer = world.state.mixer.writer("mixer_service")
     writer.set_item("inputs", ids["in1"], _mixer_entry(-1.0))
@@ -1044,7 +1042,7 @@ def _assert_within(message: Message, p: HirerPermissions) -> None:
         assert p.lighting_enabled, message
         assert {int(k) for k in message.get("channels", {})} <= p.lighting_channels, message
         assert {int(k) for k in (message.get("observed") or {})} <= p.lighting_channels, message
-        assert {int(k) for k in message.get("groups", {})} <= p.multiplier_groups, message
+        assert "groups" not in message, message
         assert "bindings" not in message, message
     elif kind == "status":
         assert {int(k) for k in message["lamps"]} <= p.lamp_ids, message
@@ -1053,7 +1051,7 @@ def _assert_within(message: Message, p: HirerPermissions) -> None:
 
 
 def _carried_ids(message: Message) -> int:
-    sections = ("inputs", "outputs", "channels", "observed", "groups", "lamps")
+    sections = ("inputs", "outputs", "channels", "observed", "lamps")
     return sum(len(message.get(section) or {}) for section in sections)
 
 
@@ -1112,7 +1110,7 @@ def _random_state_change(rng: random.Random, state: StateStore, broadcaster: Bro
     elif roll < 0.7:
         lighting.set_item("colour", rng.randint(101, 106), {"r": rng.randint(0, 255)})
     elif roll < 0.75:
-        lighting.set_item("group_multipliers", rng.choice([*GROUPS, 23]), rng.random())
+        lighting.set_item("levels", rng.choice([101, 102]), round(rng.uniform(0, 100), 1))
     elif roll < 0.8:
         lighting.set_item("observed", rng.randint(101, 106), round(rng.uniform(0, 100), 1))
     elif roll < 0.85:

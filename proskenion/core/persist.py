@@ -5,7 +5,7 @@ Writes selected state-store fields to the ``system_state`` table through
 
 Which fields, and when, comes solely from each domain's field declarations
 (:class:`~proskenion.core.state.FieldSpec`): a *continuous* field (levels,
-fader positions, group multipliers, timer accumulated) is written at most
+fader positions, timer accumulated) is written at most
 once per :data:`CONTINUOUS_INTERVAL_S` tick, in one transaction carrying every
 continuous value that changed in that window, so active fader use cannot
 saturate the WAL; a *static* field (external control toggle, device status,

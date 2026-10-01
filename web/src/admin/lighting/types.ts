@@ -84,6 +84,7 @@ export interface UpdateGroupInput {
   name?: string;
   colour?: string;
   sort_order?: number;
+  indicator_only?: boolean;
   channel_ids?: readonly number[];
 }
 

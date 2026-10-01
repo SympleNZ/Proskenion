@@ -125,6 +125,42 @@ describe("FaderStrip — pointer drag", () => {
     expect(onChange).toHaveBeenCalledTimes(2); // the initial jump and the final release
   });
 
+  it("a cancelled pointer ends at the last position it reached, never at the cancel event's own coordinates", () => {
+    // Chrome sends pointercancel with clientX/clientY of 0 — when a native
+    // drag of selected text takes over the mouse, or the browser claims a
+    // touch. Read as a position, clientY 0 is above the top of travel: the
+    // fader jumped to its maximum (+10 dB on the CQ law) and sent it.
+    let clock = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => (clock += 40));
+    const onChange = vi.fn();
+    const onGestureEnd = vi.fn();
+    render(<FaderStrip label="Fixture" value={0} scale={scale} onChange={onChange} onGestureEnd={onGestureEnd} />);
+    const slider = screen.getByRole("slider");
+
+    pointerDown(slider, 1, 100); // position 0.5
+    pointerMove(slider, 1, 60); // position 0.7
+    fireEvent.pointerCancel(slider, { pointerId: 1, clientY: 0 });
+
+    expect(onChange).toHaveBeenLastCalledWith(70);
+    expect(onChange).not.toHaveBeenCalledWith(100);
+    expect(onGestureEnd).toHaveBeenCalledWith(70);
+    // The gesture is over: a stray move afterwards is not a drag.
+    onChange.mockClear();
+    pointerMove(slider, 1, 0);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("stops the browser starting a text selection or a native drag from the fader (the cause of the cancel above)", () => {
+    render(<FaderStrip label="Fixture" value={0} scale={scale} onChange={vi.fn()} />);
+    const slider = screen.getByRole("slider");
+    const down = new PointerEvent("pointerdown", { pointerId: 1, clientY: 100, bubbles: true, cancelable: true });
+    slider.dispatchEvent(down);
+    expect(down.defaultPrevented).toBe(true);
+    const drag = new Event("dragstart", { bubbles: true, cancelable: true });
+    slider.dispatchEvent(drag);
+    expect(drag.defaultPrevented).toBe(true);
+  });
+
   it("ignores a second pointer while the first is still down on the same fader", () => {
     const onChange = vi.fn();
     render(<FaderStrip label="Fixture" value={0} scale={scale} onChange={onChange} />);
@@ -274,6 +310,51 @@ describe("FaderStrip — ceiling (§18 Q4, Q9, Q10 P5-T11)", () => {
   });
 });
 
+describe("FaderStrip — the card (§21.5) and the horizontal form", () => {
+  it("renders name, sub-label, readout below the fader, and the foot slot beneath the readout", () => {
+    const { container } = render(
+      <FaderStrip label="Row 1" sublabel="group" value={40} scale={scale} onChange={vi.fn()} readoutNote="note">
+        <button type="button">Bump</button>
+      </FaderStrip>,
+    );
+    const parts = [...container.querySelectorAll(".fader-strip > div")].map((el) => el.className);
+    // Head, zone, readout, foot — in that order, so the knob's zone can never reach the readout or the button.
+    expect(parts.filter((c) => c !== "fader-strip-accent")).toEqual(["fader-strip-head", "fader-zone", "fader-readout", "fader-strip-foot"]);
+    expect(screen.getByText("group")).toBeInTheDocument();
+    expect(screen.getByText("note")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Bump" }).closest(".fader-strip-foot")).not.toBeNull();
+  });
+
+  it("has a meter slot only when given one", () => {
+    const { container, rerender } = render(<FaderStrip label="Ch" value={0} scale={scale} onChange={vi.fn()} />);
+    expect(container.querySelector(".fader-meter-slot")).toBeNull();
+    rerender(<FaderStrip label="Ch" value={0} scale={scale} onChange={vi.fn()} meter={<span>m</span>} />);
+    expect(container.querySelector(".fader-meter-slot")).not.toBeNull();
+  });
+
+  it("the horizontal form maps the pointer's x, and Arrow Right/Left step it", () => {
+    const onChange = vi.fn();
+    render(<FaderStrip label="Master" value={50} scale={scale} onChange={onChange} orientation="horizontal" />);
+    const slider = screen.getByRole("slider", { name: "Master fader" });
+    expect(slider).toHaveAttribute("aria-orientation", "horizontal");
+    fireEvent.pointerDown(slider, { pointerId: 1, clientX: 11, clientY: 0 }); // 11 of a 44-wide rect → 25%
+    expect(onChange).toHaveBeenLastCalledWith(25);
+    fireEvent.pointerUp(slider, { pointerId: 1, clientX: 33, clientY: 0 });
+    expect(onChange).toHaveBeenLastCalledWith(75);
+    fireEvent.keyDown(slider, { key: "ArrowRight" });
+    expect(onChange).toHaveBeenLastCalledWith(51);
+    fireEvent.keyDown(slider, { key: "ArrowLeft" });
+    expect(onChange).toHaveBeenLastCalledWith(49);
+  });
+
+  it("a vertical fader ignores Arrow Left/Right, as §24.2 lists only Up/Down for it", () => {
+    const onChange = vi.fn();
+    render(<FaderStrip label="Ch" value={50} scale={scale} onChange={onChange} />);
+    fireEvent.keyDown(screen.getByRole("slider"), { key: "ArrowRight" });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+});
+
 describe("FaderStrip — muted and scene rings", () => {
   it("marks the track muted", () => {
     const { container } = render(<FaderStrip label="Fixture" value={50} scale={scale} onChange={vi.fn()} muted />);
@@ -296,5 +377,233 @@ describe("FaderStrip — muted and scene rings", () => {
     expect(screen.getByRole("slider")).toHaveAttribute("data-scene-ring", "normal");
     rerender(<FaderStrip label="Fixture" value={50} scale={scale} onChange={vi.fn()} sceneRing="critical" />);
     expect(screen.getByRole("slider")).toHaveAttribute("data-scene-ring", "critical");
+  });
+});
+
+/*
+ * Touch in a sideways-scrolling row (owner's request, 30 Sep 2026): a touch
+ * on the track waits to learn its direction before it moves the level; a
+ * touch on the thumb grabs at once; a sideways swipe never changes the level.
+ * The travel is 0–200 px tall (RECT above); the thumb is drawn 32 px tall,
+ * centred on value 20's position, so its rect is laid out here from that.
+ */
+describe("FaderStrip — touch in a scrolling row", () => {
+  const THUMB_HALF = 16;
+  const THUMB_CENTRE_AT_20 = 160; // value 20 → position 0.2 → 200 − 40
+
+  beforeEach(() => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains("fader-thumb")) {
+        const top = THUMB_CENTRE_AT_20 - THUMB_HALF;
+        return { ...RECT, top, bottom: top + 2 * THUMB_HALF, height: 2 * THUMB_HALF, y: top } as DOMRect;
+      }
+      return RECT as DOMRect;
+    });
+    // Every move lands outside the ~30/s window, so each one is sent.
+    let clock = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => (clock += 40));
+  });
+
+  function touch(kind: "Down" | "Move" | "Up" | "Cancel", el: Element, pointerId: number, clientX: number, clientY: number): void {
+    const init = { pointerId, pointerType: "touch", clientX, clientY, button: 0 };
+    if (kind === "Down") fireEvent.pointerDown(el, init);
+    else if (kind === "Move") fireEvent.pointerMove(el, init);
+    else if (kind === "Up") fireEvent.pointerUp(el, init);
+    else fireEvent.pointerCancel(el, init);
+  }
+
+  function setup(extra: { ceiling?: number; readOnly?: boolean } = {}) {
+    const onChange = vi.fn();
+    const onGestureStart = vi.fn();
+    const onGestureEnd = vi.fn();
+    render(
+      <FaderStrip
+        label="Fixture"
+        value={20}
+        scale={scale}
+        onChange={onChange}
+        onGestureStart={onGestureStart}
+        onGestureEnd={onGestureEnd}
+        {...extra}
+      />,
+    );
+    return { slider: screen.getByRole("slider"), onChange, onGestureStart, onGestureEnd };
+  }
+
+  it("a tap on the track does nothing until it lifts, then jumps to where it lifted", () => {
+    const { slider, onChange, onGestureStart, onGestureEnd } = setup();
+    touch("Down", slider, 1, 20, 100);
+    expect(onGestureStart).not.toHaveBeenCalled();
+    expect(onChange).not.toHaveBeenCalled();
+    expect(slider).toHaveAttribute("aria-valuenow", "200"); // the thumb has not moved
+
+    touch("Move", slider, 1, 23, 104); // a wobble inside the slop
+    expect(onChange).not.toHaveBeenCalled();
+
+    touch("Up", slider, 1, 23, 104);
+    expect(onGestureStart).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith(48);
+    expect(onGestureEnd).toHaveBeenCalledWith(48);
+  });
+
+  it("a vertical drag from the track jumps once it is known to be one, then tracks the finger", () => {
+    const { slider, onChange, onGestureStart, onGestureEnd } = setup();
+    touch("Down", slider, 1, 20, 100);
+    touch("Move", slider, 1, 21, 95); // inside the slop: still undecided
+    expect(onChange).not.toHaveBeenCalled();
+
+    touch("Move", slider, 1, 22, 90); // 10 px along the fader, 2 across: a fader drag
+    expect(onGestureStart).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenLastCalledWith(55);
+
+    touch("Move", slider, 1, 30, 60); // sideways drift after that is still the fader's
+    expect(onChange).toHaveBeenLastCalledWith(70);
+    touch("Up", slider, 1, 30, 40);
+    expect(onChange).toHaveBeenLastCalledWith(80);
+    expect(onGestureEnd).toHaveBeenCalledWith(80);
+  });
+
+  it("a sideways swipe from the track never changes the level, whether the browser takes it or not", () => {
+    const { slider, onChange, onGestureStart, onGestureEnd } = setup();
+    touch("Down", slider, 1, 20, 100);
+    touch("Move", slider, 1, 32, 102); // 12 px across, 2 along: the row's scroll
+    touch("Move", slider, 1, 60, 40); // and nothing after that is a fader move
+    expect(slider).toHaveAttribute("aria-valuenow", "200");
+    // The browser claims the pan: a cancel with Chrome's zeroed coordinates.
+    touch("Cancel", slider, 1, 0, 0);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(onGestureStart).not.toHaveBeenCalled();
+    expect(onGestureEnd).not.toHaveBeenCalled();
+
+    // A row with nowhere to scroll: no cancel, the finger just lifts.
+    touch("Down", slider, 2, 20, 100);
+    touch("Move", slider, 2, 5, 101);
+    touch("Up", slider, 2, 5, 101);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("a cancel while the direction is still unknown drops the deferred jump", () => {
+    const { slider, onChange, onGestureStart } = setup();
+    touch("Down", slider, 1, 20, 100);
+    touch("Cancel", slider, 1, 0, 0);
+    touch("Up", slider, 1, 20, 100); // a stray release after the cancel is not a tap
+    touch("Move", slider, 1, 20, 50);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(onGestureStart).not.toHaveBeenCalled();
+  });
+
+  it("a touch on the thumb grabs at once, without jumping, and drags from where it was held", () => {
+    const { slider, onChange, onGestureStart, onGestureEnd } = setup();
+    touch("Down", slider, 1, 20, THUMB_CENTRE_AT_20 + 6); // low on the thumb
+    expect(onGestureStart).toHaveBeenCalledTimes(1);
+    expect(onChange).not.toHaveBeenCalled(); // grabbed, not moved
+    expect(slider).toHaveAttribute("data-dragging", "true");
+    expect(slider).toHaveAttribute("aria-valuenow", "200");
+
+    touch("Move", slider, 1, 20, THUMB_CENTRE_AT_20 + 6 - 20); // up 20 px = 10 %
+    expect(onChange).toHaveBeenLastCalledWith(30);
+    touch("Up", slider, 1, 20, THUMB_CENTRE_AT_20 + 6 - 40);
+    expect(onChange).toHaveBeenLastCalledWith(40);
+    expect(onGestureEnd).toHaveBeenCalledWith(40);
+  });
+
+  it("a thumb held and lifted without moving sends nothing", () => {
+    const { slider, onChange, onGestureEnd } = setup();
+    touch("Down", slider, 1, 20, THUMB_CENTRE_AT_20);
+    touch("Up", slider, 1, 20, THUMB_CENTRE_AT_20 + 3);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(onGestureEnd).toHaveBeenCalledWith(20);
+  });
+
+  it("a swipe that starts on the thumb puts back anything the grab moved", () => {
+    const { slider, onChange, onGestureEnd } = setup();
+    touch("Down", slider, 1, 20, THUMB_CENTRE_AT_20);
+    touch("Move", slider, 1, 22, THUMB_CENTRE_AT_20 - 4); // the grab tracks at once: 22 %
+    expect(onChange).toHaveBeenLastCalledWith(22);
+    touch("Move", slider, 1, 40, THUMB_CENTRE_AT_20 - 5); // then 20 px sideways: a swipe
+    expect(onChange).toHaveBeenLastCalledWith(20);
+    expect(slider).toHaveAttribute("aria-valuenow", "200");
+    touch("Move", slider, 1, 80, THUMB_CENTRE_AT_20 - 60); // ignored from here on
+    touch("Cancel", slider, 1, 0, 0);
+    expect(onChange).toHaveBeenLastCalledWith(20);
+    expect(onChange).not.toHaveBeenCalledWith(100);
+    expect(onGestureEnd).toHaveBeenCalledWith(20);
+  });
+
+  it("a hirer's ceiling still caps a tap and a touch drag", () => {
+    const { slider, onChange } = setup({ ceiling: 60 });
+    touch("Down", slider, 1, 20, 10);
+    touch("Up", slider, 1, 20, 10); // a tap near the top of travel
+    expect(onChange).toHaveBeenLastCalledWith(60);
+    touch("Down", slider, 2, 20, 120);
+    touch("Move", slider, 2, 20, 0);
+    touch("Up", slider, 2, 20, 0);
+    expect(onChange).toHaveBeenLastCalledWith(60);
+    expect(onChange).not.toHaveBeenCalledWith(100);
+  });
+
+  it("a read-only fader ignores touch altogether", () => {
+    const { slider, onChange, onGestureStart } = setup({ readOnly: true });
+    touch("Down", slider, 1, 20, 100);
+    touch("Up", slider, 1, 20, 100);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(onGestureStart).not.toHaveBeenCalled();
+  });
+
+  it("two fingers drag two faders at once", () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    render(
+      <>
+        <FaderStrip label="A" value={20} scale={scale} onChange={first} />
+        <FaderStrip label="B" value={20} scale={scale} onChange={second} />
+      </>,
+    );
+    const a = screen.getByRole("slider", { name: "A fader" });
+    const b = screen.getByRole("slider", { name: "B fader" });
+    touch("Down", a, 1, 20, 100);
+    touch("Down", b, 2, 20, 100);
+    touch("Move", a, 1, 20, 80);
+    touch("Move", b, 2, 20, 130); // down: B's own slop decision
+    expect(first).toHaveBeenLastCalledWith(60);
+    expect(second).toHaveBeenLastCalledWith(35);
+    touch("Up", a, 1, 20, 60);
+    touch("Up", b, 2, 20, 140);
+    expect(first).toHaveBeenLastCalledWith(70);
+    expect(second).toHaveBeenLastCalledWith(30);
+  });
+
+  it("mouse and pen still jump on press, as before", () => {
+    const { slider, onChange } = setup();
+    fireEvent.pointerDown(slider, { pointerId: 1, pointerType: "mouse", clientX: 20, clientY: 100, button: 0 });
+    expect(onChange).toHaveBeenLastCalledWith(50);
+    fireEvent.pointerMove(slider, { pointerId: 1, pointerType: "mouse", clientX: 60, clientY: 100 }); // sideways is still the fader's
+    fireEvent.pointerUp(slider, { pointerId: 1, pointerType: "mouse", clientX: 60, clientY: 100 });
+    expect(onChange).toHaveBeenLastCalledWith(50);
+    fireEvent.pointerDown(slider, { pointerId: 2, pointerType: "pen", clientX: 20, clientY: 40, button: 0 });
+    expect(onChange).toHaveBeenLastCalledWith(80);
+    fireEvent.pointerUp(slider, { pointerId: 2, pointerType: "pen", clientX: 20, clientY: 40 });
+  });
+
+  it("the horizontal form waits the same way, with the axes swapped", () => {
+    // The travel is the 44-wide RECT; the thumb sits at 20 % of it (x ≈ 9).
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains("fader-thumb")) return { ...RECT, left: 3, right: 15, width: 12, x: 3 } as DOMRect;
+      return RECT as DOMRect;
+    });
+    const onChange = vi.fn();
+    render(<FaderStrip label="Master" value={20} scale={scale} onChange={onChange} orientation="horizontal" />);
+    const slider = screen.getByRole("slider");
+    // A vertical swipe from the track is the page's scroll ...
+    touch("Down", slider, 1, 30, 20);
+    touch("Move", slider, 1, 31, 40);
+    touch("Cancel", slider, 1, 0, 0);
+    expect(onChange).not.toHaveBeenCalled();
+    // ... a drag along it is the fader's.
+    touch("Down", slider, 2, 30, 20);
+    touch("Move", slider, 2, 40, 21);
+    touch("Up", slider, 2, 44, 21);
+    expect(onChange).toHaveBeenLastCalledWith(100);
   });
 });

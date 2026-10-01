@@ -45,6 +45,9 @@ DERIVED_STATUS_TABLE = "derived_status"
 TRIGGER_TYPES = frozenset({"knx", "schedule", "surface", "device_state"})
 ACTION_TYPES = frozenset({"run_scene", "lighting_group", "notify"})
 SOURCE_TYPES = frozenset({"lighting_group_all_at", "device_state", "external_control"})
+#: What ``lighting_group_all_at`` compares (migration 011): the stored level,
+#: or the composited output (level × the master; groups do not scale).
+BASES = frozenset({"level", "output"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +93,8 @@ class DerivedStatus:
     compare_state: str | None
     created_at: str
     updated_at: str
+    #: ``level`` (stored) or ``output`` (composited) — ``lighting_group_all_at`` only.
+    basis: str = "level"
 
 
 def _opt_int(row: base.Row, key: str) -> int | None:
@@ -148,6 +153,7 @@ def _derived_status_from_row(row: base.Row) -> DerivedStatus:
         compare_state=_opt_str(row, "compare_state"),
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
+        basis=str(row["basis"]),
     )
 
 
@@ -309,9 +315,12 @@ async def create_derived_status(
     compare_level: float | None = None,
     device_id: int | None = None,
     compare_state: str | None = None,
+    basis: str = "level",
 ) -> DerivedStatus:
     if source_type not in SOURCE_TYPES:
         raise ValueError(f"unknown derived_status source_type: {source_type!r}")
+    if basis not in BASES:
+        raise ValueError(f"unknown derived_status basis: {basis!r}")
     now = base.now_iso()
     values = {
         "name": name,
@@ -322,6 +331,7 @@ async def create_derived_status(
         "compare_level": compare_level,
         "device_id": device_id,
         "compare_state": compare_state,
+        "basis": basis,
         "created_at": now,
         "updated_at": now,
     }

@@ -342,17 +342,22 @@ class VideoService:
         outputs_by_id = {o.id: o for o in outputs}
         inputs_by_ref = {i.driver_ref: i for i in inputs}
 
-        self._writer.set("routing", dict(routing))
-        current_ids: set[str] = set()
+        # Every read first, then every write with no await between them, so
+        # nothing observes the new routing beside the old destinations.
+        resolved_by_id: dict[int, DestinationRouting] = {}
         for destination in destinations:
-            current_ids.add(str(destination.id))
             dest_outputs = await video_crud.get_destination_outputs(self._db, destination.id)
-            resolved = resolve_destination_routing(
+            resolved_by_id[destination.id] = resolve_destination_routing(
                 dest_outputs, outputs_by_id, routing, inputs_by_ref
             )
+
+        self._writer.set("routing", dict(routing))
+        current_ids: set[str] = set()
+        for destination_id, resolved in resolved_by_id.items():
+            current_ids.add(str(destination_id))
             self._writer.set_item(
                 "destinations",
-                destination.id,
+                destination_id,
                 {"input_id": resolved.input_id, "diverged": resolved.diverged},
             )
         known_destinations = self._state.hdmi.get("destinations")

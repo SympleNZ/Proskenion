@@ -30,7 +30,7 @@ describe("RestartRebootCard — restart", () => {
   it("names the consequence before it happens, not just 'are you sure'", async () => {
     renderWithProviders(<RestartRebootCard />, { route: "/admin/updates" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Restart application" }));
+    fireEvent.click(screen.getByRole("button", { name: "Restart services" }));
     const dialog = await screen.findByRole("alertdialog");
     expect(dialog).toHaveTextContent(/restarts the Proskenion application/);
     expect(dialog).toHaveTextContent(/unavailable for about a minute/);
@@ -41,7 +41,7 @@ describe("RestartRebootCard — restart", () => {
   it("restarts, then waits for reconnection", async () => {
     renderWithProviders(<RestartRebootCard />, { route: "/admin/updates" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Restart application" }));
+    fireEvent.click(screen.getByRole("button", { name: "Restart services" }));
     const dialog = await screen.findByRole("alertdialog");
     fireEvent.click(within(dialog).getByRole("button", { name: "Restart" }));
 
@@ -57,7 +57,7 @@ describe("RestartRebootCard — restart", () => {
     });
     renderWithProviders(<RestartRebootCard />, { route: "/admin/updates" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Restart application" }));
+    fireEvent.click(screen.getByRole("button", { name: "Restart services" }));
     fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Restart" }));
 
     expect(await screen.findByText("The appliance could not restart the application.")).toBeInTheDocument();
@@ -68,7 +68,7 @@ describe("RestartRebootCard — reboot", () => {
   it("names that the operating system reboots too, and disconnects everyone", async () => {
     renderWithProviders(<RestartRebootCard />, { route: "/admin/updates" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Reboot appliance" }));
+    fireEvent.click(screen.getByRole("button", { name: "Restart controller" }));
     const dialog = await screen.findByRole("alertdialog");
     expect(dialog).toHaveTextContent(/reboots the whole appliance, including the operating system/);
     expect(dialog).toHaveTextContent(/staff and hirers/);
@@ -77,7 +77,7 @@ describe("RestartRebootCard — reboot", () => {
   it("reboots, then waits for reconnection", async () => {
     renderWithProviders(<RestartRebootCard />, { route: "/admin/updates" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Reboot appliance" }));
+    fireEvent.click(screen.getByRole("button", { name: "Restart controller" }));
     const dialog = await screen.findByRole("alertdialog");
     fireEvent.click(within(dialog).getByRole("button", { name: "Reboot" }));
 
@@ -101,12 +101,66 @@ describe("RestartRebootCard — reboot", () => {
     });
     renderWithProviders(<RestartRebootCard />, { route: "/admin/updates" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Reboot appliance" }));
+    fireEvent.click(screen.getByRole("button", { name: "Restart controller" }));
     fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Reboot" }));
 
     expect(await screen.findByText(/cannot reboot while an operating system trial is in progress/)).toBeInTheDocument();
     expect(screen.getByText(/Use OS roll back instead/)).toBeInTheDocument();
     // Refused, not applied — no reconnection wait was started.
     expect(screen.queryByText("Rebooting the appliance…")).not.toBeInTheDocument();
+  });
+});
+
+describe("RestartRebootCard — shut down", () => {
+  it("says plainly that it will not come back on by itself, and asks before doing anything", async () => {
+    renderWithProviders(<RestartRebootCard />, { route: "/admin/updates" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Shut down" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("The controller will power off.");
+    expect(dialog).toHaveTextContent(
+      "It will not come back on by itself — to start it again, switch its power off and on at the rack (or unplug and replug it).",
+    );
+    expect(dialog).toHaveTextContent("Lighting, sound and video control stop until then.");
+    expect(client.api).not.toHaveBeenCalledWith("/system/shutdown", expect.anything());
+  });
+
+  it("does nothing when the dialog is dismissed", async () => {
+    renderWithProviders(<RestartRebootCard />, { route: "/admin/updates" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Shut down" }));
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(client.api).not.toHaveBeenCalledWith("/system/shutdown", expect.anything());
+  });
+
+  it("posts to /system/shutdown, then says it is powering off without waiting to reconnect", async () => {
+    renderWithProviders(<RestartRebootCard />, { route: "/admin/updates" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Shut down" }));
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Shut down" }));
+
+    await waitFor(() => expect(client.api).toHaveBeenCalledWith("/system/shutdown", expect.objectContaining({ method: "POST" })));
+    expect(await screen.findByText(/The controller is powering off/)).toBeInTheDocument();
+    expect(screen.queryByText(/This will take about a minute/)).not.toBeInTheDocument();
+  });
+
+  it("reports a refusal inline and does not claim to be powering off", async () => {
+    client.api.mockImplementation((path: string) => {
+      if (path === "/system/shutdown") {
+        return Promise.reject(new ApiError(422, "validation_failed", "The appliance cannot shut down while an operating system trial is in progress."));
+      }
+      return Promise.resolve({ status: "ok" });
+    });
+    renderWithProviders(<RestartRebootCard />, { route: "/admin/updates" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Shut down" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Shut down" }));
+
+    expect(await screen.findByText(/cannot shut down while an operating system trial/)).toBeInTheDocument();
+    expect(screen.queryByText(/The controller is powering off/)).not.toBeInTheDocument();
   });
 });

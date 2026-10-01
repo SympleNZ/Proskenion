@@ -26,7 +26,15 @@ export interface LightingChannel {
   min_value: number;
   max_value: number;
   has_colour: boolean;
+  /** Every group the fixture belongs to (membership). */
   group_ids: readonly number[];
+  /**
+   * Of those, the groups with a fader — `group_ids` without indicator-only
+   * groups (migration 011). The Lighting view colours a fixture's card by
+   * the first of them. Absent on an older payload: read as `group_ids` (see
+   * `faderGroupIds`).
+   */
+  fader_group_ids?: readonly number[];
   bar_id: number | null;
   position: number | null;
   visible_staff: boolean;
@@ -142,6 +150,12 @@ export interface LightingGroup {
   /** UI colour coding (§9.4) — identity only, never status (§21.3). */
   colour: string;
   sort_order: number;
+  /**
+   * Never scales output and has no fader anywhere (migration 011): it exists so
+   * a derived status can read its members' levels — the wall panel's "all on"
+   * indicator. Absent reads as false.
+   */
+  indicator_only?: boolean;
   channel_ids: readonly number[];
   updated_at: string;
 }
@@ -150,13 +164,18 @@ export interface LightingGroupsResponse {
   groups: readonly LightingGroup[];
 }
 
-/** A stage bank: a `lighting_group` rule (§7.1, §21.11). */
+/** A `lighting_group` rule (§7.1, §21.11): one or more of them make a stage bank. */
 export interface StageBankRule {
   id: number;
   name: string;
   lighting_group_id: number;
   on_level: number;
   off_level: number;
+  /** Optional so an older payload (or a test's) still reads: absent is enabled, no address. */
+  enabled?: boolean;
+  trigger_type?: string;
+  /** The KNX address that triggers it; rules sharing one are one bank (`stageBankGroups.ts`). */
+  knx_address_id?: number | null;
 }
 
 export interface StageBankRulesResponse {

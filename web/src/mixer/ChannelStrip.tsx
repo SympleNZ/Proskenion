@@ -65,6 +65,8 @@ export interface ChannelStripProps {
    * drawn and always nacked (§21.15 "nothing else is reachable").
    */
   hirer?: boolean;
+  /** Overrides the card's second line; by default it names the channel's kind. */
+  sublabel?: string;
   testId?: string;
 }
 
@@ -127,6 +129,7 @@ export function ChannelStrip({
   faderPosLabel = false,
   ceiling = null,
   hirer = false,
+  sublabel,
   testId,
 }: ChannelStripProps) {
   const scale = lawFaderScale(law);
@@ -194,25 +197,30 @@ export function ChannelStrip({
   const panReason = capabilities.pan ? undefined : PAN_UNAVAILABLE;
 
   return (
-    <div className="mixer-channel-strip" data-testid={testId}>
-      <OriginBadge origin={origin} />
-      <div className="mixer-strip-body">
-        <FaderStrip
-          label={label}
-          value={db}
-          scale={scale}
-          onChange={handleFaderChange}
-          onGestureStart={() => beginGesture(key)}
-          onGestureEnd={() => endGesture(key)}
-          muted={muted}
-          disabled={disabled}
-          showScale
-          ceiling={ceiling}
-          {...(testId ? { testId: `${testId}-fader` } : {})}
-        />
-        {capabilities.metering ? <PeakMeter values={meterValues} law={law} /> : null}
-      </div>
-      {faderPosLabel ? <p className="mixer-fader-pos-label">Fader pos.</p> : null}
+    <FaderStrip
+      className="mixer-channel-strip"
+      label={label}
+      sublabel={sublabel ?? kindLabel(target, channel.stereo)}
+      value={db}
+      scale={scale}
+      onChange={handleFaderChange}
+      onGestureStart={() => beginGesture(key)}
+      onGestureEnd={() => endGesture(key)}
+      muted={muted}
+      disabled={disabled}
+      showScale
+      ceiling={ceiling}
+      accentColour={isMain(target) ? MAIN_ACCENT : undefined}
+      emphasis={isMain(target)}
+      // Absent, not empty, while metering is unavailable (§21.13): no slot at
+      // all, and the fader re-centres. Available: every channel has its slot,
+      // whether or not a reading for it has arrived yet (`PeakMeter`).
+      meter={capabilities.metering ? <PeakMeter values={meterValues} law={law} stereo={channel.stereo} /> : undefined}
+      corner={<OriginBadge origin={origin} />}
+      // §21.13: Main's dB label says it is a fader position, not a level reading.
+      readoutNote={faderPosLabel ? "Fader pos." : undefined}
+      {...(testId ? { testId, faderTestId: `${testId}-fader` } : {})}
+    >
       {showPan ? (
         <PanControl label={label} pan={pan ?? 0} disabled={disabled || !capabilities.pan} reason={panReason} onCommit={handlePanCommit} />
       ) : null}
@@ -226,6 +234,24 @@ export function ChannelStrip({
       >
         Mute
       </button>
-    </div>
+    </FaderStrip>
   );
+}
+
+/** Main's accent: the neutral white the mock gives it — identity, never status (§21.3). */
+const MAIN_ACCENT = "var(--group-white)";
+
+function isMain(target: MixerTarget): boolean {
+  return typeof target !== "number" && target.section === "main";
+}
+
+/**
+ * The card's second line (the mock's "ip1"/"st1"/"main" tag). The contract
+ * carries no driver reference to a view (`docs/plans/phase-4-contracts.md`),
+ * so the strip says what kind of channel it is instead.
+ */
+function kindLabel(target: MixerTarget, stereo: boolean): string {
+  if (typeof target === "number") return stereo ? "stereo in" : "input";
+  if (target.section === "main") return "main";
+  return stereo ? "stereo out" : "output";
 }

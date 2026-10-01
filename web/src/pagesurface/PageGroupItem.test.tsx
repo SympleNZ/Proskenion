@@ -13,7 +13,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { LightingChannel } from "@/lighting/types";
-import { resetLiveState } from "@/live/store";
+import { resetLiveState, setLevel } from "@/live/store";
 
 vi.mock("@/live/socket", () => ({ send: vi.fn() }));
 
@@ -85,6 +85,35 @@ describe("PageGroupItem — tray render vs tray: false (§21.9 contiguity)", () 
     expect(screen.getByText("3 fixtures")).toBeInTheDocument();
     expect(screen.queryByRole("slider", { name: "Fixture 10 fader" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /collapse|fixtures/i })).not.toBeInTheDocument(); // no toggle either
+  });
+});
+
+describe("PageGroupItem — the master sets and shows its members' levels (owner decision 2026-09-30)", () => {
+  it("shows the highest member level marked mixed, and sends the group level", () => {
+    setLevel(10, 40);
+    setLevel(11, 75);
+    setLevel(12, 40);
+    render(<PageGroupItem item={groupMasterItem({ tray: false })} channelsById={CHANNELS_BY_ID} />);
+    const master = screen.getByRole("slider", { name: "Row 1 fader" });
+    expect(master).toHaveAttribute("aria-valuetext", "75.0%");
+    expect(screen.getByText("mixed")).toBeInTheDocument();
+    fireEvent.keyDown(master, { key: "Home" });
+    expect(send).toHaveBeenLastCalledWith("lighting_group", 1, 0);
+  });
+});
+
+describe("PageGroupItem — the master's BUMP (owner decision 2026-10-01)", () => {
+  it.each([true, false])("offers a BUMP under the master, tray %s", (tray) => {
+    render(<PageGroupItem item={groupMasterItem({ tray })} channelsById={CHANNELS_BY_ID} />);
+    const bump = screen.getByRole("button", { name: "Bump Row 1 to full" });
+    expect(bump).toHaveAttribute("aria-pressed", "false");
+    expect(bump).toBeEnabled();
+  });
+
+  it("offers none on an indicator-only group", () => {
+    const item = groupMasterItem();
+    render(<PageGroupItem item={{ ...item, group: { ...item.group, indicator_only: true } }} channelsById={CHANNELS_BY_ID} />);
+    expect(screen.queryByRole("button", { name: /bump/i })).not.toBeInTheDocument();
   });
 });
 

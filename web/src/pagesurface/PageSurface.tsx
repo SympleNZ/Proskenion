@@ -15,6 +15,7 @@
  */
 import { Blocks } from "lucide-react";
 
+import { ScrollRow } from "@/components/scrollrow/ScrollRow";
 import { ErrorState, Skeleton } from "@/components/ui/EmptyState";
 import { useLightingChannels } from "@/lighting/api";
 import type { LightingChannel } from "@/lighting/types";
@@ -100,7 +101,12 @@ export function PageSurface({ page, hirer = false }: PageSurfaceProps) {
   const mixerLaw = law.data ?? [];
 
   return (
-    <div ref={flowRef} className={cn("page-surface-flow", hirer && "page-surface-hirer")} aria-label={page.name}>
+    <ScrollRow
+      scrollerRef={flowRef}
+      rowClassName="page-surface-row"
+      className={cn("page-surface-flow", hirer && "page-surface-hirer")}
+      aria-label={page.name}
+    >
       {items.map((item) => {
         if (isMixerItem(item)) {
           // Every mixer item on a resolved page implies a configured device
@@ -115,6 +121,6 @@ export function PageSurface({ page, hirer = false }: PageSurfaceProps) {
         if (isPanelItem(item)) return <PagePanel key={item.id} pageId={page.id} item={item} surfaceWidth={flowSize.width} hirer={hirer} />;
         return null;
       })}
-    </div>
+    </ScrollRow>
   );
 }

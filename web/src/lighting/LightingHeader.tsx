@@ -81,9 +81,6 @@ export function LightingHeader({ fadeSeconds, onFadeSecondsChange }: LightingHea
           />
           <span className="lighting-fade-value">{fadeSeconds.toFixed(1)}s</span>
         </div>
-      </div>
-      <div className="lighting-master-row">
-        <MasterFader />
         <Button
           variant="secondary"
           disabled={!isAdmin}
@@ -94,6 +91,9 @@ export function LightingHeader({ fadeSeconds, onFadeSecondsChange }: LightingHea
         >
           Save look
         </Button>
+      </div>
+      <div className="lighting-master-row">
+        <MasterFader />
         <button
           type="button"
           className="led-toggle"

@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 
 import { App } from "./App";
+import { AppRoot } from "./AppRoot";
 import { AppToaster } from "./notifications/AppToaster";
 import { registerServiceWorker } from "./pwa/serviceWorker";
 import { SessionProvider } from "./session/SessionProvider";
@@ -29,14 +30,16 @@ if (!rootElement) throw new Error("Missing #root");
 
 createRoot(rootElement).render(
   <StrictMode>
-    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-      <QueryClientProvider client={queryClient}>
-        <SessionProvider>
-          <App />
-          <AppToaster />
-        </SessionProvider>
-      </QueryClientProvider>
-    </BrowserRouter>
+    <AppRoot>
+      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <QueryClientProvider client={queryClient}>
+          <SessionProvider>
+            <App />
+            <AppToaster />
+          </SessionProvider>
+        </QueryClientProvider>
+      </BrowserRouter>
+    </AppRoot>
   </StrictMode>,
 );
 

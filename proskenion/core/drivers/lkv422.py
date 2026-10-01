@@ -373,5 +373,12 @@ class LKV422Driver(Driver):
                     return bytes(buf)
                 continue
             buf.extend(chunk)
+            # Line noise ahead of a reply is not a reply: the real unit sends
+            # a stray NUL after a power cycle, which on its own would end the
+            # read at the quiet period and be reported as an unexpected
+            # reply. Only *leading* NULs go; anything else is kept, so a
+            # genuinely wrong reply still reaches the caller to be rejected.
+            while buf and buf[0] == 0:
+                del buf[0]
             if self.RESPONSE.search(bytes(buf)):
                 return bytes(buf)

@@ -355,7 +355,7 @@ def test_phase_one_persistence_declarations(dev: StateStore) -> None:
     assert dev.persistence_class("lighting", "observed") is None
     assert dev.persistence_class("mixer", "meters") is None
     assert dev.timer.RESTORABLE == {"running", "started_at", "accumulated_ms"}
-    assert dev.lighting.RESTORABLE == {"levels", "colour", "group_multipliers", "external_control"}
+    assert dev.lighting.RESTORABLE == {"levels", "colour", "external_control"}
     assert dev.devices.RESTORABLE == frozenset()
     assert dev.mixer.RESTORABLE == frozenset()
 
@@ -364,7 +364,6 @@ def test_skeleton_domains_declare_the_spec_fields(dev: StateStore) -> None:
     assert set(dev.lighting.SPECS) == {
         "levels",
         "colour",
-        "group_multipliers",
         "master",
         "binding_states",
         "external_control",

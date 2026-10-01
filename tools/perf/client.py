@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import getpass
 import os
+import ssl
 from dataclasses import dataclass
 from types import TracebackType
 from typing import Any, Self
@@ -102,10 +103,18 @@ class PerfClient:
         origin: str | None = None,
         verify: bool | str = True,
         timeout_s: float = 10.0,
+        host_header: str | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.origin = origin or default_origin(base_url)
         self._verify = verify
+        #: On-box through nginx: connect to 127.0.0.1 but present the public
+        #: hostname, as a browser's request would (``--via-nginx``).
+        self.host_header = host_header
+        self._token: str | None = None
+        base_headers = {"Origin": self.origin}
+        if host_header:
+            base_headers["Host"] = host_header
         # httpx accepts True (the default trust store — correct once the
         # CM5's Let's Encrypt certificate is live), False (only for a first
         # run against a self-signed cert; see cli.py's --insecure) or a CA
@@ -114,7 +123,7 @@ class PerfClient:
             base_url=self.base_url,
             verify=verify,
             timeout=timeout_s,
-            headers={"Origin": self.origin},
+            headers=base_headers,
         )
         self.tier: str | None = None
 
@@ -140,6 +149,19 @@ class PerfClient:
         """``path`` under ``/api/v1`` (§16.1) — ``path`` starts with ``/``."""
         return f"{API_PREFIX}{path}"
 
+    def use_session_token(self, token: str, *, tier: str = "admin") -> str:
+        """Adopt a session minted on this machine (``--mint-admin-session``)
+        instead of signing in. A minted session is an admin one, so the
+        client's known tier becomes ``tier`` (the scenarios that need admin,
+        such as the database-insert row, check ``tier`` and were skipping with
+        "signed in as None" on the CM5's first run). The ``Cookie`` header is set directly: the
+        real cookie is ``Secure``, and a cookie jar will not send it over the
+        plain-HTTP loopback port."""
+        self._token = token
+        self._http.headers["Cookie"] = f"{COOKIE_NAME}={token}"
+        self.tier = tier
+        return tier
+
     async def login(self, password: str) -> str:
         """``POST /auth/login`` (§16.3). Returns the tier; raises
         :class:`LoginFailed` with no password anywhere in the message."""
@@ -164,22 +186,39 @@ class PerfClient:
         :mod:`websockets` client, which does not share :attr:`http`'s cookie
         jar (it is a separate connection, exactly as a browser's WebSocket
         upgrade is a separate request from the page load that signed in)."""
-        token = self._http.cookies.get(COOKIE_NAME)
+        token = self._token or self._http.cookies.get(COOKIE_NAME)
         if token is None:
             raise LoginFailed("not signed in: call login() first")
         return f"{COOKIE_NAME}={token}"
 
     def websocket_url(self) -> str:
+        """``/ws?v=1`` on the public hostname when :attr:`host_header` is set
+        (nginx routes and the SNI follow it), else on :attr:`base_url`."""
+        if self.host_header:
+            parts = urlsplit(self.base_url)
+            return _ws_url(urlunsplit((parts.scheme, self.host_header, "", "", "")))
         return _ws_url(self.base_url)
 
     def connect_websocket(self) -> Any:
         """``async with client.connect_websocket() as ws:`` — ``/ws?v=1``
         (§16.8), authenticated with this session's cookie and the same
         Origin the REST client sends."""
+        extra: dict[str, Any] = {}
+        parts = urlsplit(self.base_url)
+        if self.host_header:
+            # Dial the loopback address, present the public hostname.
+            extra["host"] = parts.hostname
+            extra["port"] = parts.port or (443 if parts.scheme == "https" else 80)
+        if parts.scheme == "https" and self._verify is False:
+            context = ssl.create_default_context()
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            extra["ssl"] = context
         return websockets.connect(
             self.websocket_url(),
             additional_headers={"Cookie": self.session_cookie_header, "Origin": self.origin},
             open_timeout=10,
+            **extra,
         )
 
 

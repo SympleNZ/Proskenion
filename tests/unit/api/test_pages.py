@@ -29,6 +29,7 @@ from proskenion.core.state import StateStore
 from proskenion.db.connection import Database
 from proskenion.db.crud import devices as devices_crud
 from proskenion.db.crud import hirer as hirer_crud
+from proskenion.db.crud import lighting as lighting_crud
 from proskenion.db.crud import mixer as mixer_crud
 from proskenion.db.crud import pages as pages_crud
 from proskenion.db.crud import rules as rules_crud
@@ -429,6 +430,46 @@ async def test_replacing_a_page_with_a_panel_button(client: AsyncClient, rig: Ri
     assert body["items"][0]["buttons"][0]["rule_id"] == rule_id
     # "Stage Bank 1" is a lighting_group rule, not run_scene: it names no device.
     assert body["items"][0]["buttons"][0]["devices"] == []
+
+
+async def test_an_indicator_only_group_cannot_be_placed_and_is_never_drawn(
+    client: AsyncClient, rig: Rig
+) -> None:
+    """No fader anywhere (migration 011): a page may not place its master, and
+    one placed before the group changed is left out of the page as read."""
+    await login(client)
+    group_id = rig.venue.groups["All Stage"]
+    page = await pages_crud.create_page(rig.db, name="Room")
+    placed = await pages_crud.replace_page(
+        rig.db,
+        page.id,
+        page.updated_at,
+        name="Room",
+        sort_order=1,
+        items=[PageItemInput(kind="group_master", group_id=group_id)],
+    )
+    # The binding on "All Stage" has to go before it can become indicator-only.
+    await rules_crud.delete_rule(rig.db, rig.venue.rules["All Stage"])
+    group = await lighting_crud.get_group(rig.db, group_id)
+    assert group is not None
+    await lighting_crud.update_group(rig.db, group_id, group.updated_at, indicator_only=True)
+
+    read = await client.get(f"{PAGES}/{page.id}")
+    assert read.status_code == 200, read.text
+    assert read.json()["items"] == []
+
+    response = await client.put(
+        f"{PAGES}/{page.id}",
+        json={
+            "name": "Room",
+            "sort_order": 1,
+            "items": [{"kind": "group_master", "group_id": group_id}],
+        },
+        headers={VERSION: placed.page.updated_at},
+    )
+    assert response.status_code == 422, response.text
+    assert code(response) == "validation_failed"
+    assert "indicator-only" in response.json()["error"]["message"]
 
 
 async def test_a_stale_version_on_put_is_a_conflict_with_the_current_page(

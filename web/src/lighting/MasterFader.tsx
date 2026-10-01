@@ -40,6 +40,9 @@ export function MasterFader() {
       readOnly={isMasterReadOnlyUnderExternalControl(externalControl)}
       disabled={!controlsEnabled}
       liveChip={externalControl === "detected"}
+      // §21.11's wireframe draws Master as a slider beside Fade, in the header.
+      orientation="horizontal"
+      className="lighting-master-fader"
       testId="master-fader"
     />
   );

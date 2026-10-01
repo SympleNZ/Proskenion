@@ -168,6 +168,12 @@ export interface RebootResult {
   requested_at: string;
 }
 
+/** `202` from `POST /system/shutdown` — the answer arrives before the power-off does. */
+export interface ShutdownResult {
+  requested: "shutdown";
+  requested_at: string;
+}
+
 /**
  * `UpdateRunner.APPLY_STEPS` (`core/update.py`), generic labels rather than
  * the server's `{version}`-interpolated messages — `ProgressPanel` shows the

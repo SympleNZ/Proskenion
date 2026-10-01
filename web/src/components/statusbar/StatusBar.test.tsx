@@ -34,12 +34,12 @@ describe("StatusBar", () => {
     expect(names).toEqual(["KNX", "DMX", "Mixer", "Projector", "HDMI"]);
   });
 
-  it("announces a device status change through a live region (§24.3)", () => {
+  it("keeps the device list out of the live regions: ConnectionAnnouncer speaks changes (§24.3)", () => {
     setDeviceStatus("knx", { status: "connected" });
     renderWithProviders(<StatusBar tier="operator" />, { route: "/app", status: "authenticated" });
 
     const devices = screen.getByRole("list", { name: "Devices" });
-    expect(devices).toHaveAttribute("aria-live", "polite");
+    expect(devices).not.toHaveAttribute("aria-live");
     expect(within(devices).getByRole("img", { name: "KNX: Connected" })).toBeInTheDocument();
 
     act(() => {

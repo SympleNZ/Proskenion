@@ -1,9 +1,8 @@
 /*
- * One fixture's strip in the Fixtures row (spec §21.11): a group-colour
- * accent at the top, then the fixture's own fader.
+ * One fixture's strip in the Fixtures row (spec §21.11): the shared channel
+ * strip card, its top edge in the colour of the fixture's first group
+ * (identity only, §21.3), with the fixture's own fader.
  */
-import type { CSSProperties } from "react";
-
 import type { SceneRing } from "@/components/fader/FaderStrip";
 
 import { ChannelFader } from "./ChannelFader";
@@ -19,11 +18,5 @@ export interface FixtureStripProps {
 }
 
 export function FixtureStrip({ channel, accentColour, sceneRing = null, readOnly = false }: FixtureStripProps) {
-  const style = accentColour ? ({ "--accent-colour": accentColour } as CSSProperties) : undefined;
-  return (
-    <div className="lighting-fixture-strip" style={style}>
-      <div className="lighting-fixture-accent" aria-hidden="true" />
-      <ChannelFader channel={channel} sceneRing={sceneRing} readOnly={readOnly} />
-    </div>
-  );
+  return <ChannelFader channel={channel} accentColour={accentColour} sceneRing={sceneRing} readOnly={readOnly} />;
 }

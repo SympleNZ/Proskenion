@@ -123,22 +123,37 @@ async def test_the_room_is_configured_through_the_api(rig: Rig) -> None:
 
 
 async def test_a_panel_telegram_brings_the_bank_to_exactly_its_on_level(rig: Rig) -> None:
-    """Q1: the recall forces the group multiplier to 1.0 by a write; the master applies."""
-    # The bank's group fader is left at 40 % by an operator.
+    """Q1: the recall sets every member to on_level; the master applies. (A group
+    fader sets levels since the owner decision of 2026-09-30, so there is no
+    multiplier left for the recall to force.)"""
+    # The bank's group fader is left at 40 % by an operator: every member at 40.
+    frames, writes = rig.frame_mark(), rig.write_mark()
     group = ok(await rig.client.post(f"{LIGHTING}/groups/{rig.bank}/level", json={"level": 40}))
     assert group["level"] == pytest.approx(40.0)
-    assert (await rig.lighting_state())["groups"][str(rig.bank)] == pytest.approx(0.4)
+    forty = (level_to_dmx(40.0),) * 4
+    await rig.first_frame(lambda values: values == forty, since=frames, what="the bank at 40 %")
+    await rig.first_write(
+        HOUSE_DIMMER,
+        "5.001",
+        lambda value: value == pytest.approx(40.0, abs=0.5),
+        since=writes,
+        what="the house dimmer written 40 % by its group fader",
+    )
+    state = await rig.lighting_state()
+    assert "groups" not in state
+    for channel in (*rig.fixtures, rig.dimmer):
+        assert state["channels"][str(channel)]["level"] == pytest.approx(40.0)
 
     frames, writes = rig.frame_mark(), rig.write_mark()
     await rig.press(True)
 
-    # The frame reaches the Art-Net stub with every fixture at 80 % — 204, not
-    # the 82 a group left at 40 % would give — and no frame between dark and it.
+    # The frame reaches the Art-Net stub with every fixture at 80 % — 204 — and
+    # nothing between the 40 % look and it.
     on = await rig.first_frame(
         lambda values: values == ALL_ON, since=frames, what="the bank at its on level"
     )
     arrived = rig.frames(frames)
-    assert all(rig.fixture_values(f) == (0, 0, 0, 0) for f in arrived[: arrived.index(on)])
+    assert all(rig.fixture_values(f) == forty for f in arrived[: arrived.index(on)])
 
     # The KNX dimmer in the bank is sent the same 80 %, once, on its command address.
     await rig.first_write(
@@ -150,10 +165,8 @@ async def test_a_panel_telegram_brings_the_bank_to_exactly_its_on_level(rig: Rig
     )
     assert len(rig.writes(HOUSE_DIMMER, writes)) == 1
 
-    # The store agrees: levels at 80, the group multiplier forced to 1.0, the
-    # master untouched at 100.
+    # The store agrees: levels at 80, the master untouched at 100.
     state = await rig.lighting_state()
-    assert state["groups"][str(rig.bank)] == pytest.approx(1.0)
     assert state["master"] == pytest.approx(100.0)
     for channel in (*rig.fixtures, rig.dimmer):
         assert state["channels"][str(channel)]["level"] == pytest.approx(ON_LEVEL)

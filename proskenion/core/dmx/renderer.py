@@ -11,14 +11,37 @@ The frame renderer (§7.2.3 *Rendering is change-driven*, B28)
 Art-Net is not DMX512: the node regenerates the physical refresh on its
 outputs and holds last value, so the controller need not stream frames::
 
-    level store dirty  →  composite  →  send frame     capped at 40 fps
-    no change          →  resend last frame            every keepalive (default 1 s)
+    level store dirty  →  composite  →  send frame     then on the 40 fps cadence
+    moving             →  composite  →  send frame     every 25 ms, on a fixed grid
+    still, < 250 ms    →  resend last frame            every 25 ms (the cadence's tail)
+    at rest            →  resend last frame            every keepalive (default 1 s)
 
 At rest the compositor does not run at all; one packet per universe per
-keepalive interval goes out. During a fade frames reach 40 a second and no
-more. The keepalive is a setting (:attr:`FrameRenderer.keepalive_s`), bounded
-to stay inside a node's source timeout — E1.31 declares a source lost after
-2.5 s of silence.
+keepalive interval goes out. The keepalive is a setting
+(:attr:`FrameRenderer.keepalive_s`), bounded to stay inside a node's source
+timeout — E1.31 declares a source lost after 2.5 s of silence.
+
+A steady cadence while anything moves (field finding 2026-09-30, §23.1)
+-----------------------------------------------------------------------
+A first change goes out at once (subject to the 40 fps cap). From then on,
+while anything is moving — the level store changing (a fade's steps, fader
+writes) or an operator glide in progress
+(:meth:`~proskenion.core.dmx.compositor.Compositor.request_glide`) — frames
+go on a fixed 25 ms grid, scheduled on the event loop's clock from the
+previous *due* time rather than from when the last frame happened to go, so
+the cadence does not drift. Changes that land between two frames join the
+next one. Once nothing has moved for :data:`CADENCE_IDLE_S` the cadence stops
+and the keepalive takes over; during that tail the last frame is resent on
+the grid without compositing. The frame that establishes the output at
+start or on resuming from external control is one frame, not motion, and
+starts no cadence.
+
+Sending only on change made the frame rate follow the arrival of fader
+writes over Wi-Fi: on the rig a fader drag produced a median of one frame
+every 50 ms with gaps past 100 ms, each carrying a jump that grew with the
+drag speed. The cadence gives the glide an even grid to land its steps on.
+The spec's reason for not running a fixed loop (§7.2.3, B28) still holds at
+rest, which is where the appliance spends nearly all its time.
 
 A frame goes only to a lighting output device the device manager reports
 connected; a frame to an unconnected backend is silently discarded (§12.1).
@@ -79,6 +102,9 @@ MIN_KEEPALIVE_S = 0.1
 MAX_KEEPALIVE_S = 2.0
 #: §12.1: if no lighting output has connected after this long, say so once.
 CONNECT_WARNING_S = 10.0
+#: The steady cadence (module docstring) stops once nothing has moved for
+#: this long; the keepalive takes over.
+CADENCE_IDLE_S = 0.25
 
 FrameListener = Callable[[int, int], None]
 """``(device_id, frame)`` — called after a frame has been sent to a device."""
@@ -120,9 +146,12 @@ class FrameRenderer:
         bus: EventBus | None = None,
         keepalive_s: float = DEFAULT_KEEPALIVE_S,
         max_fps: int = MAX_FPS,
+        idle_s: float = CADENCE_IDLE_S,
     ) -> None:
         if max_fps <= 0:
             raise ValueError("max_fps must be positive")
+        if idle_s < 0:
+            raise ValueError("idle_s must not be negative")
         self._compositor = compositor
         self._state = state
         self._devices = devices
@@ -134,6 +163,14 @@ class FrameRenderer:
         self._connected: frozenset[int] = frozenset()
         self._last_sent_to: dict[int, float] = {}
         self._last_frame_at = -math.inf
+        self._idle_s = idle_s
+        # The steady cadence: when the next frame is due (``None``: not
+        # running), and when the output last moved.
+        self._next_frame_at: float | None = None
+        self._last_motion_at = -math.inf
+        # The next composite re-establishes the output (start, resume) rather
+        # than carrying a change: it is one frame, not the start of a cadence.
+        self._resync = False
         self._failing: set[int] = set()
         self._task: asyncio.Task[None] | None = None
         self._subscription: Subscription | None = None
@@ -144,6 +181,10 @@ class FrameRenderer:
         """How many times the DMX pass has run — a test and the health screen read it."""
         self.frames_sent = 0
         """Frames that reached at least one device, keepalives included."""
+        self.last_glide_composite = 0
+        """The :attr:`composites` count of the last composite that moved the output
+        with no store change — an operator glide (its landing included) or a bump
+        going on or off — a derived ``output`` status recomputes on it."""
 
     # -- frame listeners -----------------------------------------------------
 
@@ -193,10 +234,16 @@ class FrameRenderer:
         send to every connected device — never the desk's last frame (§7.2.7)."""
         self._compositor.suspend_dmx(False)
         self._connected = frozenset()
+        self._resync = True
         self.mark_dirty()
 
+    @property
+    def cadence_running(self) -> bool:
+        """Whether frames are going on the steady 25 ms grid (module docstring)."""
+        return self._next_frame_at is not None
+
     def mark_dirty(self) -> None:
-        """Composite and send on the next pass (subject to the 40 fps cap).
+        """Composite and send on the next frame (at once, or on the cadence's grid).
 
         While suspended the flag is kept but the loop is not woken: the level
         store keeps changing under external control (fades run on), and none
@@ -234,6 +281,7 @@ class FrameRenderer:
                 queue_size=16,
             )
         self._dirty = True
+        self._resync = True
         self._wake.set()
         self._task = asyncio.get_running_loop().create_task(self._run(), name="dmx-renderer")
 
@@ -258,6 +306,7 @@ class FrameRenderer:
                 # Nothing is sent while external control is active. Forget who
                 # was connected so resuming treats every device as new.
                 self._connected = frozenset()
+                self._next_frame_at = None
                 continue
             connected = self._connected_devices()
             newly = connected - self._connected
@@ -265,19 +314,18 @@ class FrameRenderer:
             if connected:
                 self._ever_connected = True
             now = loop.time()
-            if self._dirty:
-                hold = self._last_frame_at + self._min_interval - now
-                if hold > 0:  # the 40 fps cap; changes meanwhile join this frame
+            if self._dirty or self._compositor.dmx_gliding or self._next_frame_at is not None:
+                frame_at = self._next_frame_at
+                if frame_at is None:  # a first change: at once, within the 40 fps cap
+                    frame_at = max(self._last_frame_at + self._min_interval, now)
+                hold = frame_at - now
+                if hold > 0:  # changes meanwhile join this frame
                     await asyncio.sleep(hold)
                     if self._compositor.dmx_suspended:
                         continue
                     connected = self._connected_devices()
                     self._connected = connected
-                self._dirty = False
-                self._compositor.composite_dmx()
-                self.composites += 1
-                self._last_frame_at = loop.time()
-                await self._send(connected)
+                await self._frame(connected, frame_at, loop.time())
             elif newly:
                 await self._send(newly)  # the current frame, to a device that has just connected
             else:
@@ -290,11 +338,41 @@ class FrameRenderer:
                     await self._send(due)
             self._warn_if_never_connected(loop.time() - started)
 
+    async def _frame(self, connected: frozenset[int], due: float, now: float) -> None:
+        """One frame of the cadence: composite if anything moved, send, schedule the next."""
+        if self._dirty or self._compositor.dmx_gliding:
+            self._dirty = False
+            self._compositor.composite_dmx(now)
+            self.composites += 1
+            # A glide's step or a bump going on or off moves the output with
+            # no store change; an ``output`` derived status reads the frame.
+            moved = self._compositor.glided or self._compositor.overlay_moved
+            if moved:
+                self.last_glide_composite = self.composites
+            if not self._resync or moved:
+                self._last_motion_at = now
+            self._resync = False
+        self._last_frame_at = now
+        await self._send(connected)
+        if (
+            not self._dirty
+            and not self._compositor.dmx_gliding
+            and now - self._last_motion_at >= self._idle_s
+        ):
+            self._next_frame_at = None  # at rest: the keepalive takes over
+            return
+        # Drift-free: the next frame is due one period after this one was
+        # *due*; only a loop that has fallen a whole period behind realigns.
+        following = due + self._min_interval
+        self._next_frame_at = following if following > now else now + self._min_interval
+
     def _wait_for(self, now: float) -> float | None:
         """Seconds until the loop next has something to do; ``None`` for "until woken"."""
         if self._compositor.dmx_suspended:
             return None  # nothing to do until resumed
-        if self._dirty:
+        if self._next_frame_at is not None:
+            return max(self._next_frame_at - now, 0.0)
+        if self._dirty or self._compositor.dmx_gliding:
             return 0.0
         if not self._connected:
             return self._keepalive_s  # look again for a connection
@@ -467,6 +545,7 @@ def _check_keepalive(seconds: float) -> float:
 
 
 __all__ = [
+    "CADENCE_IDLE_S",
     "DEFAULT_KEEPALIVE_S",
     "MAX_FPS",
     "MAX_KEEPALIVE_S",

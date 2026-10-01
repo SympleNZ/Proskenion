@@ -322,7 +322,7 @@ async def system_version(request: Request) -> SystemVersionResponse:
     )
 
 
-# -- restart and reboot (§21.24, contracts §2, §5) --------------------------
+# -- restart, reboot and shut down (§21.24, contracts §2, §5) --------------------------
 #
 # Both ask the helper and answer before the action takes effect
 # (``HelperClient.submit``, not ``.run`` — the same non-blocking shape
@@ -345,6 +345,28 @@ class RebootResponse(_Payload):
     requested: Literal["reboot"]
     mode: Literal["normal"]
     requested_at: str
+
+
+async def _refuse_during_os_trial(
+    os_service: OsUpgradeService | None, action: str, what: str
+) -> None:
+    """Q11: refuse ``action`` while an OS slot is on trial.
+
+    ``tryboot.txt`` selects the trial slot for exactly one boot; ``what``
+    would consume or discard it and the bootloader would not repeat it, so
+    the trial would be abandoned silently.
+    """
+    if os_service is None:
+        return
+    trial = await os_service.trial()
+    if trial is not None:
+        raise ApiError(
+            ErrorCode.VALIDATION_FAILED,
+            f"The appliance cannot {action} while an operating system trial is in "
+            f"progress — {what} would abandon it silently. Use OS roll "
+            "back instead, which says what it does.",
+            {"reason": "os_trial", "slot": trial.slot, "version": trial.version},
+        )
 
 
 @system_router.post(
@@ -371,6 +393,13 @@ async def restart(
     return RestartResponse(requested="restart", requested_at=at)
 
 
+class ShutdownResponse(_Payload):
+    """``202`` from ``POST /system/shutdown``."""
+
+    requested: Literal["shutdown"]
+    requested_at: str
+
+
 @system_router.post(
     "/reboot",
     response_model=RebootResponse,
@@ -393,16 +422,7 @@ async def reboot(
     before it does it. An operator who wants that uses roll back; a reboot
     that quietly did the same thing would not be able to tell them it had.
     """
-    if os_service is not None:
-        trial = await os_service.trial()
-        if trial is not None:
-            raise ApiError(
-                ErrorCode.VALIDATION_FAILED,
-                "The appliance cannot reboot while an operating system trial is in "
-                "progress — a plain reboot would abandon it silently. Use OS roll "
-                "back instead, which says what it does.",
-                {"reason": "os_trial", "slot": trial.slot, "version": trial.version},
-            )
+    await _refuse_during_os_trial(os_service, "reboot", "a plain reboot")
     await helper.submit("reboot", mode="normal")
     at = now_iso()
     await record_event(
@@ -413,6 +433,39 @@ async def reboot(
         detail={"setting": "reboot"},
     )
     return RebootResponse(requested="reboot", mode="normal", requested_at=at)
+
+
+@system_router.post(
+    "/shutdown",
+    response_model=ShutdownResponse,
+    status_code=202,
+)
+async def shutdown(
+    request: Request,
+    claims: Annotated[TokenClaims, Depends(require_admin)],
+    db: Annotated[Database, Depends(get_db)],
+    helper: Annotated[HelperClient, Depends(get_helper)],
+    os_service: Annotated[OsUpgradeService | None, Depends(optional_os_upgrade)],
+) -> ShutdownResponse:
+    """Ask the helper to power the appliance off (the ``shutdown`` verb).
+
+    The controller lives in a rack, so there is a case for switching it off
+    cleanly rather than cutting its power. It does not come back by itself:
+    someone has to cycle its power at the rack. Refused while an OS slot is
+    on trial for the same reason ``/reboot`` is (Q11) — a power-off drops the
+    one-boot ``tryboot`` selection.
+    """
+    await _refuse_during_os_trial(os_service, "shut down", "a power-off")
+    await helper.submit("shutdown")
+    at = now_iso()
+    await record_event(
+        db,
+        "config_changed",
+        user_ident=claims.tier,
+        ip_address=client_ip(request),
+        detail={"setting": "shutdown"},
+    )
+    return ShutdownResponse(requested="shutdown", requested_at=at)
 
 
 # -- email (§11.4, §16.7; contracts §5, §7) --------------------------------------

@@ -287,7 +287,9 @@ describe("reconnection", () => {
     expect(reconnected.types()).toEqual(["subscribe", "resync"]);
     expect(reconnected.types()).not.toContain("set");
     expect(getConnectionState()).toBe("connected");
-    // A stale meter is worse than none: no bars until the next frame.
+    // Cleared immediately on resync, before any reply — this fake server
+    // never answers, so nothing repopulates it (the real server would send
+    // a fresh mixer_meters catch-up here; see broadcast.py).
     expect(getMeter(1)).toBeNull();
     // Which lamp a connection may see can shrink between resyncs (a page
     // reassigned, a hirer's access narrowed): dropped the same way.

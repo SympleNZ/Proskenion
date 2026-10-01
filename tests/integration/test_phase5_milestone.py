@@ -1257,9 +1257,10 @@ async def test_the_three_switches_narrow_what_lighting_a_hirer_reaches(room: Hir
     assert dmx(room, 1) == level_to_dmx(80)
     answer = await socket.set("lighting_group", room.lighting.bank, 50.0)
     assert answer is not None and answer["type"] == "ack", answer
-    await until(lambda: dmx(room, 1) == level_to_dmx(40), "the bank's master at 50 %")
-    ok(await phone.post(f"{LIGHTING}/groups/{room.lighting.bank}/level", json={"level": 100}))
-    await until(lambda: dmx(room, 1) == level_to_dmx(80), "the bank's master at 100 %")
+    # A group fader sets its members' levels (owner decision 2026-09-30).
+    await until(lambda: dmx(room, 1) == level_to_dmx(50), "the bank's master at 50 %")
+    ok(await phone.post(f"{LIGHTING}/groups/{room.lighting.bank}/level", json={"level": 80}))
+    await until(lambda: dmx(room, 1) == level_to_dmx(80), "the bank's master at 80 %")
 
     # Individual fixtures on: the tray is writable.
     await room.put_hirer_config(individual_fixtures=True)

@@ -356,6 +356,14 @@ async def test_default_page_orders_main_then_outputs_then_inputs_then_groups(
     ]
 
 
+async def test_default_page_leaves_out_an_indicator_only_group(db: Database) -> None:
+    """It has no fader anywhere (migration 011): "All channels" offers none."""
+    wash = await lighting.create_group(db, name="Wash")
+    await lighting.create_group(db, name="Stage all", indicator_only=True)
+    default_page = await pages.regenerate_default_page(db)
+    assert [(i.kind, i.group_id) for i in default_page.items] == [("group_master", wash.id)]
+
+
 async def test_default_page_excludes_staff_invisible_channels(db: Database) -> None:
     device_id = await _mixer_device(db)
     await mixer.create_channel(

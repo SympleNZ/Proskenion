@@ -12,14 +12,18 @@ import type { ReactNode } from "react";
 import { Outlet } from "react-router-dom";
 
 import type { Tier } from "@/api/auth";
+import { ConnectionAnnouncer } from "@/components/ConnectionAnnouncer";
 import { ConnectionBanner } from "@/components/ConnectionBanner";
 import { NewVersionBanner } from "@/components/NewVersionBanner";
 import { StatusBar } from "@/components/statusbar/StatusBar";
 import { SystemBanners } from "@/components/SystemBanners";
 import { HelpSheet } from "@/help/HelpSheet";
 import { useConnectionState } from "@/live/connection";
+import { useApplyDisplayScale } from "@/lib/useDisplayScale";
 import { cn } from "@/lib/utils";
 import { useManifest, type ManifestKind } from "@/pwa/useManifest";
+
+import { useRouteFocus } from "./useRouteFocus";
 
 export interface ShellProps {
   tier: Tier;
@@ -34,6 +38,12 @@ export interface ShellProps {
 
 export function Shell({ tier, manifest, header, aside, children, className }: ShellProps) {
   useManifest(manifest);
+  // §24.7: after an in-app navigation, focus moves to the new screen's heading.
+  useRouteFocus();
+  // Display scale (§21.9) is app-wide for operator and admin, and absent for
+  // the hirer (§21.7 "The hirer has one button") — applied at the root so
+  // portalled sheets, menus and toasts scale with the shell.
+  useApplyDisplayScale(tier !== "hirer");
   const connection = useConnectionState();
   return (
     <div className={cn("shell", connection === "reconnecting" && "reconnecting", className)} data-testid="shell">
@@ -44,6 +54,8 @@ export function Shell({ tier, manifest, header, aside, children, className }: Sh
       <a href="#main" className="skip-link">
         Skip to main content
       </a>
+      {/* The one live region for device connection changes (§24.3). */}
+      <ConnectionAnnouncer />
       {header}
       <ConnectionBanner />
       <NewVersionBanner />

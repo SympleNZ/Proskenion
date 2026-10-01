@@ -131,7 +131,9 @@ export async function buildAvRoom(
         name: "PT-EZ570E",
         config: {
           transport: { type: "tcp", host: "127.0.0.1", port: av.pjlinkPort },
-          driver: { password: PJLINK_PASSWORD },
+          // The stub's own warm-up is what these tests time; the controller's
+          // minimum warm-up hold (§7.4) would add 60 s, and has unit tests.
+          driver: { password: PJLINK_PASSWORD, min_warmup_s: 0 },
         },
       },
     }),

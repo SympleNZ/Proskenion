@@ -12,7 +12,7 @@
  * CONVENTIONS), because only the caller (`StagePlan`) knows the SVG's own
  * scale and can turn a client point into a bar and a position.
  */
-import { useRef, type KeyboardEvent, type PointerEvent } from "react";
+import { useEffect, useRef, type KeyboardEvent, type PointerEvent } from "react";
 
 import type { LightingChannel } from "@/lighting/types";
 import { cn } from "@/lib/utils";
@@ -91,6 +91,25 @@ export function FixtureNode({
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressFired = useRef(false);
   const lastTapAt = useRef(0);
+  const nodeRef = useRef<SVGGElement>(null);
+
+  // Where a drag can start (edit mode), the touch is the plan's, not the
+  // page's scroll: the rest of the drawing lets the page pan (components.css,
+  // `.stage-plan-svg`). Chromium does not apply `touch-action` to an element
+  // inside an SVG — only to the <svg> itself — so the CSS rule alone left a
+  // fixture drag to be cancelled as the page began to scroll. A non-passive
+  // `touchstart` that prevents the default is what holds the touch in every
+  // engine; pointer events still arrive as before.
+  const dragSource = permitted && mode === "admin" && draggable;
+  useEffect(() => {
+    const node = nodeRef.current;
+    if (!node || !dragSource) return undefined;
+    const hold = (event: TouchEvent): void => {
+      if (event.cancelable) event.preventDefault();
+    };
+    node.addEventListener("touchstart", hold, { passive: false });
+    return () => node.removeEventListener("touchstart", hold);
+  }, [dragSource]);
 
   function clearLongPress(): void {
     if (longPressTimer.current !== null) {
@@ -182,6 +201,7 @@ export function FixtureNode({
 
   return (
     <g
+      ref={nodeRef}
       className={cn(
         "fixture-node-wrap",
         selected && "is-selected",
@@ -197,6 +217,9 @@ export function FixtureNode({
       aria-readonly={readOnly || undefined}
       tabIndex={permitted ? tabIndex : -1}
       data-fixture-id={fixture.id}
+      // Where a drag can start (edit mode): the one place on the plan that
+      // takes the touch from the page's scroll (components.css).
+      data-drag-source={dragSource || undefined}
       data-testid={`fixture-node-${fixture.id}`}
       onPointerDown={permitted ? handlePointerDown : undefined}
       onPointerMove={permitted ? handlePointerMove : undefined}

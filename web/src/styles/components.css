@@ -482,11 +482,17 @@
   color: var(--color-text-primary);
   padding: var(--space-5) var(--space-5) var(--space-6);
   overflow-y: auto;
-  /* Mobile: bottom sheet with --radius-xl (§21.3) */
+  /* Mobile: bottom sheet with --radius-xl (§21.3). `bottom` clears the
+   * status bar rather than sliding under it: the status bar is a sibling
+   * footer outside this Portal's own stacking context, not part of the
+   * sheet, so a sheet whose content reaches its own bottom padding would
+   * otherwise draw over it — found when the phone-width DeviceDetailSheet's
+   * "Go to device settings" link sat under the summary LED once settled
+   * (coordinator's screenshot review, 2026-09). */
   left: 0;
   right: 0;
-  bottom: 0;
-  max-height: 85dvh;
+  bottom: var(--status-bar-height);
+  max-height: calc(85dvh - var(--status-bar-height));
   border-radius: var(--radius-xl) var(--radius-xl) 0 0;
   animation: slide-up var(--duration-moderate) var(--ease-out) both;
 }
@@ -599,6 +605,10 @@
 
 /* ── Menus (Radix DropdownMenu) ──────────────────────────────────────────── */
 .menu-content {
+  /* §24.4: text-muted fails AA on bg-overlay (3.53) and text-secondary
+   * fails it too (4.46), so any muted-styled text that lands in this layer
+   * takes text-primary. Pinned by contrast.test.ts. */
+  --color-text-muted: var(--color-text-primary);
   z-index: 50;
   min-width: calc(var(--space-20) * 2);
   padding: var(--space-1);
@@ -661,6 +671,53 @@
   background: var(--border-overlay);
 }
 
+/* Display scale in the account chip menu (§21.7, §21.9): a label, then a
+ * stepper in tenths — − · value · + — whose steps keep the menu open, so
+ * the operator watches the interface grow while choosing. */
+.menu-scale {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding-left: var(--space-3);
+}
+
+.menu-scale-label {
+  flex: 1;
+  font-size: var(--text-base);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+
+.menu-scale-step {
+  justify-content: center;
+  width: var(--touch-min);
+  padding: 0;
+}
+
+.menu-scale-value {
+  min-width: calc(var(--space-10) + var(--space-2));
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--color-teal-300);
+  text-align: center;
+}
+
+/*
+ * Radix popovers and menus under a display scale (§21.9). Floating UI
+ * measures the trigger with `getBoundingClientRect` — physical, unzoomed px
+ * — and writes the result as a `transform` on this wrapper, which the
+ * root's `zoom` would then multiply, landing a 2× menu twice as far from
+ * its trigger. So the wrapper is returned to 1× (its offsets are physical,
+ * like the numbers they came from) and its content re-scaled to the factor.
+ */
+html[data-display-scale] [data-radix-popper-content-wrapper] {
+  zoom: calc(1 / var(--display-scale));
+}
+
+html[data-display-scale] [data-radix-popper-content-wrapper] > * {
+  zoom: var(--display-scale);
+}
+
 /* ── Inline help (Radix Popover, §19.1) ──────────────────────────────────── */
 .btn-help-group {
   display: inline-flex;
@@ -680,6 +737,10 @@
 }
 
 .help-popover {
+  /* §24.4: text-muted fails AA on bg-overlay (3.53) and text-secondary
+   * fails it too (4.46), so any muted-styled text that lands in this layer
+   * takes text-primary. Pinned by contrast.test.ts. */
+  --color-text-muted: var(--color-text-primary);
   z-index: 50;
   max-width: min(calc(var(--space-20) * 4), 90vw);
   padding: var(--space-3) var(--space-4);
@@ -801,7 +862,17 @@
   font-weight: var(--weight-semibold);
 }
 
-/* Phone in landscape: the strip becomes a rail on the left (§21.6, §21.9) */
+/* Phone in landscape: the strip becomes a rail on the left (§21.6, §21.9
+ * "Phone landscape", drawn in docs/pages-device-sizes.html). 56 px of
+ * two-character labels floating over the surface — positioned, not a flex
+ * sibling, so it never insets the fader row — expanding to 176 px on touch
+ * (`data-open`, `OperatorShell.tsx`) or keyboard focus. `#main` keeps the
+ * collapsed rail's width clear, as the mock's surface does.
+ *
+ * Before 29 Sep 2026 the rail was a flex sibling whose `row` direction on
+ * `.shell-body` lost the cascade to the base `.shell-body` rule declared
+ * below it, so the rail stacked above `#main` and pushed the whole view
+ * off the bottom of the screen. */
 .nav-rail {
   display: none;
 }
@@ -811,23 +882,68 @@
     display: none;
   }
 
+  .shell-body:has(> .nav-rail) {
+    position: relative;
+  }
+
   .nav-rail {
+    position: absolute;
+    z-index: 20;
+    top: 0;
+    bottom: 0;
+    left: 0;
     display: flex;
     flex-direction: column;
-    width: calc(var(--space-20) + var(--space-12));
-    flex: none;
+    gap: var(--space-1);
+    width: calc(var(--space-12) + var(--space-2));
+    padding: var(--space-2) 0;
+    overflow: hidden;
     background: var(--color-bg-surface);
     border-right: var(--hairline) solid var(--border-elevated);
+    box-shadow: var(--shadow-overlay);
+    transition: width var(--duration-base) var(--ease-out);
+  }
+
+  .nav-rail[data-open],
+  .nav-rail:focus-within {
+    width: calc(var(--space-20) * 2 + var(--space-4));
     overflow-y: auto;
   }
 
-  .nav-rail .nav-item {
-    padding: 0 var(--space-3);
+  .nav-rail .rail-item {
+    flex: none;
+    gap: var(--space-3);
+    min-height: var(--touch-min);
+    padding: 0 0 0 var(--space-4);
     font-size: var(--text-sm);
+    white-space: nowrap;
   }
 
-  .shell-body {
-    flex-direction: row;
+  .rail-item > b {
+    flex: none;
+    width: var(--space-6);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-semibold);
+  }
+
+  .rail-item > span {
+    opacity: 0;
+    transition: opacity var(--duration-fast) var(--ease-in-out);
+  }
+
+  .nav-rail[data-open] .rail-item > span,
+  .nav-rail:focus-within .rail-item > span {
+    opacity: 1;
+  }
+
+  /* The device list needs the expanded width; collapsed, only "DV" shows. */
+  .nav-rail:not([data-open]):not(:focus-within) .rail-devices > :not(summary) {
+    display: none;
+  }
+
+  .shell-body:has(> .nav-rail) > .shell-main {
+    padding-left: calc(var(--space-12) + var(--space-2) + var(--space-2));
   }
 }
 
@@ -842,8 +958,6 @@
   display: flex;
   align-items: center;
   min-height: var(--touch-min);
-  padding: 0 var(--space-3);
-  font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   color: var(--color-text-secondary);
   cursor: pointer;
@@ -861,11 +975,13 @@
 }
 
 /* ── Shells ──────────────────────────────────────────────────────────────── */
+/* Exactly one screen tall in logical px: `zoom` on <html> (§21.9 Display
+ * scale, base.css) does not divide viewport units, so the shell does. */
 .shell {
   display: flex;
   flex-direction: column;
-  min-height: 100dvh;
-  height: 100dvh;
+  min-height: calc(100dvh / var(--display-scale, 1));
+  height: calc(100dvh / var(--display-scale, 1));
 }
 
 .shell-body {
@@ -1041,12 +1157,24 @@
   }
 }
 
+/*
+ * Its own scroll boundary, independent of `.status-bar`'s (above): flex
+ * shrinks this region to whatever the timer/clock/account chip group (never
+ * shrinks, `.status-bar-right` below) leaves it, and without this the
+ * device row's `white-space: nowrap` content — unable to shrink below its
+ * own text — spilled past that shrunk box and drew over the controls beside
+ * it rather than scrolling within its own space. A phone's width narrows
+ * this to almost nothing; the narrow-viewport rules below make that
+ * legible rather than just non-overlapping.
+ */
 .status-bar-devices {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   flex: 1;
   min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
 .device-indicator {
@@ -1069,6 +1197,53 @@ button.device-indicator:hover {
 
 button.device-indicator:active {
   background: var(--color-bg-overlay);
+}
+
+/*
+ * The phone-width summary LED (`StatusSummary.tsx`): one worst-state dot
+ * that replaces the five-dot row above `--breakpoint-tablet`'s media query
+ * below. Always in the DOM — the query toggles which of the two is
+ * visible — but hidden by default so it never appears above phone width.
+ */
+.status-summary {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--touch-min);
+  height: var(--touch-min);
+  border-radius: var(--radius-full);
+  flex: none;
+  transition: background-color var(--duration-base) var(--ease-in-out);
+}
+
+.status-summary:hover {
+  background: var(--color-bg-elevated);
+}
+
+.status-summary:active {
+  background: var(--color-bg-overlay);
+}
+
+.connection-row {
+  justify-content: flex-start;
+}
+
+/* In the phone's Connections menu the row is a menu item, and keeps a menu
+ * item's inset like the account chip's menu. Without this the admin list's
+ * `.connection-row` rule further down (padding 0 at the sides) won, and the
+ * dots and states touched the popup's edges. */
+.menu-item.connection-row {
+  padding: 0 var(--space-3);
+}
+
+.connection-row-label {
+  flex: 1;
+  font-weight: var(--weight-medium);
+}
+
+.connection-row-state {
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
 }
 
 .status-bar-right {
@@ -1122,10 +1297,10 @@ button.clock:hover {
 }
 
 /* §24.6: the hirer surface's larger touch-target minimum (--touch-hirer)
- * applies to the status bar's clock and its one button (Log out,
- * HirerLogout.tsx) — they share this footer with the operator/admin one,
- * whose smaller (--touch-min) controls are correct there but too small
- * here. */
+ * applies to the status bar's clock, its one button (Log out,
+ * HirerLogout.tsx) and the phone-width summary LED — they share this
+ * footer with the operator/admin one, whose smaller (--touch-min) controls
+ * are correct there but too small here. */
 .status-bar[data-tier="hirer"] .clock {
   min-width: var(--touch-hirer);
   min-height: var(--touch-hirer);
@@ -1135,6 +1310,53 @@ button.clock:hover {
 .status-bar[data-tier="hirer"] .btn {
   min-width: var(--touch-hirer);
   min-height: var(--touch-hirer);
+}
+
+.status-bar[data-tier="hirer"] .status-summary {
+  min-width: var(--touch-hirer);
+  min-height: var(--touch-hirer);
+}
+
+/* Phone width (§21.7 says nothing narrower than a tablet — this sharpens
+ * the general fix above for the one viewport where five indicators, a
+ * timer, a clock and the account chip do not all fit; owner's decision,
+ * 2026-09, replacing the earlier "drop the labels" fix): the five-dot row
+ * and the shared timer are both dropped — nobody could tell five
+ * unlabelled dots apart, and the timer is the one thing here that is not
+ * also reachable another way — in favour of `StatusSummary`'s single
+ * worst-state LED, which carries the same words in its accessible name and
+ * opens a menu naming every indicator. `.status-bar-right` never shrinks
+ * (`flex: none` above): the account chip is always reachable, unscrolled,
+ * at the end of the bar. */
+@media (max-width: theme(--breakpoint-tablet)) {
+  .status-bar {
+    gap: var(--space-2);
+    padding: 0 var(--space-2);
+  }
+
+  .status-bar-devices {
+    display: none;
+  }
+
+  .status-summary {
+    display: inline-flex;
+  }
+
+  .status-bar-right {
+    gap: var(--space-1);
+  }
+
+  .status-sep {
+    display: none;
+  }
+
+  .timer {
+    display: none;
+  }
+
+  .clock {
+    padding: 0 var(--space-1);
+  }
 }
 
 .clock-marker {
@@ -1311,6 +1533,55 @@ button.clock:hover {
   color: var(--color-text-secondary);
 }
 
+/* ── Portrait-only guard (owner's decision, 2026-09; `lib/phoneLandscape.ts`'s
+ * doc comment has the detection rule) ───────────────────────────────────────
+ * Always mounted (`PhoneLandscapeGuard.tsx`, `main.tsx`); the media query
+ * alone decides visibility, so a rotation is resolved before the next paint
+ * rather than waiting on a React render. `display: none` outside the query
+ * already removes it from the accessibility tree.
+ * z-index 60 is this codebase's highest elsewhere (`.session-backdrop`,
+ * `.stage-plan-context-menu`) — one above every sheet, toast and dialog,
+ * including the session overlays above. Opaque, not a blur over the app: it
+ * replaces the view rather than sitting over it, so nothing behind it needs
+ * to stay legible. */
+.phone-landscape-guard {
+  display: none;
+}
+
+@media (orientation: landscape) and (max-height: theme(--viewport-portrait-guard-height)) and (pointer: coarse) {
+  .phone-landscape-guard {
+    position: fixed;
+    inset: 0;
+    z-index: 70;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-6);
+    background: var(--color-bg-base);
+  }
+}
+
+.phone-landscape-guard-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  max-width: calc(var(--space-20) * 4);
+  text-align: center;
+}
+
+.phone-landscape-guard-icon {
+  color: var(--color-text-muted);
+  transform: rotate(90deg);
+}
+
+.phone-landscape-guard-body p {
+  color: var(--color-text-primary);
+  font-size: var(--text-lg);
+  line-height: var(--leading-lg);
+  font-weight: var(--weight-medium);
+}
+
 /* ── Empty, error and loading states (§21.27) ────────────────────────────── */
 .empty-state {
   display: flex;
@@ -1381,6 +1652,9 @@ button.clock:hover {
 
 /* ── Sonner toasts → tokens ──────────────────────────────────────────────── */
 [data-sonner-toaster] {
+  /* §24.4: toasts sit on bg-elevated, where text-muted is 4.01. Pinned by
+   * contrast.test.ts. */
+  --color-text-muted: var(--color-text-secondary);
   --normal-bg: var(--color-bg-elevated);
   --normal-border: var(--border-elevated);
   --normal-text: var(--color-text-primary);
@@ -2362,12 +2636,55 @@ button.clock:hover {
 }
 
 /* ── Faders (§10.3, §21.2, §21.3, §21.4, §21.5) ──────────────────────────── */
+/* The channel strip card (§21.5; `docs/operator-views.html`'s `.strip`):
+ * accent, head, zone, readout, foot — see `FaderStrip.tsx`. The card's own
+ * height comes from its row: a fixed-height row sets it (Lighting), a row
+ * that fills the height stretches it (Mixer, Pages); either way the zone
+ * takes what the furniture leaves, so a taller card is a longer fader. */
 .fader-strip {
+  --fader-half-thumb: calc(var(--fader-thumb-height) / 2);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  flex: none;
+  width: var(--fader-strip-width);
+  min-height: 0;
+  padding: var(--space-3) var(--space-2);
+  border-radius: var(--radius-md);
+  border: var(--hairline) solid var(--border-elevated);
+  background: var(--color-bg-surface);
+  overflow: hidden;
+  /* A drag across the strip must never select its text: a later press on
+   * selected text starts a native drag, and the browser cancels the fader's
+   * pointer (the +10 dB jump, `FaderStrip.tsx`'s `cancelPointer`). */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.fader-strip[data-emphasis="true"] {
+  border-color: var(--border-input);
+}
+
+/* Group colour identity along the top edge — never status (§21.3). */
+.fader-strip-accent {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--strip-accent-height);
+  background: var(--accent-colour, var(--color-bg-overlay));
+}
+
+.fader-strip-head {
+  flex: none;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--space-2);
-  flex: none;
+  gap: 0;
+  margin-bottom: var(--space-2);
+  min-width: 0;
 }
 
 .fader-label {
@@ -2375,26 +2692,75 @@ button.clock:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--text-xs);
-  line-height: var(--leading-xs);
-  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  font-weight: var(--weight-medium);
+  color: var(--color-text-primary);
   text-align: center;
 }
 
+.fader-sublabel {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  color: var(--color-text-muted);
+}
+
+/* The zone: scale · fader · meter, taking every pixel the furniture leaves. */
+.fader-zone {
+  position: relative;
+  flex: 1 1 0;
+  min-height: var(--fader-zone-min);
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  gap: var(--space-1);
+}
+
+/* With a meter the scale and fader sit left and the meter right, as the
+ * mock draws it; without one (Lighting, or metering unavailable) the fader
+ * re-centres (§21.13 "absent, not empty"). */
+.fader-zone:has(.fader-meter-slot) {
+  justify-content: flex-start;
+}
+
 .fader-readout {
+  flex: none;
   display: flex;
   align-items: baseline;
+  justify-content: center;
   gap: var(--space-1);
+  margin-top: var(--space-2);
   font-family: var(--font-mono);
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
   line-height: var(--leading-sm);
-  color: var(--color-text-primary);
+  color: var(--color-teal-300);
   white-space: nowrap;
+}
+
+.fader-strip-foot {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
 }
 
 .fader-ghost-value {
   color: var(--color-text-muted);
   font-size: var(--text-xs);
+}
+
+/* Main's "Fader pos." (§21.13), on the readout's own line. */
+.fader-readout-note {
+  font-family: var(--font-body);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
 }
 
 /* A held detent turns the readout amber, so being held is visible without
@@ -2415,29 +2781,58 @@ button.clock:hover {
   letter-spacing: 0.06em;
 }
 
-/* The whole track is the hit target (§24.4 "44 × 44 minimum") — not just the
- * thumb — and owns pointer capture, keyboard focus and the ARIA slider role. */
+/* The whole travel is the hit target (§24.4 "44 × 44 minimum") — not just
+ * the thumb — and owns pointer capture, keyboard focus and the ARIA slider
+ * role. At least as wide as the thumb, which is wider than 44 px. */
 .fader-track-wrap {
   position: relative;
-  display: flex;
-  justify-content: center;
-  width: var(--touch-min);
-  min-height: calc(var(--space-20) * 2);
-  flex: 1;
-  touch-action: none; /* the drag is vertical; nothing above should also pan the page */
+  flex: none;
+  width: max(var(--touch-min), var(--fader-thumb-width));
+  /* The drag along the fader is the fader's; the swipe across it belongs to
+   * the row, which scrolls sideways. `FaderStrip` holds back a touch's jump
+   * until it knows which (`touchIntent.ts`), and the browser's cancel when
+   * it takes the swipe leaves the level alone. */
+  touch-action: pan-x;
   cursor: pointer;
   border-radius: var(--radius-sm);
 }
 
-/* The printed legend (§5.5, §21.13): the law's labelled points, left of the
- * track, each centred on its own position; a detent (unity) is longer and
- * brighter, because it is the reference an operator looks for. */
-.fader-scale {
+/* A fader that takes no gesture passes every swipe on to what scrolls. */
+.fader-track-wrap[aria-disabled="true"],
+.fader-track-wrap[aria-readonly="true"] {
+  touch-action: pan-x pan-y;
+}
+
+/* The thumb's travel: inset by half the thumb at each end, so the thumb at
+ * either end of travel stays inside the zone and never sits on the label,
+ * the readout or the button. Pointer positions are read against this box. */
+.fader-travel {
   position: absolute;
-  top: 0;
-  bottom: 0;
-  right: 100%;
+  top: var(--fader-half-thumb);
+  bottom: var(--fader-half-thumb);
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+}
+
+/* The printed legend (§5.5, §21.13): the law's labelled points, left of the
+ * track, each centred on its own position — on the same inset as the travel,
+ * so a mark and the thumb at that value line up. A detent (unity) is longer
+ * and brighter, because it is the reference an operator looks for. */
+.fader-scale {
+  position: relative;
+  flex: none;
+  width: var(--fader-scale-width);
   pointer-events: none;
+}
+
+.fader-scale-travel {
+  position: absolute;
+  top: var(--fader-half-thumb);
+  bottom: var(--fader-half-thumb);
+  left: 0;
+  right: 0;
 }
 
 .fader-scale-mark {
@@ -2467,7 +2862,7 @@ button.clock:hover {
 }
 
 .fader-scale-mark[data-detent="true"]::after {
-  width: var(--space-2);
+  width: var(--space-3);
 }
 
 .fader-track-wrap:focus-visible {
@@ -2500,9 +2895,11 @@ button.clock:hover {
   box-shadow: 0 0 0 var(--focus-ring-width) var(--color-danger);
 }
 
+/* The machined channel (§21.4): clearly visible against the card, full
+ * travel, recessed. */
 .fader-track {
   position: relative;
-  width: var(--space-2);
+  width: var(--fader-track-width);
   height: 100%;
   border-radius: var(--radius-full);
   background: linear-gradient(
@@ -2513,6 +2910,7 @@ button.clock:hover {
     var(--color-fader-track-edge)
   );
   box-shadow: var(--shadow-fader-track);
+  outline: var(--hairline) solid var(--border-overlay);
 }
 
 /* The track carries the full gradient at all times; the cover shrinks
@@ -2533,7 +2931,10 @@ button.clock:hover {
   right: 0;
   background: var(--color-fader-cover);
   border-radius: inherit;
-  transition: height var(--duration-fast) var(--ease-out);
+}
+
+.fader-track-wrap:not([data-dragging="true"]) .fader-cover {
+  transition: height var(--duration-fast) var(--ease-out), width var(--duration-fast) var(--ease-out);
 }
 
 /* Muted: the cover extends to full, hiding the gradient entirely; the thumb
@@ -2546,6 +2947,7 @@ button.clock:hover {
 
 .fader-track[data-muted="true"] .fader-cover {
   height: 100%;
+  width: 100%;
   background: repeating-linear-gradient(
     45deg,
     var(--color-fader-muted),
@@ -2590,21 +2992,131 @@ button.clock:hover {
   transform: translateY(50%);
 }
 
+/* The cap (§21.4): wide and flat, like a console fader's. Centred on its
+ * position; the travel's inset keeps it inside the zone at both ends. */
 .fader-thumb {
   position: absolute;
   left: 50%;
-  width: var(--touch-thumb);
-  height: var(--touch-thumb);
+  z-index: 1;
+  width: var(--fader-thumb-width);
+  height: var(--fader-thumb-height);
   transform: translate(-50%, 50%);
   border-radius: var(--radius-sm);
   background: linear-gradient(to bottom, var(--color-fader-thumb), var(--color-fader-thumb-mid) 60%, var(--color-fader-thumb-edge));
   box-shadow: var(--shadow-fader-thumb);
+  pointer-events: none;
+}
+
+/* The cap's grip line, as on a real fader. */
+.fader-thumb::after {
+  content: "";
+  position: absolute;
+  left: var(--space-2);
+  right: var(--space-2);
+  top: 50%;
+  height: var(--hairline);
+  background: var(--color-fader-thumb-edge);
 }
 
 /* A law's detent held under the pointer: the cap shows a ring (§21.2, §21.13). */
 .fader-thumb[data-detent="true"] {
-  outline: var(--focus-ring-width) solid var(--color-teal-300);
-  outline-offset: var(--focus-ring-offset);
+  outline: var(--focus-ring-width) solid var(--color-warning);
+  outline-offset: var(--hairline);
+}
+
+/* The meter slot, right of the fader, on the travel's own inset so a meter
+ * mark lines up with the printed scale (§21.13). */
+.fader-meter-slot {
+  position: relative;
+  flex: none;
+  margin-left: auto;
+  padding: var(--fader-half-thumb) 0;
+  display: flex;
+}
+
+/* Horizontal (the Lighting header's Master, §21.11): label, track, readout
+ * in a row — the Fade slider's own shape, with the fader's gradient. */
+.fader-strip[data-orientation="horizontal"] {
+  --fader-half-thumb: calc(var(--fader-hknob-size) / 2);
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
+  width: auto;
+  flex: 1;
+  padding: 0;
+  border: none;
+  background: transparent;
+  overflow: visible;
+}
+
+.fader-strip[data-orientation="horizontal"] .fader-label {
+  flex: none;
+  color: var(--color-text-secondary);
+  font-weight: var(--weight-medium);
+}
+
+.fader-strip[data-orientation="horizontal"] .fader-track-wrap {
+  flex: 1;
+  width: auto;
+  min-width: var(--fader-htrack-min);
+  height: var(--touch-min);
+  touch-action: pan-y; /* on its side: the page's vertical scroll passes, the drag along it is the fader's */
+}
+
+.fader-strip[data-orientation="horizontal"] .fader-travel {
+  top: 0;
+  bottom: 0;
+  left: var(--fader-half-thumb);
+  right: var(--fader-half-thumb);
+  align-items: center;
+}
+
+.fader-strip[data-orientation="horizontal"] .fader-track {
+  width: 100%;
+  height: var(--fader-htrack-height);
+}
+
+.fader-strip[data-orientation="horizontal"] .fader-fill {
+  background: var(--color-teal-500);
+}
+
+.fader-strip[data-orientation="horizontal"] .fader-cover {
+  left: auto;
+  top: 0;
+  bottom: 0;
+  right: 0;
+}
+
+.fader-strip[data-orientation="horizontal"] .fader-ghost-mark,
+.fader-strip[data-orientation="horizontal"] .fader-ceiling-mark {
+  top: calc(-1 * var(--space-1));
+  bottom: calc(-1 * var(--space-1));
+  left: auto;
+  right: auto;
+  width: var(--hairline);
+  height: auto;
+  transform: translateX(-50%);
+}
+
+.fader-strip[data-orientation="horizontal"] .fader-thumb {
+  top: 50%;
+  left: auto;
+  width: var(--fader-hknob-size);
+  height: var(--fader-hknob-size);
+  border-radius: var(--radius-full);
+  transform: translate(-50%, -50%);
+}
+
+.fader-strip[data-orientation="horizontal"] .fader-thumb::after {
+  content: none;
+}
+
+.fader-strip[data-orientation="horizontal"] .fader-readout {
+  flex: none;
+  margin-top: 0;
+  min-width: calc(var(--space-12) + var(--space-4));
+  justify-content: flex-start;
+  font-size: var(--text-sm);
 }
 
 /* ── Lighting operator view (§21.11) ─────────────────────────────────────── */
@@ -2614,54 +3126,62 @@ button.clock:hover {
   gap: var(--space-5);
 }
 
+/* The header card (§21.11; the mock's Fade / Master card): Fade and Save
+ * look on one row, Master and External control on the next, the two
+ * sliders the same length and lined up under each other. */
 .lighting-header {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-4);
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-md);
+  border: var(--hairline) solid var(--border-elevated);
+  background: var(--color-bg-surface);
 }
 
-.lighting-header-row {
+.lighting-header-row,
+.lighting-master-row {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: var(--space-4);
   flex-wrap: wrap;
 }
 
-.lighting-fade-control {
+.lighting-fade-control,
+.lighting-master-fader {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  flex: 1;
+  flex: 1 1 auto;
+  max-width: calc(var(--space-20) * 7);
   min-width: calc(var(--space-20) * 3);
 }
 
-.lighting-fade-control label {
+.lighting-fade-control label,
+.lighting-master-fader .fader-label {
+  min-width: var(--space-16);
   color: var(--color-text-secondary);
+  font-family: var(--font-mono);
   font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-regular);
   flex: none;
+  text-align: left;
 }
 
 .lighting-fade-control input[type="range"] {
   flex: 1;
+  min-height: var(--touch-min);
   accent-color: var(--color-teal-500);
 }
 
 .lighting-fade-value {
   font-family: var(--font-mono);
   font-size: var(--text-sm);
-  color: var(--color-text-primary);
+  color: var(--color-teal-300);
   flex: none;
-  min-width: calc(var(--space-8) + var(--space-2));
-  text-align: right;
-}
-
-.lighting-master-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  flex-wrap: wrap;
+  min-width: calc(var(--space-12) + var(--space-4));
+  text-align: left;
 }
 
 /* External control's LED toggle: amber and glowing when active, unlit off (§21.11) */
@@ -2775,6 +3295,10 @@ button.clock:hover {
   overscroll-behavior-x: contain;
   scroll-snap-type: x proximity;
   padding: var(--space-4);
+  /* Snap to a strip's edge inside the padding, not flush with the row's own
+   * edge: otherwise the row rests scrolled by its padding, and reads as
+   * having more to the left (its scroll arrow showed at the start). */
+  scroll-padding-inline: var(--space-4);
   scrollbar-width: thin;
 }
 
@@ -2783,30 +3307,111 @@ button.clock:hover {
   flex: none;
 }
 
-.lighting-group-strip,
-.lighting-fixture-strip {
+/* ── Scroll arrows on a sideways-scrolling strip row (`ScrollRow.tsx`) ──────
+ * The wrapper only positions the arrows; the scrolling element inside it
+ * keeps its own class and fills the wrapper, so a view's own layout rule
+ * now names the wrapper (`.page-surface-row`, `.mixer-desk-row`). */
+.scroll-row {
+  position: relative;
   display: flex;
   flex-direction: column;
-  align-items: stretch;
-  gap: var(--space-2);
-  width: calc(var(--space-20) + var(--space-4));
-  padding: var(--space-3);
+  min-width: 0;
+}
+
+.scroll-row > :first-child {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Below the desktop breakpoint there is no margin beside the row: the arrow
+ * overlays the row's edge on a translucent backing, level with the strips'
+ * name heads (plain text), above every fader's hit area. */
+.scroll-row-arrow {
+  position: absolute;
+  top: var(--scroll-row-arrow-top, var(--space-4));
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--touch-min);
+  height: var(--touch-min);
+  border: var(--hairline) solid var(--border-elevated);
   border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-bg-base) 80%, transparent);
+  color: var(--color-text-primary);
+  transition: background-color var(--duration-base) var(--ease-in-out);
 }
 
-/* Group colour identity accent at the top of the strip — never status (§21.3) */
-.lighting-group-accent,
-.lighting-fixture-accent {
-  height: var(--space-1);
-  border-radius: var(--radius-full);
-  background: var(--accent-colour, var(--color-bg-overlay));
+.scroll-row-arrow[hidden] {
+  display: none;
 }
 
-.lighting-dominated-hint {
-  font-size: var(--text-xs);
-  line-height: var(--leading-xs);
-  color: var(--color-text-muted);
-  text-align: center;
+.scroll-row-arrow:hover {
+  background: var(--color-bg-elevated);
+}
+
+.scroll-row-arrow:active {
+  background: var(--color-bg-overlay);
+}
+
+.scroll-row-arrow[data-side="start"] {
+  left: 0;
+}
+
+.scroll-row-arrow[data-side="end"] {
+  right: 0;
+}
+
+/* From the desktop breakpoint `#main` keeps a --space-16 margin each side
+ * (`.shell-main`): the arrows sit in it, outside the row, and cover nothing. */
+@media (min-width: theme(--breakpoint-desktop)) {
+  .scroll-row-arrow {
+    height: var(--touch-primary);
+    border-color: transparent;
+    background: transparent;
+    color: var(--color-text-secondary);
+  }
+
+  .scroll-row-arrow[data-side="start"] {
+    left: auto;
+    right: calc(100% + var(--space-2));
+  }
+
+  .scroll-row-arrow[data-side="end"] {
+    right: auto;
+    left: calc(100% + var(--space-2));
+  }
+}
+
+/* The hirer surface's 72 px minimum (§24.6) applies to the arrows too. At
+ * 72 px an arrow is wider than the margin beside the row; it keeps to the
+ * margin and the row's own padding (--space-4), never over a strip at rest. */
+.scroll-row:has(> .page-surface-hirer) > .scroll-row-arrow {
+  width: var(--touch-hirer);
+  height: var(--touch-hirer);
+}
+
+@media (min-width: theme(--breakpoint-desktop)) {
+  .scroll-row:has(> .page-surface-hirer) > .scroll-row-arrow[data-side="start"] {
+    right: calc(100% - var(--space-2));
+  }
+
+  .scroll-row:has(> .page-surface-hirer) > .scroll-row-arrow[data-side="end"] {
+    left: calc(100% - var(--space-2));
+  }
+}
+
+/* Two rows share the view, so each has a fixed height: the mock's 430 px
+ * card, about 280 px of fader travel (`FaderStrip`, §21.5). */
+.lighting-scroller > .fader-strip {
+  height: var(--fader-strip-height);
+}
+
+/* The stage plan's "double-tap for fader" sheet (§21.12): the same card,
+ * centred, at the fixed-row height — the sheet has no row to take one from. */
+.fader-strip.stage-plan-fader {
+  height: var(--fader-strip-height);
+  margin: 0 auto;
 }
 
 .lighting-section-title {
@@ -2832,6 +3437,17 @@ button.clock:hover {
   width: 100%;
   height: auto;
   display: block;
+  /* The drawing is mostly background, and the page must scroll from it on a
+   * touch screen. Only where a drag can start — a fixture in edit mode — is
+   * the touch the plan's own; and while one is under way the whole drawing
+   * holds it, so the page never pans beneath the dragged fixture. Chromium
+   * ignores touch-action inside an SVG, so `FixtureNode` also prevents the
+   * default on a drag source's own touchstart. */
+  touch-action: pan-x pan-y;
+}
+
+.stage-plan-svg[data-dragging="true"],
+.stage-plan-svg .fixture-node-wrap[data-drag-source="true"] {
   touch-action: none;
 }
 
@@ -3946,10 +4562,15 @@ button.colour-swatch[data-selected] {
 }
 
 /* ── Mixer operator view (§21.13) ────────────────────────────────────────── */
+/* The view fills the height the shell gives it, so the desk row — and its
+ * faders — take everything below the scene band (never shorter than the
+ * mock's card, `--fader-strip-height`, never taller than the cap). */
 .mixer-view {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+  height: 100%;
+  min-height: 0;
 }
 
 .mixer-metering-notice {
@@ -3959,30 +4580,78 @@ button.colour-swatch[data-selected] {
   color: var(--color-warning-text);
 }
 
-/* Row on tablet and up (the `tablet:` variant is applied in the component);
- * stacked on a phone, where the outputs panel and Main follow the inputs
- * panel rather than sitting beside it. */
-.mixer-body {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: var(--space-4);
-  padding: 0 var(--space-4) var(--space-4);
+/* The desk row: inputs · hairline · outputs drawer · Main, packed from the
+ * left so Main sits right after the inputs (the mock). Measured for width
+ * by `MixerView` (`inputLayout`); it scrolls sideways only if even one page
+ * does not fit. The height rules are on its `ScrollRow` wrapper, which is
+ * the view's flex item; the desk fills it. The arrows sit level with the
+ * strips' heads, below the column header. */
+.mixer-desk-row {
+  flex: 1 1 0;
+  min-height: calc(var(--fader-strip-height) + var(--touch-min) + var(--space-3));
+  /* The strips' own cap plus the column header, so the hairline after the
+   * inputs ends where the strips do. */
+  max-height: calc(var(--fader-strip-max-height) + var(--touch-min) + var(--space-3));
+  --scroll-row-arrow-top: calc(var(--touch-min) + var(--space-3));
 }
 
-.mixer-inputs-panel {
+.mixer-desk {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-3);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+
+/* One column per section: a header of one fixed height (so every strip's
+ * top edge lines up across columns), then its strips. */
+.mixer-column {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  flex: 1;
-  min-width: 0;
+  flex: none;
+  min-height: 0;
 }
 
-.mixer-inputs-header {
+.mixer-column[hidden] {
+  display: none;
+}
+
+.mixer-column-header {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  flex-wrap: wrap;
+  min-height: var(--touch-min);
+  flex: none;
+}
+
+.mixer-column-header .lighting-section-title {
+  padding: 0;
+}
+
+.mixer-strips {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-3);
+}
+
+.mixer-strips > .fader-strip {
+  height: auto;
+  max-height: var(--fader-strip-max-height);
+}
+
+.mixer-divider {
+  flex: none;
+  width: var(--hairline);
+  margin: calc(var(--touch-min) + var(--space-3)) 0 0;
+  background: var(--border-input);
+}
+
+.mixer-divider[hidden] {
+  display: none;
 }
 
 /* Always fully visible, never collapsed (§21.13); the row itself scrolls
@@ -4003,7 +4672,7 @@ button.colour-swatch[data-selected] {
    * still clears it without adding one (CONVENTIONS "Interface") is --space-10. */
   min-height: var(--space-10);
   padding: 0 var(--space-3);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-full);
   border: var(--hairline) solid var(--border-input);
   background: var(--color-bg-base);
   color: var(--color-text-secondary);
@@ -4022,11 +4691,12 @@ button.colour-swatch[data-selected] {
 .mixer-outputs-toggle {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: var(--space-2);
+  width: 100%;
   min-height: var(--touch-min);
   padding: 0 var(--space-3);
-  margin-left: auto;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-full);
   border: var(--hairline) solid var(--border-input);
   background: var(--color-bg-base);
   color: var(--color-text-secondary);
@@ -4039,84 +4709,43 @@ button.colour-swatch[data-selected] {
   color: var(--color-teal-300);
 }
 
-/* Panels never scroll vertically (§21.9, B63): a fixed-size page of strips,
- * laid out in a row that reflows narrower rather than overflowing. */
-.mixer-input-strips,
-.mixer-outputs-strips {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-4);
-  flex-wrap: wrap;
-}
-
 .mixer-no-inputs {
   margin: 0;
   color: var(--color-text-muted);
   font-size: var(--text-sm);
 }
 
-/* The drawer (wide) / outputs page (narrow) — one toggled panel either way
- * (§21.13); which arrangement it reads as is left to the tablet: breakpoint
- * rather than two separate trees. Closed, it collapses to nothing rather
- * than sliding fully off-screen, which is enough to prove the interaction
- * without a transform animation this view does not need to own. */
+/* The drawer (§21.13): always mounted; closed it collapses to nothing, open
+ * it is exactly as wide as its strips — output count × (strip + gap), the
+ * arithmetic `--mixer-output-count` carries — so no output is ever clipped. */
 .mixer-outputs-panel {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
   max-width: 0;
   overflow: hidden;
   opacity: 0;
+  margin-left: calc(-1 * var(--space-3)); /* closed, it takes no gap either */
   transition:
     max-width var(--duration-moderate) var(--ease-out),
     opacity var(--duration-base) var(--ease-out);
 }
 
 .mixer-outputs-panel[data-open="true"] {
-  max-width: calc(var(--space-20) * 6);
+  max-width: calc(var(--mixer-output-count, 0) * (var(--fader-strip-width) + var(--space-3)) + var(--space-3));
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
   opacity: 1;
-  padding-left: var(--space-4);
-  border-left: var(--hairline) solid var(--border-elevated);
+  margin-left: 0;
+  padding-right: var(--space-3);
+  border-right: var(--hairline) solid var(--border-input);
 }
 
-.mixer-main-panel {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  flex: none;
-  padding-left: var(--space-4);
-  border-left: var(--hairline) solid var(--border-elevated);
-}
-
-.mixer-fader-pos-label {
-  margin: 0;
-  text-align: center;
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
-}
-
-.mixer-channel-strip {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-2);
-  width: calc(var(--space-20) + var(--space-4));
-  padding: var(--space-3);
-  border-radius: var(--radius-md);
-}
-
-.mixer-strip-body {
-  display: flex;
-  align-items: stretch;
-  gap: var(--space-1);
-}
 
 /* Origin badge (§21.13, §7.3): teal mono text, top-right of the strip. */
 .mixer-origin-badge {
   position: absolute;
-  top: var(--space-1);
-  right: var(--space-1);
+  top: var(--space-2);
+  right: var(--space-2);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   font-weight: var(--weight-semibold);
@@ -4124,6 +4753,10 @@ button.colour-swatch[data-selected] {
   color: var(--color-teal-300);
 }
 
+/* Mute (§21.4, the mock's `.mu`): a recessed button the width of the card,
+ * 44 px tall (`--touch-mute`) — modest beside a tall fader. Muted, it lights:
+ * a dark red face, red text and a glow — an indicator, not a red slab
+ * (CONVENTIONS "semantic colours are indicators, never large fills"). */
 .mixer-mute-button {
   display: inline-flex;
   align-items: center;
@@ -4131,10 +4764,10 @@ button.colour-swatch[data-selected] {
   min-height: var(--touch-mute);
   width: 100%;
   border-radius: var(--radius-sm);
-  background: var(--color-mute-off);
-  /* text-secondary measures below 4.5:1 on this background (bg-overlay,
-   * §24.4's own prohibited combination) — text-primary clears it easily. */
-  color: var(--color-text-primary);
+  border: var(--hairline) solid var(--border-input);
+  background: var(--color-bg-base);
+  box-shadow: var(--shadow-mute-inset);
+  color: var(--color-text-secondary);
   font-size: var(--text-xs);
   font-weight: var(--weight-semibold);
   letter-spacing: 0.06em;
@@ -4142,11 +4775,10 @@ button.colour-swatch[data-selected] {
 }
 
 .mixer-mute-button[aria-pressed="true"] {
-  background: var(--color-mute-active);
-  /* text-primary measures 3.4:1 on this background (danger red is not one
-   * of §24.4's background layers, so nothing had checked it) — text-inverse
-   * clears 4.5:1 with room to spare. */
-  color: var(--color-text-inverse);
+  background: color-mix(in srgb, var(--color-danger) 16%, var(--color-bg-base));
+  border-color: var(--color-danger);
+  color: var(--color-danger-text);
+  box-shadow: var(--mute-glow);
 }
 
 .mixer-mute-button:disabled {
@@ -4154,23 +4786,72 @@ button.colour-swatch[data-selected] {
   cursor: not-allowed;
 }
 
+/* Bump (owner decision 2026-10-01; the mock's `.mu` under a group strip):
+ * the mute button's recessed face, momentary. Held, it lights in the
+ * primary teal — an active state, not a warning, so not mute's red — with
+ * an LED-style glow. `touch-action: none`: a press on it is a flash, never
+ * the start of the row's sideways swipe; no callout or selection on a long
+ * press. */
+.lighting-bump-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--touch-mute);
+  width: 100%;
+  border-radius: var(--radius-sm);
+  border: var(--hairline) solid var(--border-input);
+  background: var(--color-bg-base);
+  box-shadow: var(--shadow-mute-inset);
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.lighting-bump-button[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--color-teal-500) 22%, var(--color-bg-base));
+  border-color: var(--color-teal-500);
+  color: var(--color-teal-300);
+  box-shadow: 0 0 var(--led-glow-blur) var(--led-glow-spread) color-mix(in srgb, var(--color-teal-500) 60%, transparent);
+}
+
+.lighting-bump-button:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: not-allowed;
+}
+
+.page-surface-hirer .lighting-bump-button {
+  min-height: var(--touch-hirer);
+}
+
 .mixer-pan {
   width: 100%;
   accent-color: var(--color-teal-500);
 }
 
-/* The meter (§21.13 "Metering"): a narrow bar per driver reference, visually
- * distinct from the fader's own gradient so position and level are never
- * confused — the fader fills from a flat colour, the meter from bands. */
+/* The meter (§21.13 "Metering"): a narrow bar per driver reference down the
+ * right of the strip, visually distinct from the fader's own gradient so
+ * position and level are never confused — the fader fills from a flat
+ * colour, the meter from bands. Stereo bars are narrower, side by side. */
 .mixer-meter {
+  position: relative;
   display: flex;
   align-items: stretch;
-  gap: var(--space-1);
+  gap: var(--meter-bar-gap);
 }
 
 .mixer-meter-bar {
   display: flex;
-  width: var(--space-2);
+  width: var(--meter-bar-width);
+}
+
+.mixer-meter[data-bars="2"] .mixer-meter-bar {
+  width: var(--meter-bar-width-stereo);
 }
 
 .mixer-meter-track {
@@ -4194,6 +4875,26 @@ button.colour-swatch[data-selected] {
   right: 0;
   height: var(--hairline);
   background: var(--color-text-primary);
+}
+
+/* The law's 0 dB across the bars — the same reference the scale prints. */
+.mixer-meter-zero {
+  position: absolute;
+  left: calc(-1 * var(--space-1));
+  right: 0;
+  height: var(--hairline);
+  background: var(--color-warning);
+  opacity: 0.8;
+  transform: translateY(50%);
+  pointer-events: none;
+}
+
+/* Metering is up but nothing has arrived for this channel: the slot keeps
+ * its place, as a dashed outline with nothing inside — not a dark track,
+ * which would read as silence (B58). */
+.mixer-meter[data-state="no-data"] .mixer-meter-bar {
+  border: var(--hairline) dashed var(--border-input);
+  border-radius: var(--radius-sm);
 }
 
 /* ── Desk scene band (§21.13) ────────────────────────────────────────────── */
@@ -4259,9 +4960,28 @@ button.colour-swatch[data-selected] {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  /* Display scale (§21.9): everything grows together as one logical unit —
-   * strips, type, buttons — never a second layout path for a tall display. */
-  zoom: var(--page-display-scale, 1);
+}
+
+/* Views whose faders fill the height that is left (§21.9 "Faders take the
+ * height that is left", §21.13): the shell's main area becomes a column so
+ * the view can grow to all of it — never shrink below its own content, so
+ * anything taller still scrolls `#main` as before (and nothing else in
+ * `#main` is squeezed). The hirer's page surface sits in `#main` directly. */
+.shell-main:has(> .page-surface-view, > .mixer-view, > .page-surface-flow, > .page-surface-row) {
+  display: flex;
+  flex-direction: column;
+}
+
+.shell-main:has(> .page-surface-view, > .mixer-view, > .page-surface-flow, > .page-surface-row) > * {
+  flex-shrink: 0;
+}
+
+.shell-main > .page-surface-view,
+.shell-main > .mixer-view,
+.shell-main > .page-surface-flow,
+.shell-main > .page-surface-row {
+  flex: 1 0 auto;
+  height: auto;
 }
 
 .page-tabs-row {
@@ -4270,26 +4990,6 @@ button.colour-swatch[data-selected] {
   justify-content: space-between;
   flex-wrap: wrap;
   gap: var(--space-3);
-}
-
-.page-display-scale {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 0 var(--space-3);
-  color: var(--color-text-secondary);
-  font-size: var(--text-xs);
-}
-
-.page-display-scale input[type="range"] {
-  accent-color: var(--color-teal-500);
-}
-
-.page-display-scale-value {
-  min-width: var(--space-8);
-  font-family: var(--font-mono);
-  color: var(--color-teal-300);
-  text-align: right;
 }
 
 /* One horizontal flow of strips, trays and panels, in `sort_order` (§21.9
@@ -4310,12 +5010,30 @@ button.colour-swatch[data-selected] {
   overscroll-behavior-x: contain;
   scroll-snap-type: x proximity;
   padding: var(--space-4);
+  scroll-padding-inline: var(--space-4); /* as `.lighting-scroller` */
   scrollbar-width: thin;
 }
 
 .page-surface-flow > * {
   scroll-snap-align: start;
   flex: none;
+}
+
+.page-surface-view > .page-surface-flow,
+.page-surface-view > .page-surface-row {
+  flex: 1 1 0;
+  /* A floor for a short screen: below it `#main` scrolls, not the strips. */
+  min-height: calc(var(--fader-zone-min) + var(--space-20) * 3);
+}
+
+/* A page item's wrapper passes the row's height straight to its strip. */
+.page-surface-flow > .page-item {
+  display: flex;
+  align-items: stretch;
+}
+
+.page-surface-flow .fader-strip {
+  height: auto;
 }
 
 /* §24.6's hirer overrides — 72 px minimum on every interactive element,
@@ -4344,13 +5062,12 @@ button.colour-swatch[data-selected] {
   gap: var(--space-2);
 }
 
-/* The Pages surface fixes its own strip footprint at 150 px (§21.9 "A 2-wide
+/* The Pages surface fixes its strip footprint at 150 px (§21.9 "A 2-wide
  * panel is 314 px — two 150 px strips plus the 14 px between them"; §21.21
- * "A 150 px strip at 13.5 px"), distinct from the Mixer and Lighting views'
- * own narrower strip (`--space-20 + --space-4`) — this selector reaches only
- * a strip mounted inside the Pages flow, never those other views. */
-.page-surface-flow .mixer-channel-strip,
-.page-surface-flow .lighting-fixture-strip {
+ * "A 150 px strip at 13.5 px"). Every strip card is that width now
+ * (`--fader-strip-width`), so this only pins the Pages surface to its own
+ * token should the two ever be set apart. */
+.page-surface-flow .fader-strip {
   width: var(--pages-strip-width);
 }
 
@@ -4368,7 +5085,7 @@ button.colour-swatch[data-selected] {
 .page-group-tray {
   position: relative;
   display: flex;
-  align-items: flex-end;
+  align-items: stretch;
   gap: 0;
   padding: var(--space-6) var(--space-3) var(--space-3);
   border-radius: var(--radius-lg);
@@ -4397,7 +5114,7 @@ button.colour-swatch[data-selected] {
  * (base.css). */
 .page-group-tray-members {
   display: flex;
-  align-items: flex-end;
+  align-items: stretch;
   gap: var(--pages-strip-gap);
   overflow: hidden;
   width: 0;
@@ -4414,16 +5131,14 @@ button.colour-swatch[data-selected] {
   opacity: 1;
 }
 
-.page-group-tray-master {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-2);
-  flex: none;
-  padding: var(--space-3);
-  border-radius: var(--radius-md);
+.page-group-tray-members > .fader-strip {
+  height: auto;
+}
+
+/* The master's own card, tinted a little more than the tray around it. */
+.fader-strip.page-group-tray-master {
   background: color-mix(in srgb, var(--accent-colour, var(--color-bg-overlay)) 16%, var(--color-bg-surface));
-  border: var(--hairline) solid color-mix(in srgb, var(--accent-colour, var(--color-bg-overlay)) 30%, transparent);
+  border-color: color-mix(in srgb, var(--accent-colour, var(--color-bg-overlay)) 30%, transparent);
 }
 
 .page-group-tray-toggle {
@@ -4431,7 +5146,7 @@ button.colour-swatch[data-selected] {
   align-items: center;
   justify-content: center;
   gap: var(--space-1);
-  min-height: var(--space-6);
+  min-height: var(--touch-min);
   padding: 0 var(--space-2);
   border-radius: var(--radius-sm);
   border: var(--hairline) solid var(--border-overlay);
@@ -4581,22 +5296,46 @@ button.colour-swatch[data-selected] {
   border-radius: var(--radius-md);
 }
 
-/* Phone landscape (§21.9 "Phone landscape"): compact strip furniture, so the
- * fader row keeps as much travel as the rail leaves it. The rail itself is
- * `.nav-rail` (§21.6), shared with every operator route. */
+/* Phone landscape (§21.9 "Phone landscape"): compact strip furniture — no
+ * reference tag, a smaller readout and mute — on every view's strips (the
+ * Pages surface and the Mixer alike), so the fader row keeps as much travel
+ * as the floating rail leaves it. The rail itself is `.nav-rail` (§21.6),
+ * shared with every operator route. */
 @media (max-height: theme(--viewport-short-height)) {
   .page-surface-flow {
     gap: var(--space-2);
     padding: var(--space-2);
+    scroll-padding-inline: var(--space-2);
   }
 
-  .page-surface-flow .fader-readout {
+  /* The short-screen floor (above) is itself taller than a phone's height. */
+  .page-surface-view > .page-surface-flow,
+  .page-surface-view > .page-surface-row {
+    min-height: 0;
+  }
+
+  .fader-strip {
+    padding: var(--space-2);
+  }
+
+  .fader-strip .fader-sublabel {
+    display: none;
+  }
+
+  .fader-strip .fader-readout {
     font-size: var(--text-xs);
   }
 
-  .page-surface-flow .mixer-mute-button {
+  .fader-strip .mixer-mute-button,
+  .fader-strip .lighting-bump-button {
     min-height: var(--space-6);
     font-size: var(--text-xs);
+  }
+
+  /* The desk row's 1080p floor (the fixed-row card) is taller than the
+   * whole phone; here the row takes what is left, down to the zone floor. */
+  .mixer-desk-row {
+    min-height: 0;
   }
 }
 

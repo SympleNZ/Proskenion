@@ -572,13 +572,16 @@ class LightingDomain(Domain):
     by the broadcaster — display-only, never composited, never persisted
     (§7.2.7). ``master`` resets to 100 at boot and ``external_control`` only
     restores ``manual`` (§12.3) — see :meth:`restore_value`.
+
+    There is no group field: a group fader sets its members' levels (owner
+    decision 2026-09-30). A ``group_multipliers`` row persisted by an older
+    release is ignored at restore, as every key not declared here is.
     """
 
     NAME = "lighting"
     FIELDS = (
         mapping("levels", persist="continuous", restorable=True),
         mapping("colour", persist="continuous", restorable=True),
-        mapping("group_multipliers", persist="continuous", restorable=True),
         scalar("master", 100.0),
         mapping("binding_states"),
         scalar("external_control", "off", persist="static", restorable=True),

@@ -532,7 +532,7 @@ class Lifecycle:
             self._timesync.enter_degraded()
             self._spawn(self._timesync.run(), "timesync-retry")
 
-        # ├── Restore persisted state: levels, group multipliers, external control
+        # ├── Restore persisted state: levels, colour, external control
         self._restored = await self._state.restore(self._db)
         log.info("state restored", extra={"restored": self._restored})
 
@@ -543,7 +543,7 @@ class Lifecycle:
         await self._persister.start()
 
         # ├── DMX backend: connect and confirm
-        # ├── Restore lighting levels, colour and group multipliers
+        # ├── Restore lighting levels and colour
         #     Already done above (state restored, restarted from ``manual``
         #     only — §12.3). ``LightingService.start(start_renderer=False)``
         #     loads the patch, seeds power-on colour where nothing was

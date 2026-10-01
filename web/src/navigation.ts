@@ -34,17 +34,19 @@ export interface NavItem {
   label: string;
   path: string;
   icon: LucideIcon;
+  /** Two characters for the phone-landscape rail (§21.9 "Phone landscape": PG, SC, MX…). */
+  short?: string;
 }
 
 /** Pages | Scenes | Mixer | Lighting | Stage Plan | Video | Projector — Pages is the default landing. */
 export const OPERATOR_TABS: readonly NavItem[] = [
-  { label: "Pages", path: "pages", icon: LayoutGrid },
-  { label: "Scenes", path: "scenes", icon: Sparkles },
-  { label: "Mixer", path: "mixer", icon: SlidersHorizontal },
-  { label: "Lighting", path: "lighting", icon: Lightbulb },
-  { label: "Stage Plan", path: "stage-plan", icon: Theater },
-  { label: "Video", path: "video", icon: Video },
-  { label: "Projector", path: "projector", icon: Projector },
+  { label: "Pages", path: "pages", icon: LayoutGrid, short: "PG" },
+  { label: "Scenes", path: "scenes", icon: Sparkles, short: "SC" },
+  { label: "Mixer", path: "mixer", icon: SlidersHorizontal, short: "MX" },
+  { label: "Lighting", path: "lighting", icon: Lightbulb, short: "LT" },
+  { label: "Stage Plan", path: "stage-plan", icon: Theater, short: "SP" },
+  { label: "Video", path: "video", icon: Video, short: "VD" },
+  { label: "Projector", path: "projector", icon: Projector, short: "PJ" },
 ];
 
 export interface NavSection {

@@ -33,6 +33,20 @@ Triggers (§8.3) — a closed set, extensible in code only
     due and when it went. A time missed while the controller was down, or
     reached too late, is logged ``missed`` and never replayed.
 
+Re-asserting the panel after a press
+-----------------------------------
+A wall panel flips its own icon when pressed, before anything happens. Once
+a telegram on the trigger address of an enabled knx rule has been handled —
+whatever became of it: fired, failed, blocked by its guard, debounced,
+suppressed, not matched — and what it started has finished (a scene's
+result, a binding's fades), the derived statuses are re-asserted
+(:meth:`~proskenion.rules.derived.DerivedStatusEngine.reassert`): written
+again at their current value, so a press that took effect is confirmed and
+one that did not is corrected. Presses in quick succession coalesce into one
+re-assert :data:`REASSERT_DELAY_S` after the last completion. An echo
+(below) is dropped before any of this, so a status write can never ask for
+another.
+
 No chaining (§8.7) — and knxd's echo
 ------------------------------------
 A rule's actions never trigger another rule. Nothing here emits a
@@ -63,12 +77,12 @@ Actions (§8.9)
 --------------
 ``lighting_group`` — the binding (§8.2)
     Telegram value 1 applies ``on_level``, 0 ``off_level``, through one rule.
-    The group multiplier is forced to 1.0 by a write, then every member's level
-    fades over ``fade_ms`` (§8.8); stage members are first rebased to what they
-    were showing, so a group left below full does not jump up before an off
-    fade. A KNX house dimmer in the group is set directly, since groups do not
-    scale it (§9.4). A one-time write, not a lock; the master applies normally
-    to stage members. **Suppressed while external control holds the group**
+    Every member's level fades to it over ``fade_ms`` — exactly what the
+    group's fader does, since a group fader sets levels (owner decision
+    2026-09-30; §8.8's forcing of a multiplier to 1.0 no longer has anything
+    to force). A KNX house dimmer in the group is set like any member. A
+    one-time write, not a lock; the master applies normally to stage members.
+    **Suppressed while external control holds the group**
     (§8.8, §7.2.7): its command telegrams are ignored and logged
     ``suppressed``. A group of KNX house dimmers only is not held by external
     control, which never gates house lighting, and its binding fires.
@@ -114,7 +128,7 @@ from proskenion.core.events import (
     ProjectorStateChanged,
 )
 from proskenion.core.knx import Priority
-from proskenion.core.lighting import LightingService
+from proskenion.core.lighting import IndicatorOnlyGroupError, LightingService
 from proskenion.core.state import StateStore
 from proskenion.db.connection import Database
 from proskenion.db.crud import knx as knx_crud
@@ -147,6 +161,13 @@ log = logging.getLogger(__name__)
 NOTIFY_MIN_INTERVAL_S = 15 * 60.0
 #: §12.4 gives an in-progress scene fifteen seconds to finish on the way down.
 SCENE_DRAIN_S = 15.0
+#: After a press on a rule's trigger address and what it started have
+#: finished, the derived statuses are re-asserted this long after the last
+#: completion, so a burst of presses yields one re-assert.
+REASSERT_DELAY_S = 0.25
+#: A press's action is waited for at most this long before re-asserting
+#: anyway, so a long scene does not leave the panel wrong for its duration.
+REASSERT_WAIT_S = 10.0
 
 
 # -- what the engine drives ------------------------------------------------------
@@ -298,6 +319,8 @@ class RulesEngine:
         scene_drain_s: float = SCENE_DRAIN_S,
         schedule_clock: ScheduleClock | None = None,
         time_trustworthy: Callable[[], bool] | None = None,
+        reassert_delay_s: float = REASSERT_DELAY_S,
+        reassert_wait_s: float = REASSERT_WAIT_S,
     ) -> None:
         self._db = db
         self._state = state
@@ -343,6 +366,13 @@ class RulesEngine:
         (most callers) trusts it unconditionally, unchanged from before."""
         self.echoes_ignored = 0
         """Telegrams dropped because they were the controller's own (§8.7)."""
+        self._reassert_delay = reassert_delay_s
+        self._reassert_wait = reassert_wait_s
+        self._reassert_inflight = 0
+        self._reassert_since: float | None = None
+        self._reassert_timer: asyncio.TimerHandle | None = None
+        self.reasserts_requested = 0
+        """Coalesced re-asserts handed to derived status after panel presses."""
 
     # -- lifecycle -------------------------------------------------------------
 
@@ -394,6 +424,9 @@ class RulesEngine:
         for handle in self._sustain.values():
             handle.cancel()
         self._sustain.clear()
+        if self._reassert_timer is not None:
+            self._reassert_timer.cancel()
+            self._reassert_timer = None
         if self._scene_tasks:
             await asyncio.wait(set(self._scene_tasks), timeout=self._scene_drain)
         leftover = list(self._tasks | self._scene_tasks)
@@ -445,6 +478,7 @@ class RulesEngine:
                     compare_level=s.compare_level,
                     device_id=s.device_id,
                     compare_state=s.compare_state,
+                    basis=s.basis,
                 )
                 for s in statuses
                 # A lamp-only status (Q6) has no address to look up and is
@@ -479,14 +513,71 @@ class RulesEngine:
                 extra={"group_address": event.group_address, "source": event.source_address},
             )
             return
-        for rule in self._knx_rules.get(event.group_address, ()):
-            await self._execute(
-                rule,
-                event.value,
-                triggered_by=f"knx:{event.group_address}",
-                check_match=True,
-                debounce=True,
-            )
+        rules = self._knx_rules.get(event.group_address, ())
+        if not any(rule.enabled for rule in rules):
+            return  # not a press on anything this controller answers: no re-assert
+        pressed_at = asyncio.get_running_loop().time()
+        completions: list[Awaitable[Any]] = []
+        self._press_started(pressed_at)
+        try:
+            for rule in rules:
+                await self._execute(
+                    rule,
+                    event.value,
+                    triggered_by=f"knx:{event.group_address}",
+                    check_match=True,
+                    debounce=True,
+                    completions=completions,
+                )
+        finally:
+            self._spawn(self._press_finished(completions))
+
+    # -- re-asserting the panel after a press (see the module docstring) -------------
+
+    def _press_started(self, pressed_at: float) -> None:
+        self._reassert_inflight += 1
+        since = self._reassert_since
+        self._reassert_since = pressed_at if since is None else max(since, pressed_at)
+        if self._reassert_timer is not None:
+            # A later press restarts the window: one re-assert after the last.
+            self._reassert_timer.cancel()
+            self._reassert_timer = None
+
+    async def _press_finished(self, completions: list[Awaitable[Any]]) -> None:
+        """Wait for what a press started, then arm the coalesced re-assert."""
+        waiting: set[asyncio.Future[Any]] = set()
+        owned: set[asyncio.Future[Any]] = set()  # wrapped here, so ours to cancel
+        for completion in completions:
+            wrapped: asyncio.Future[Any] = asyncio.ensure_future(completion)
+            waiting.add(wrapped)
+            if wrapped is not completion:
+                owned.add(wrapped)
+        try:
+            if waiting:
+                await asyncio.wait(waiting, timeout=self._reassert_wait)
+        finally:
+            # A fade still running is simply no longer waited for; a scene
+            # task is never cancelled from here.
+            for mine in owned:
+                mine.cancel()
+            for done in waiting:
+                if done.done() and not done.cancelled():
+                    done.exception()  # retrieved; a scene's failure is logged by its task
+            self._reassert_inflight -= 1
+            if self._reassert_inflight == 0 and self._accepting:
+                if self._reassert_timer is not None:
+                    self._reassert_timer.cancel()
+                self._reassert_timer = asyncio.get_running_loop().call_later(
+                    self._reassert_delay, self._reassert_now
+                )
+
+    def _reassert_now(self) -> None:
+        self._reassert_timer = None
+        if not self._accepting or self._reassert_inflight:
+            return  # a later press will arm it again when it finishes
+        since, self._reassert_since = self._reassert_since, None
+        self.reasserts_requested += 1
+        self.derived.reassert(since=since)
 
     def is_own_echo(self, event: KnxTelegramReceived) -> bool:
         """Whether a telegram is the controller's own write coming back (§8.7)."""
@@ -758,7 +849,11 @@ class RulesEngine:
         ignore_enabled: bool = False,
         hirer_originated: bool = False,
         extra_detail: Mapping[str, Any] | None = None,
+        completions: list[Awaitable[Any]] | None = None,
     ) -> FireReport:
+        """One rule, one firing. ``completions``, when given, collects what the
+        action leaves running — a scene's task, a binding's fades — so the
+        caller can wait for it to finish (the re-assert after a press)."""
         if not rule.enabled and not ignore_enabled:
             return FireReport(rule.id, triggered_by, "disabled")
         if check_match and rule.trigger_type == "knx" and not self._matches(rule, value):
@@ -794,9 +889,10 @@ class RulesEngine:
                 inline=inline,
                 hirer_originated=hirer_originated,
                 extra_detail=extra_detail,
+                completions=completions,
             )
         if rule.action_type == "lighting_group":
-            result, detail = self._apply_binding(rule, value)
+            result, detail = self._apply_binding(rule, value, completions=completions)
         elif rule.action_type == "notify":
             result, detail = self._notify(rule, triggered_by)
         else:  # pragma: no cover - the CHECK constraint admits nothing else
@@ -853,11 +949,17 @@ class RulesEngine:
 
     # -- actions (§8.9) ----------------------------------------------------------------
 
-    def _apply_binding(self, rule: Rule, value: object | None) -> tuple[str, dict[str, Any]]:
-        """§8.2, §8.8: force the group multiplier to 1.0, then fade every member.
+    def _apply_binding(
+        self,
+        rule: Rule,
+        value: object | None,
+        *,
+        completions: list[Awaitable[Any]] | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """§8.2, §8.8: fade every member of the group to the binding's level.
 
-        :meth:`LightingService.recall_group` does both in one step, rebasing
-        the stage members first so nothing visibly jumps.
+        :meth:`LightingService.recall_group` — a group-fader write with no
+        scene owner; members a critical scene holds are reported, not set.
         """
         group_id = rule.lighting_group_id
         assert group_id is not None and rule.on_level is not None and rule.off_level is not None
@@ -891,6 +993,14 @@ class RulesEngine:
                 "group_id": group_id,
                 "reason": "the group is not in the lighting configuration",
             }
+        except IndicatorOnlyGroupError:
+            return "failed", {
+                "action": "lighting_group",
+                "group_id": group_id,
+                "reason": "the group is indicator-only and has no fader to recall",
+            }
+        if completions is not None:
+            completions.extend(handle.wait() for handle in recall.handles.values())
         refused = list(recall.refused)  # a critical scene holds them (§10.6)
         detail: dict[str, Any] = {
             "action": "lighting_group",
@@ -915,6 +1025,7 @@ class RulesEngine:
         inline: bool,
         hirer_originated: bool = False,
         extra_detail: Mapping[str, Any] | None = None,
+        completions: list[Awaitable[Any]] | None = None,
     ) -> FireReport:
         assert rule.scene_id is not None
         base = {
@@ -941,6 +1052,8 @@ class RulesEngine:
         task = asyncio.get_running_loop().create_task(run, name=f"rule-{rule.id}-scene")
         self._scene_tasks.add(task)
         task.add_done_callback(self._scene_tasks.discard)
+        if completions is not None:
+            completions.append(task)
         return FireReport(rule.id, triggered_by, "started", guard, base)
 
     async def _run_and_record(
@@ -1165,6 +1278,8 @@ def _outcome(outcome: object) -> object:
 
 __all__ = [
     "NOTIFY_MIN_INTERVAL_S",
+    "REASSERT_DELAY_S",
+    "REASSERT_WAIT_S",
     "SCENE_DRAIN_S",
     "FireReport",
     "KnxPort",

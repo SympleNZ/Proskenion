@@ -25,6 +25,7 @@ from proskenion.core.auth import COOKIE_NAME, TokenService
 from proskenion.core.ratelimit import RateLimiter
 from proskenion.db.connection import Database
 from proskenion.db.crud import knx as knx_crud
+from proskenion.db.crud import lighting as lighting_crud
 from proskenion.db.crud import rules as rules_crud
 from tests.unit.api.conftest import ADMIN_PASSWORD, OPERATOR_PASSWORD, make_client
 from tests.unit.rules.conftest import Rig, add_scene, start_rig, stop_rig
@@ -197,6 +198,88 @@ async def test_a_binding_that_is_not_any_on_a_one_bit_address_is_refused(
     )
     assert numeric.status_code == 422
     assert "1-bit" in fields(numeric)["knx_address_id"][0]
+
+
+async def test_a_binding_on_an_indicator_only_group_is_refused(
+    client: AsyncClient, rig: Rig
+) -> None:
+    """A binding does what the group's fader does (§8.8, owner decision
+    2026-09-30); an indicator-only group has no fader (migration 011), so
+    there is nothing to bind."""
+    await login(client)
+    lamp = await lighting_crud.create_group(rig.db, name="Stage all lamp", indicator_only=True)
+
+    response = await client.post(RULES, json=binding(rig, lighting_group_id=lamp.id))
+
+    assert response.status_code == 422
+    assert code(response) == "validation_failed"
+    message = fields(response)["lighting_group_id"][0]
+    assert "indicator-only" in message and "Stage all lamp" in message
+
+    existing = rig.venue.rules["Stage Bank 2"]
+    current = (await client.get(f"{RULES}/{existing}")).json()
+    repointed = await client.put(
+        f"{RULES}/{existing}",
+        json={"lighting_group_id": lamp.id},
+        headers={VERSION: current["updated_at"]},
+    )
+    assert repointed.status_code == 422
+    assert "indicator-only" in fields(repointed)["lighting_group_id"][0]
+
+
+async def test_a_derived_status_carries_its_basis_defaulting_to_the_stored_level(
+    client: AsyncClient, rig: Rig
+) -> None:
+    await login(client)
+    status_id = rig.venue.statuses["1/0/11"]
+    current = (await client.get(f"{STATUSES}/{status_id}")).json()
+    assert current["basis"] == "level"
+
+    changed = await client.put(
+        f"{STATUSES}/{status_id}",
+        json={"basis": "output"},
+        headers={VERSION: current["updated_at"]},
+    )
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["basis"] == "output"
+    assert next(s for s in rig.engine.derived.statuses if s.id == status_id).basis == "output"
+
+    lamp_only = await client.post(
+        STATUSES,
+        json={
+            "name": "Room lit",
+            "source_type": "lighting_group_all_at",
+            "lighting_group_id": rig.venue.groups["Row 2"],
+            "compare_level": 100,
+            "basis": "output",
+        },
+    )
+    assert lamp_only.status_code == 201, lamp_only.text
+    assert lamp_only.json()["basis"] == "output"
+
+
+async def test_only_a_lighting_status_may_compare_output(client: AsyncClient, rig: Rig) -> None:
+    await login(client)
+    response = await client.post(
+        STATUSES,
+        json={"name": "Desk active", "source_type": "external_control", "basis": "output"},
+    )
+    assert response.status_code == 422
+    assert code(response) == "validation_failed"
+    assert "basis" in fields(response)
+
+    unknown = await client.post(
+        STATUSES,
+        json={
+            "name": "Seen",
+            "source_type": "lighting_group_all_at",
+            "lighting_group_id": rig.venue.groups["Row 2"],
+            "compare_level": 100,
+            "basis": "observed",
+        },
+    )
+    assert unknown.status_code == 422
+    assert code(unknown) == "validation_failed"
 
 
 async def test_a_malformed_cron_is_refused_and_a_valid_one_stored_with_its_next_time(

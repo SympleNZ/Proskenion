@@ -36,6 +36,8 @@ const ARCHIVE: ArchiveSummary = {
   verified_at: "2026-09-01T03:00:00+12:00",
   untrusted: false,
   untrusted_reason: null,
+  checked_at: null,
+  checked_destinations: [],
 };
 
 const RESULT: BackupRestoreResult = {

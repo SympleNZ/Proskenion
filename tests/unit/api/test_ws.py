@@ -288,13 +288,21 @@ def test_backgrounding_stops_continuous_frames_and_resync_restores_them(
                 if message["type"] == "ping":
                     continue
                 seen.append(message)
-                if message["type"] == "lighting_state" and message.get("source") == "resync":
+                if message["type"] == "mixer_meters":
+                    # Domains resync alphabetically ("devices", "lighting",
+                    # "mixer" last), and mixer_meters is built right after
+                    # mixer_state for that domain, so this is the last frame
+                    # of the batch.
                     break
             by_type = {message["type"]: message for message in seen}
             assert by_type["lighting_state"]["channels"] == {"1": {"level": 55.0}}
             assert by_type["lighting_state"]["source"] == "resync"
-            # A stale meter is worse than none: never replayed (§16.8).
-            assert "mixer_meters" not in by_type
+            # mixer_state itself never carries meters...
+            assert "meters" not in by_type["mixer_state"]
+            # ...but the reading missed while backgrounded still reaches the
+            # client, via the fresh one-off catch-up frame (§16.8, B58): not
+            # a replay of the dropped tick, read live at resync time instead.
+            assert by_type["mixer_meters"]["channels"] == {"1": [-12.4]}
 
 
 # -- writes (§16.8, §21.2) -----------------------------------------------------------

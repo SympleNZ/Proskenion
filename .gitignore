@@ -48,3 +48,6 @@ tools/*.log
 
 # Agent worktrees (Claude Code isolation); never part of the repository
 .claude/worktrees/
+
+# Site files (ETS project, exports, captures): private to this installation, never committed
+site/

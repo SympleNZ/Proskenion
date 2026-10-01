@@ -145,8 +145,16 @@ async def fast_projector_polling(interval: float = 0.02) -> AsyncIterator[None]:
 
 @asynccontextmanager
 async def projector_rig(
-    db: Database, state: StateStore, bus: EventBus, stub: PJLinkStub
+    db: Database,
+    state: StateStore,
+    bus: EventBus,
+    stub: PJLinkStub,
+    *,
+    min_warmup_s: int | None = None,
 ) -> AsyncIterator[tuple[DeviceManager, ProjectorService]]:
+    driver: dict[str, Any] = {"password": None}
+    if min_warmup_s is not None:  # None: the driver's own default (60 s)
+        driver["min_warmup_s"] = min_warmup_s
     device = await devices_crud.create(
         db,
         category="projector",
@@ -154,7 +162,7 @@ async def projector_rig(
         name="Projector",
         config={
             "transport": {"type": "tcp", "host": "127.0.0.1", "port": stub.port},
-            "driver": {"password": None},
+            "driver": driver,
         },
     )
     manager = DeviceManager(
@@ -199,7 +207,10 @@ async def test_power_confirms_and_sends_when_the_state_differs(
             )
             assert outcome.result == "confirmed"
             assert power_set_commands(stub) == ["%1POWR 1"]
-            assert service.snapshot().state == "on"
+            # The stub reports "on" at once, but the minimum warm-up hold
+            # (§7.4, default 60 s) shows it warming from our power-on.
+            assert service.snapshot().state == "warming"
+            assert outcome.detail == {"state": "warming"}
 
 
 async def test_power_already_in_the_requested_state_sends_nothing(
@@ -316,11 +327,42 @@ async def test_worked_example_power_then_input_end_to_end(
     db: Database, state: StateStore, bus: EventBus
 ) -> None:
     """§8.13: power at t=0, input at the later delay once it has warmed — both
-    ``✓``. The stub's warm-up, the driver's own transition poll and the
-    scene's delay are all compressed."""
+    ``✓``. "Warmed" now means the controller's minimum warm-up hold has
+    ended (§7.4), not the projector's own ``on`` report: here the stub
+    reports ``on`` after 0.05 s, the hold is 1 s and the input lands at
+    1.5 s. The stub's warm-up, the driver's own transition poll, the hold
+    and the scene's delay are all compressed."""
     async with fast_projector_polling():
         async with PJLinkStub(initial_power="0", warm_seconds=0.05) as stub:
-            async with projector_rig(db, state, bus, stub) as (manager, service):
+            async with projector_rig(db, state, bus, stub, min_warmup_s=1) as (manager, service):
+                engine = SceneEngine(db, state, devices=manager)
+                engine.handlers.register("projector_power", ProjectorPowerHandler(service))
+                engine.handlers.register("projector_input", ProjectorInputHandler(service))
+                scene = await make_scene(
+                    db,
+                    {"domain": "projector_power", "delay_ms": 0, "projector_power": "on"},
+                    {"domain": "projector_input", "delay_ms": 1500, "projector_input": "31"},
+                )
+                try:
+                    handle = await engine.run(scene.id, triggered_by="api:admin")
+                    result = await handle.result()
+                finally:
+                    await engine.stop()
+
+    assert result.result == "success"
+    outcomes = {a.domain: a.result for a in result.actions}
+    assert outcomes == {"projector_power": "confirmed", "projector_input": "confirmed"}
+
+
+async def test_worked_example_input_inside_the_warm_up_hold_fails(
+    db: Database, state: StateStore, bus: EventBus
+) -> None:
+    """The same scene with the input before the hold ends: the projector has
+    already reported ``on``, but the input is refused as warming (§7.4, B52)
+    and nothing reaches the wire."""
+    async with fast_projector_polling():
+        async with PJLinkStub(initial_power="0", warm_seconds=0.05) as stub:
+            async with projector_rig(db, state, bus, stub, min_warmup_s=5) as (manager, service):
                 engine = SceneEngine(db, state, devices=manager)
                 engine.handlers.register("projector_power", ProjectorPowerHandler(service))
                 engine.handlers.register("projector_input", ProjectorInputHandler(service))
@@ -334,10 +376,12 @@ async def test_worked_example_power_then_input_end_to_end(
                     result = await handle.result()
                 finally:
                     await engine.stop()
+                assert stub.power == "1"  # the projector itself says on
+                assert input_set_commands(stub) == []
 
-    assert result.result == "success"
-    outcomes = {a.domain: a.result for a in result.actions}
-    assert outcomes == {"projector_power": "confirmed", "projector_input": "confirmed"}
+    outcomes = {a.domain: (a.result, a.reason) for a in result.actions}
+    assert outcomes["projector_power"][0] == "confirmed"
+    assert outcomes["projector_input"] == ("failed", "the projector is warming")
 
 
 async def test_unsupported_input_ref_is_skipped_at_run_time(

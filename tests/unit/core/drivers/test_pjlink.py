@@ -73,11 +73,58 @@ def test_config_schema_carries_no_addressing() -> None:
 
 
 def test_password_field_is_encrypted_and_optional() -> None:
-    (password_field,) = PJLinkDriver.CONFIG_SCHEMA
+    password_field, _min_warmup = PJLinkDriver.CONFIG_SCHEMA
     assert password_field.key == "password"
     assert password_field.type == "password"
     assert password_field.encrypted is True
     assert password_field.required is False
+
+
+def test_min_warmup_field_is_an_optional_int_defaulting_to_60() -> None:
+    """The minimum warm-up hold (§7.4, B52; owner decision 2026-09-30)."""
+    field = next(f for f in PJLinkDriver.CONFIG_SCHEMA if f.key == "min_warmup_s")
+    assert (field.type, field.required, field.default) == ("int", False, 60)
+    assert (field.min, field.max) == (0, 600)
+    assert field.help == (
+        "The projector may report 'on' before its lamp is fully warm. "
+        "Power-off is refused until this long after power-on."
+    )
+
+
+def _stored(driver: dict[str, object]) -> dict[str, object]:
+    return {"transport": {"type": "tcp", "host": "10.2.30.249"}, "driver": driver}
+
+
+def test_min_warmup_defaults_to_60_when_absent() -> None:
+    errors, _transport, driver = registry.validate_stored_config(PJLinkDriver, _stored({}))
+    assert errors == []
+    assert driver["min_warmup_s"] == 60
+
+
+@pytest.mark.parametrize("value", [0, 1, 60, 600])
+def test_min_warmup_accepts_0_to_600(value: int) -> None:
+    errors, _transport, driver = registry.validate_stored_config(
+        PJLinkDriver, _stored({"min_warmup_s": value})
+    )
+    assert errors == []
+    assert driver["min_warmup_s"] == value
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        (-1, "must be at least 0"),
+        (601, "must be at most 600"),
+        ("60", "must be a whole number"),
+        (1.5, "must be a whole number"),
+        (True, "must be a whole number"),
+    ],
+)
+def test_min_warmup_rejects_out_of_range_and_non_integers(value: object, message: str) -> None:
+    errors, _transport, _driver = registry.validate_stored_config(
+        PJLinkDriver, _stored({"min_warmup_s": value})
+    )
+    assert [(e.field, e.message) for e in errors] == [("driver.min_warmup_s", message)]
 
 
 def test_capabilities_is_a_method_not_an_attribute() -> None:

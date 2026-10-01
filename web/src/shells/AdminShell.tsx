@@ -12,7 +12,7 @@
  * link carries no permission check of its own.
  */
 import { ArrowLeft, Menu as MenuIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 
 import { useDevices } from "@/admin/devices/api";
@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/Button";
 import { Sheet, SheetContent } from "@/components/ui/Sheet";
 import { ADMIN_NAV, CONTROL_SURFACE_PATH } from "@/navigation";
 
+import { NavLabel } from "./NavLabel";
 import { Shell } from "./Shell";
 
 /**
@@ -64,8 +65,14 @@ export function AdminNav({ onNavigate }: { onNavigate?: () => void }) {
               {items.map((item) => (
                 <li key={item.path}>
                   <NavLink to={item.path} className="nav-item" onClick={onNavigate}>
-                    <item.icon aria-hidden="true" className="size-4" />
-                    <span>{item.label}</span>
+                    {({ isActive }) => (
+                      <>
+                        <item.icon aria-hidden="true" className="size-4" />
+                        <span>
+                          <NavLabel active={isActive}>{item.label}</NavLabel>
+                        </span>
+                      </>
+                    )}
                   </NavLink>
                 </li>
               ))}
@@ -93,13 +100,32 @@ function Sidebar() {
 function MobileHeader() {
   const [open, setOpen] = useState(false);
   const location = useLocation();
+  const openedAt = useRef(location.pathname);
+  const pathnameNow = useRef(location.pathname);
+  useEffect(() => {
+    pathnameNow.current = location.pathname;
+  }, [location.pathname]);
+  // The drawer closes itself when a link in it is followed. Closing would
+  // return focus to the hamburger button; when the screen has changed, route
+  // focus (`useRouteFocus`) puts it on the new heading instead (§24.7).
+  const keepRouteFocus = (event: Event) => {
+    if (openedAt.current !== pathnameNow.current) event.preventDefault();
+  };
   return (
     <header className="shell-header admin-mobile-header">
       <Sheet open={open} onOpenChange={setOpen}>
-        <Button variant="ghost" size="icon" className="admin-menu-button" aria-label="Open admin menu" onClick={() => setOpen(true)}>
+        <Button variant="ghost" size="icon" className="admin-menu-button" aria-label="Open admin menu" onClick={() => {
+            openedAt.current = pathnameNow.current;
+            setOpen(true);
+          }}
+        >
           <MenuIcon aria-hidden="true" className="size-5" />
         </Button>
-        <SheetContent side="left" title="Admin" hideTitle className="admin-drawer" key={location.pathname}>
+        <SheetContent side="left" title="Admin" hideTitle className="admin-drawer"
+          key={location.pathname}
+          data-nav-drawer=""
+          onCloseAutoFocus={keepRouteFocus}
+        >
           <div className="brand px-5 py-4">Proskenion</div>
           <MainInterfaceLink className="nav-item admin-main-link" onNavigate={() => setOpen(false)} />
           <AdminNav onNavigate={() => setOpen(false)} />

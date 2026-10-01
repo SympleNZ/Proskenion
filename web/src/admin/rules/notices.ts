@@ -16,5 +16,5 @@ export const SURFACE_NOT_FIRING =
 export const NOTIFY_IS_LOG_ONLY =
   "This writes an alert to the execution log. Email delivery arrives in a later phase (§11.4) — nothing is sent yet.";
 
-export const BINDING_FORCES_MULTIPLIER =
-  "On recall this forces the group's multiplier to 100% and ignores whatever the web interface last left it at. Without that, a group left at 40% would make the next panel press come up dim while the indicator reported “on” — with no way to diagnose it from the panel.";
+export const BINDING_SETS_LEVELS =
+  "On recall this sets every fixture in the group to the level below, exactly as dragging the group's fader would, whatever the web interface last left them at. The Master still applies to stage fixtures.";

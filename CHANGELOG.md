@@ -1,840 +1,417 @@
 # Changelog
 
-All notable changes to this project are recorded here, per release.
+All notable changes to this project are recorded here, per release, newest
+first. Dates are when the release was built or installed on the appliance
+(see `WORKLOG.md`). "Image-level" changes reach an appliance only with its
+next image build; everything else ships in the application package.
 
 ## Unreleased
+
+### Added
+- **BUMP on lighting group strips** (owner decision): hold to flash the
+  group's DMX fixtures to full, scaled by the Master; release to return.
+  No fader moves and nothing is stored. It can never stick: it releases on
+  letting go, losing focus, the page going to the background, the connection
+  closing or going quiet for 1.5 s, logout, and external control engaging.
+- **Shut down** in Admin (owner request), beside the restart controls, on
+  Admin → Health and Admin → Updates. It powers off cleanly through the
+  privileged helper; switch the power off and on at the rack to start again.
+- The performance harness can run on the controller itself (a minted
+  session, direct or through nginx), measures the DMX frame rate by
+  capturing outgoing Art-Net, and reports where it measured from.
+
+### Changed
+- The power controls are renamed (owner request): **Restart services**,
+  **Restart controller** (a full restart that comes back by itself) and
+  **Shut down**.
+- Accessibility: every interactive element on every admin and operator
+  screen is checked at 44 px or larger; muted text on menus, popovers and
+  toasts is held to 4.5:1 contrast.
+- The specification now includes every Phase 7 deviation and the owner's
+  decisions (Appendix B 68–76). `ARCHITECTURE.md` and `CHANGELOG.md` are
+  brought up to date.
+
+### Fixed
+- The HDMI matrix ignores a stray NUL byte it can send at power-up, which had
+  been logged as an "unexpected reply".
+- Performance harness: it no longer counts the KNX monitor's replay of recent telegrams as live traffic; the DMX frame-rate range has a ±0.5 fps tolerance; a minted session runs the database row. `/lighting/state` channels are keyed by id. The DMX
+  row crashed the first time it ran on the controller.
+
+## [0.1.18] - 2026-10-01
+
+### Changed
+- Keyboard and screen-reader navigation (from the Narrator test on site):
+  focus moves to the page after navigating, the current page is announced
+  as "current page", the skip link appears when focused, and connection
+  changes are announced by a single announcer instead of several.
+
+### Fixed
+- The live KNX monitor in Admin now streams as telegrams arrive. nginx had
+  been holding the stream back and delivering it as one late clump
+  (`X-Accel-Buffering: no` is now sent).
+
+## [0.1.17] - 2026-10-01
+
+### Added
+- Backups are checked after they are written: the built archive's integrity
+  is tested and each copy (local, USB, network) is read back and compared
+  by checksum. Two new columns on the Backups page show when and where a
+  backup was last checked.
+- A `backup_missing` alert for an archive that cannot be found anywhere.
+- `python -m proskenion.tools.verify --archive ID` verifies one named archive.
+
+### Changed
+- The monthly verification falls back from local to USB to network, and
+  reports verified, untrusted, missing or unreachable rather than a single
+  failure.
+
+### Fixed
+- A false "failed verification" email: after the 28 Sep re-image the
+  database still claimed local copies that no longer existed. Backup
+  presence is now reconciled at each backup, each verify and after a
+  restore (migration 012).
+
+## [0.1.16] - 2026-09-30
+
+### Added
+- Projector minimum warm-up hold (owner decision): after power-on the
+  controller shows "warming" for at least 60 s (`min_warmup_s`, adjustable),
+  because the PT-EZ570 reports "on" after about 13 s while its lamp is
+  still warming. An off press inside the hold is refused and the wall-panel
+  icon snaps back.
+
+### Changed
+- Smoother DMX fades: output runs on a steady 40 fps grid while anything
+  is moving, with a short tail, then the 1 s keepalive. Operator fader
+  writes glide over 75 ms, and group members land in one frame (flicker
+  found on site).
+- knxd now paces outgoing telegrams 40 ms apart by default, because the
+  KNX gateway dropped telegrams sent in a burst (image-level default; the
+  live appliance was already changed).
+
+## [0.1.15] - 2026-09-30
+
+### Added
+- Scroll arrows on horizontal fader rows.
+
+### Changed
+- Group faders set their members' levels, like a lighting desk (owner
+  decision): output is level times master. Group multipliers are gone, and
+  so is the "held by" hint. Stage Banks shows one button per KNX address.
+- On touch screens a sideways swipe on a fader row scrolls it; a tap or a
+  vertical drag moves the fader. The Stage Plan background drags to scroll
+  while edit-mode fixtures keep the touch. Status popup padding adjusted.
+
+## [0.1.14] - 2026-09-30
+
+### Added
+- Indicator-only groups, and a derived-status basis (what the lighting is
+  set to, or what the room actually sees). Panel indicators turn on only
+  when all their fixtures are at 100% of output (owner decision: "Stage
+  all" acts as a master).
+
+### Fixed
+- A group fader sent its multiplier divided by 100 twice, so a 70% drag set
+  about 0.7%.
+
+## [0.1.13] - 2026-09-30
+
+### Changed
+- On a phone the status bar is one LED showing the worst device state
+  (red over amber over green) that opens a named list; the show timer is
+  dropped there (owner design).
+
+### Fixed
+- Mobile bottom sheets no longer draw their footers over the status bar.
+
+## [0.1.12] - 2026-09-29
+
+### Changed
+- The display scale (from the account menu) now applies to the whole
+  interface, not just the Pages surface, so Mixer and Lighting no longer
+  stretch on a 4K screen (spec §21.9).
+- Phones are portrait-only (an overlay asks you to rotate; owner decision).
+  In portrait, at least two faders sit side by side in a scrolling row, and
+  the status bar fits the phone's width.
+
+### Fixed
+- The phone-landscape navigation rail pushed every view off screen.
+- Video routing could briefly show new routing beside old destinations;
+  both are now written together.
+
+## [0.1.11] - 2026-09-29
+
+### Changed
+- Operator faders rebuilt to the mockups: one shared fader card for Mixer,
+  Lighting, Pages and the stage plan, taller, with a smaller MUTE and a
+  meter slot on every strip. The Mixer shows as many inputs as fit, with
+  banks only when they do not.
+- A client that connects now receives every channel's current meter
+  reading, so silent inputs show their level straight away.
+
+### Fixed
+- A fader could stick at +10 dB after a cancelled touch.
+- The Pages lighting knob did not move.
+
+## [0.1.10] - 2026-09-29
+
+### Added
+- Wall-panel projector button with honest feedback: after a panel press the
+  controller re-sends the panel's statuses, so a press that did not take
+  effect is corrected and the icon returns to red. A projector status can
+  now read "on or warming".
+
+### Changed
+- knxd sends as the tunnel's own address (1.1.3, `-B single`) so it cannot
+  clash with devices missing from the ETS project (image-level default).
+
+### Fixed
+- A projector status never went green because it read only the connection
+  record, not the projector's own state.
+
+## [0.1.9] - 2026-09-28
+
+### Added
+- Every desk channel is created when a mixer is added (owner decision,
+  reversing the "added individually" default of B43): the CQ-20B gets all
+  27 channels, named from the desk's labels. "Add missing channels" on
+  Admin → Mixer fills in an existing mixer without renaming, reordering,
+  re-pointing or deleting anything, and is offered after a driver re-map.
+- The `?` help sheet has an "On this screen" section: a summary of the open
+  screen, then every help entry shown on it, read from the page itself so
+  it cannot drift.
+- The login screen shows the build version.
+
+### Fixed
+- A second, page-level scrollbar behind the shell's own (seen with a banner
+  showing).
+- Ending emergency mode after a first install also resets the failed
+  rollback unit, so the system reads `running` rather than `degraded`
+  (image-level).
+
+## [0.1.8] - 2026-09-27
+
+Supersedes v0.1.7, whose tag failed the end-to-end CI job. First release
+whose whole CI pipeline ran green. Installed on the appliance on 28 Sep.
+
+### Fixed
+- The first-run wizard's detected timezone read `/etc/timezone` first,
+  which `timedatectl set-timezone` leaves stale. It reads `/etc/localtime`
+  first.
+
+## [0.1.7] - 2026-09-27
+
+Tagged but superseded by v0.1.8; not installed on its own.
+
+### Added
+- `tools/test-linux.sh` and `tools/e2e-linux.sh` run the unit and end-to-end
+  suites in Linux containers. The end-to-end appliance can be forced onto
+  the development platform with a development-only hook
+  (`PROSKENION_TEST_PLATFORM`) so parallel test appliances never share
+  `/data`; CI sets NZ time for the wizard.
+
+### Fixed
+- A root-side write to a missing `boot-state.json` failed and left an empty
+  file that broke later root-side reads. An empty document now reads as
+  `{}` (image-level).
+- Several dates and times in the web app were formatted in the browser's
+  own timezone. Everything now uses Pacific/Auckland, enforced by a lint
+  rule, and the web tests run under UTC.
+- The KNX telegram budget allows for 100 ms of delivery jitter, so no
+  one-second window can carry 16 telegrams (§7.1).
+
+## [0.1.6] - 2026-09-26
+
+### Added
+- The `?` help sheet works in the operator and hirer shells, with content
+  for each tier. Admin gets the version, build ID, recovery summary and four
+  bundled documents, which work offline and always match the installed
+  version.
+- Driver-swap re-mapping (§5.5): changing a device's driver marks its mixer
+  channels unmapped (keeping the old references), and a re-map screen
+  (`GET`/`POST /devices/{id}/remap`) lets the admin choose new ones in one
+  transaction after a snapshot. Unmapped channels fail closed: not
+  controlled, hidden from hirers.
+- `docs/api.md` and `docs/database.md`, generated from the running
+  application and kept current by tests; `docs/protocols/dmx-node.md`.
+- End-to-end journeys for scene create, trigger and log, and for a visiting
+  desk taking over and handing back.
+
+### Changed
+- Idle asyncio task count cut from 84 to 38 with no behaviour change, to
+  meet the §23.3 budget; a guard test holds it.
+- Help coverage now also requires help on destructive and confirm-gated
+  buttons and on every admin card.
+- Group palette: Salmon moved to `#FF7F68` so Rose and Salmon clear the
+  ΔE2000 minimum.
+
+### Fixed
+- Closing a sheet or dialog returned focus to the page body instead of the
+  button that opened it.
+- Contrast failures found by axe in real browsers (muted text on sheets,
+  the help popover, the `#main` scroll region).
+- Elapsed time across a daylight-saving change used wall-clock arithmetic:
+  session caps, the OS trial deadline, the network confirm window and the
+  WebSocket expiry were wrong by an hour. All now use real elapsed time.
+- A false "operating system rolled back" alert while an OS upgrade was
+  still waiting to reboot.
+
+## [0.1.5] - 2026-09-26
+
+### Added
+- Admin → Users: two fixed cards (Admin, Operator) showing when each
+  password last changed and whether they are identical. An admin can reset
+  the operator's password (`POST /auth/operator-password`, confirmed with
+  the admin's own password); operators change their own from the account
+  popover (migration 010).
+- The show timer is the server's (`/timer/*`): every staff tablet shows the
+  same stopwatch, and it survives a restart.
+- Banners for "Mixer offline", "N devices offline" and "No Venue Default
+  desk scene is set".
+- A service worker and offline shell (§21.28): cached last-known values
+  while the controller is unreachable, a "new version" Refresh that never
+  reloads on its own.
+- Inline help (ⓘ) on every admin control, and the `?` keyboard reference.
+- Accessibility pass: axe sweeps of every screen, computed contrast checks,
+  skip link, live status regions, Ctrl/Cmd+S to save, Arrow Up/Down to
+  reorder scene actions, and a manual script in
+  `docs/hardware/accessibility-check.md`.
+- Admin → System → Logs → System tab, with `GET /system/logs` and an export
+  (admin only): the application's own logs without a shell.
+- Snapshots list on the Backup page, with a Restore button per row
+  (approved 25 Sep).
+- `tools/perf` performance harness and `python -m tests.soak` 72-hour soak
+  harness, with `GET /system/diagnostics` (admin only).
+
+### Changed
+- Admin → Control Surface appears only when a control-surface device is
+  configured.
+- Admin screens use a clean h1, h2, h3 heading outline.
+- Error toasts dismiss after 30 s (B37); they had never auto-dismissed.
+
+### Fixed
+- Carry-forward sweep: a hostname backup destination got no firewall rule
+  (image-level); an OS-trial revert banner could be erased by an unrelated
+  update; two "already alerted" flags lived only in memory; the recovery
+  re-partition omitted the `backups/` and `images/` directories
+  (image-level); `run_scene` rules logged success at dispatch rather than
+  at the scene's real result; changing a device's driver or transport took
+  no snapshot; schedules fired before the clock was trusted.
+- §12.1's wait of up to 5 s for booth frames at boot is implemented, so a
+  running desk is not overwritten by the controller's restored model.
+
+## [0.1.4] - 2026-09-25
+
+### Added
+- Schedule rules fire (§8.3): cron in Pacific/Auckland through the same
+  guard, action and log path as any trigger. A time missed while the
+  controller was off is logged `missed` and never replayed. The Rules
+  screen shows each schedule's next time.
+- Security log viewer (Admin → System → Logs, `GET /system/security-log`,
+  admin only), with filters and redaction of anything credential-shaped.
+- Per-module DEBUG toggles on the same screen, live without a restart
+  (`/data/config/debug.json`, §4.10).
+- Every destructive admin action takes a pre-change snapshot first (§18);
+  if the snapshot fails, the action is refused. The nightly job keeps ten
+  snapshots (five under disk pressure) and prunes the 90-day tables.
+- The build embeds its version; a running browser compares it with
+  `/health` and shows "A new version is installed - Refresh" (never an
+  automatic reload).
+
+### Changed
+- nginx sends `Cache-Control: no-cache` for the app shell, so a plain
+  reload picks up a new build (image-level).
+- A projector that is busy with the legacy controller shows amber, not red,
+  and raises no device-red alert.
+
+### Fixed
+- `uvicorn.error` logged "ASGI callable returned without completing
+  handshake" for every refused WebSocket upgrade; the message is now INFO.
+
+## [0.1.3] - 2026-09-25
+
+From Admin → Backup and the rebuild-and-restore rehearsal on the real
+appliance.
+
+### Added
+- A "Main interface" link in the admin sidebar and mobile header.
+- After a restore the Backup page keeps a record: when, from what, and the
+  passwords still to re-enter, until dismissed.
+
+### Changed
+- A freshly built appliance with no application enters emergency mode as
+  `not_installed`, not `migration_failed` (image-level).
+- Emergency mode ends by itself when the first install runs healthily;
+  nginx goes back to the normal site (image-level).
+- The wizard's certificate step keeps the valid self-signed certificate
+  instead of issuing another. When a certificate is replaced the page says
+  so and offers a Reload button.
+- The start after a restore derives `network.backup_destination` from the
+  restored database and re-renders the firewall.
+
+### Fixed
+- The backup progress panel stuck on "Running the backup job" after the job
+  had finished.
+- "Restarting the appliance..." after a restore never cleared; it now polls
+  `/health` and says "Restore complete".
+
+## [0.1.2] - 2026-09-25
+
+From commissioning the real appliance on 24-25 September.
+
+### Added
+- Admin → Email has a "Remove mail settings" action.
+- Visiting-desk detection (§7.2.7) is wired to real ArtDmx frames from the
+  node's address on its configured input universes (`input_universes`
+  setting; blank turns it off).
+
+### Fixed
+- The eDMX8 showed as not connected: the Art-Net driver now shares one
+  socket on UDP 6454, where the node broadcasts its replies.
+- `knxd.service` waits up to 30 s for the gateway to answer before
+  connecting, so the first start no longer fails on every boot
+  (image-level).
+- `logrotate.service` failed every run because two stanzas claimed
+  `access.log` (image-level).
+- A freshly formatted backup USB is made writable by the application
+  automatically, and an unwritable destination is reported plainly
+  (image-level).
+
+## [0.1.1] - 2026-09-24
+
+From commissioning the real appliance.
+
+### Fixed
+- Local backups and images go to `/srv/local/backups` and
+  `/srv/local/images`, which the application owns; the nightly job had
+  failed with EACCES.
+- Saving the email settings opens the firewall for the relay (port 25) and
+  `DELETE /system/email` clears it again; mail had timed out.
+- A device edit no longer deletes the KNX gateway's udp/3671 firewall rule;
+  the application reconciles `system.json` at start-up.
+- `smtp-fallback.toml` is application-owned, and a fallback that cannot be
+  saved is reported instead of a 500.
+- Background watchers survive an exception in one iteration and log it.
+- A device-red email is sent once per outage, not on every retry (an
+  unreachable DMX node had emailed every five minutes).
+
+## [0.1.0] - 2026-09-24
+
+First installable package, installed on the real appliance. The date is when
+it was first installed; the repository itself began on 2026-09-09.
 
 ### Added
 - Repository bootstrap: package layout from spec §5.2, test layout from §22,
   conventions, work log.
 - `build_package.sh` (§19.2): builds an unsigned application package with
-  every locked dependency as a binary wheel for the appliance (CPython 3.13,
-  Debian 13, aarch64; `--platform x86_64` for the Docker harness).
+  every locked dependency as a binary wheel for the appliance.
 - `auditorium-install-package`: the first install from a shell, through the
-  helper's own `apply-update` (docs/hardware/setup.md §8).
-- v0.1.4:
-  - Schedule rules fire (§8.3): cron in Pacific/Auckland through the same
-    guard, action and log path as any trigger. A time missed while the
-    controller was off, or reached too late, is logged `missed` and never
-    replayed; a September gap time runs once at 03:00 and an April repeat
-    once. The log records `scheduled_for`, `dispatched_at` and
-    `dispatch_latency_ms` (§22.7), and the Rules screen shows each schedule's
-    next time instead of the "does not fire yet" notice.
-  - The security log viewer, `GET /system/security-log` (§6.14,
-    admin only) over `security_events.query()`, filtered by event type,
-    outcome, client IP address and a time range, offset-paginated, newest
-    first. `detail` is redacted in the API layer against a credential-shaped
-    key (password, PIN, secret, token, hash, cookie, authorization,
-    credential) rather than trusted from the writer, and the structured file
-    logger (`proskenion/logging.py`) applies the same redaction to every
-    `extra=` value at every level, DEBUG included. Admin → System → Logs
-    replaces the placeholder: Scene Execution (a link to the existing viewer)
-    and Security (the new one) in one screen, with relative-plus-absolute
-    Pacific/Auckland times. Per-module DEBUG toggling from `/data/config/debug.json`
-    (§4.10, `proskenion/core/debug_config.py`) — one switch per top-level
-    `proskenion.*` package on the same screen, live without a restart, read
-    again at startup, a malformed file logged and ignored rather than fatal.
-- v0.1.5:
-  - `tools/perf` (P7-T8): the performance harness, measuring each §23.1
-    throughput row — HTTP requests/sec, 20 sustained/50 peak WebSocket
-    clients with state-change delivery latency, WebSocket control writes/sec
-    with the §23.2 set-to-ack round trip, database inserts/sec (a transient,
-    action-less scene, triggered and deleted), the KNX 15/sec telegram
-    budget (watched on `GET /knx/monitor`'s SSE stream, since
-    `KnxSubsystem.write()` only enqueues), and DMX frame rate (this tool's
-    own Art-Net listener, run on the appliance or the VLAN — off-VLAN it
-    reports itself not measurable rather than a false zero). `uv run python
-    -m tools.perf --base-url ...`, dry-run safe by default;
-    `--allow-device-writes` for the fader-move/DMX-fade/KNX-test-write
-    scenarios (each restores what it changed) and `--allow-scene-triggers`
-    for the database-insert one. A readable table plus a JSON file for
-    WORKLOG. Proven against the in-process app with the device stubs
-    (`tests/unit/tools/test_perf_harness.py`, marked `perf`, `--run-perf`)
-    over a real `uvicorn.Server` and real WebSocket connections, and by a
-    measurement self-check with no dependency on `proskenion` at all (a
-    known injected delay, measured within tolerance).
-  - Inline help throughout the admin interface (§19.1, §21.24): a help
-    registry keyed by stable id, one file per domain under
-    `web/src/help/content/`, and a small "i" popover next to a control's
-    label or primary action, built on the `radix-ui` Popover already a
-    dependency — no new package. A mechanical coverage check
-    (`web/src/help/coverage.ts`) scans a rendered admin screen for a
-    labelled field or primary button with no help affordance, exempting a
-    driver-declared `SchemaForm` field (already carries the driver's own
-    `field.help`). Applied across every admin screen: Devices, Lighting
-    (all six tabs), KNX Library and import, Rules and Derived status,
-    Scenes (every action domain), Pages, Mixer, HDMI, Network,
-    Certificates, Email, Backup, Updates, Logs and Hirer Access.
-  - The `?` keyboard reference (§21.24 *Help*, §24.2): a sheet reachable
-    from anywhere in the admin interface with `?` (not while typing),
-    and the same content as the System → Help screen — the real
-    keyboard shortcuts (cross-checked against the code; Ctrl/Cmd+S and
-    the scene editor's action-card arrow-key reordering are flagged as
-    not fully built), this build's version, and a short recovery
-    summary (§13.7).
-  - The accessibility pass (P7-T6): `vitest-axe` and `@axe-core/playwright`
-    added as dev dependencies (§24, D4), never shipped. An axe-core sweep
-    of every operator, hirer and admin screen, the setup wizard and the
-    login page (`web/src/test/a11yScreens.test.tsx`); every §24.4 contrast
-    pair computed from the live tokens against the spec's thresholds
-    (`web/src/styles/contrast.test.ts`); a real-browser e2e pass
-    (`tests/e2e/accessibility.spec.ts`) measuring touch targets on the D5
-    device's viewport and a phone, and axe's colour-contrast rule, which
-    jsdom cannot run. Fixed along the way: two unlabelled/nested file-input
-    dropzones (Backup, Updates), a duplicate banner landmark (Rules,
-    Derived Status), the mixer mute button's text failing 4.5:1 in both its
-    states, the muted fader relying on opacity alone instead of the
-    grey-and-stripe pattern §24.1 calls for, the hirer status bar's clock
-    and Log out button and the hirer page tabs falling short of the 72 px
-    minimum, no live region for a device status change, and no skip link
-    past the sidebar/tab strip. Ctrl/Cmd+S now saves the form on every
-    admin screen that has one, not just Devices, and the scene editor's
-    action cards reorder with Arrow Up/Down, announced by a live region —
-    both closed from the `?` sheet's own list of gaps.
-    `docs/hardware/accessibility-check.md` is the manual script for what
-    automation cannot do: a Narrator/TalkBack screen-reader pass,
-    colour-blind simulation, zoom/reflow, muted-text legibility in the
-    room, and the print stylesheet.
-  - Admin screen headings renumbered to a clean h1→h2→h3 outline with no
-    skips (spec §24, a P7-T6 follow-up): `Card.tsx`'s title took a `titleLevel`
-    prop (`h3` by default, unchanged everywhere it already sat under a
-    screen's own `h2` "section title"; `h2` where a card was the first
-    heading after the screen's `h1`), and the sect-label/card-title
-    subheadings one level below it moved down to match — Backup,
-    Certificates, Email, Health, Help, Hirer Access, Logs, Network, Rules
-    and Updates. Classes are unchanged throughout, so nothing looks
-    different. `web/src/test/a11yScreens.test.tsx` asserts axe's
-    `heading-order` rule directly on these ten screens (it is "moderate"
-    impact, so the general sweep's serious/critical gate never caught it).
-  - The seven e2e tests the inline help's own accessible name broke —
-    `getByLabel`/`getByRole(..., { name })` matching "X" and "Help: X" as
-    the same substring once a field or a primary button got a help
-    affordance — fixed in the tests with `{ exact: true }`, not by
-    weakening the help button's name (`tests/e2e/system-screens.spec.ts`,
-    `phase6-journeys.spec.ts`, `backup-baseline.spec.ts`,
-    `fixtures/wizard.ts`). `web/playwright.config.ts`'s module doc now
-    carries the convention so it does not recur.
-  - The 72-hour soak harness (§22.7, P7-T9): `python -m tests.soak`, with the
-    admin-only `GET /system/diagnostics` (asyncio tasks, WebSocket connections,
-    the watchdog's loop lag, the pid) for what `/proc` cannot see. Stage 1 runs
-    the installed application on a throwaway configuration under `/data/soak`
-    with stubs for every device, bracketed by `tests/soak/cm5.sh`; the runbook
-    is `docs/hardware/soak-test.md`.
-  - The shared show timer is the server's (§21.7, §16): `POST /timer/start`,
-    `/timer/stop` and `/timer/reset`, admin and operator only, written
-    through one `state.timer` owner and broadcast as the `timer` frame to
-    every staff client. The status bar's buttons post to them and the display
-    follows only the frame, counted against the appliance's clock; before,
-    they changed the local store and nothing else, so each tablet had its own
-    stopwatch. The timer is persisted and restored at boot (§15.13), so a
-    restart mid-performance resumes it.
-  - Two of §21.26's persistent banners that had no producer: "Mixer offline —
-    audio controls unavailable" (one red device, named) and "2 devices
-    offline — tap for details" (the count, with a Details list), amber, from
-    device status — red only, never amber `degraded` or grey — and cleared
-    when the device recovers, is turned off or is removed, not on each retry;
-    and "No Venue Default desk scene is set", amber, while an enabled mixer
-    has no Venue Default desk scene (`proskenion/core/banners.py`).
-  - The service worker and offline shell (§21.28, §21.27). Package-level
-    (web bundle only; nginx already serves `/sw.js` `no-cache` under
-    `location /`, at the root, so no `Service-Worker-Allowed` and no image
-    change). A hand-written worker (`web/src/sw/worker.ts`) built to
-    `/sw.js` by a small Vite plugin (`web/vite-plugins/serviceWorker.ts`)
-    after the app build, with a precache manifest of every output file keyed
-    by SHA-256, checked at install. `/api`, `/ws` and `/health` are
-    network-only with no cached fallback; navigations alone fall back to the
-    cached shell. No automatic `skipWaiting`: a new worker waits, and the
-    new-version banner's Refresh activates it and reloads (with no worker to
-    activate, it unregisters first so the reload cannot come from the old
-    cache). One worker at scope `/` serves staff and hirer alike. Registration
-    is production-only and best-effort — over a self-signed certificate
-    (§6.16) it fails quietly and the app runs without it. Offline: queries
-    pause instead of erroring while the socket is down, mutations never
-    queue, the reconnecting banner carries a "Cached values" label, and a
-    cold start while the controller is unreachable draws the saved session's
-    surface with saved last-known values (tier and expiry only, never the
-    token) instead of the login page. Close 4001 now shows "Refresh
-    required" (§16.8) rather than "Connection lost", and the lost overlay
-    offers "Reload from the controller" past the offline copy. No new
-    dependency. e2e: `tests/e2e/offline-shell.spec.ts`; the rest of the suite
-    blocks service workers.
-  - Admin → Users (§21.23), never built before: two fixed cards, Admin and
-    Operator, no creating and no deleting. Each records when its password
-    last changed — a new `password_changed_at` column on `users`
-    (`010_password_status.sql`; `NULL` on existing rows shows as "Not
-    recorded"), stamped by `proskenion.core.auth.set_staff_password`, the one
-    function every change path now goes through (`POST /auth/change-password`,
-    the first-run wizard's steps 2 and 5, and `avc-reset-password` —
-    package-level; the wrapper script itself is image-level but only execs
-    into it). Whether the two passwords are currently identical is computed
-    at that same moment, checking the new plaintext against the *other*
-    tier's stored hash rather than ever comparing two bcrypt hashes (which
-    would never agree even for equal passwords), and cached in a new
-    `password_state` table for the admin-only `GET /auth/password-status`
-    the two cards' "Password last changed" lines and the informational
-    identical-passwords note read from. An admin resets the operator's
-    password with a new `POST /auth/operator-password` — asking for the
-    *admin's own* current password, not the operator's, since that is the
-    only reading under which an admin can still do this when the operator has
-    actually forgotten theirs, while still stopping an unattended session
-    acting on its own; the stricter reading where it is ambiguous. Operators
-    change their own password from the account popover
-    (`components/statusbar/AccountChip.tsx`); both self-service paths reuse
-    `POST /auth/change-password`, unchanged. Inline help throughout
-    (`help/content/users.ts`), the two new routes added to the admin-only
-    tier and to `docs/handover/operations.md`'s audit, and a Playwright spec
-    (`tests/e2e/users.spec.ts`) proving a real reset over two real sessions:
-    the operator's previous one refused, the new password signing in and the
-    old one not.
-  - Admin → Control Surface is now present only when a control-surface
-    device is configured, not always shown with a placeholder (spec
-    §21.25) — `shells/AdminShell.tsx` filters it from the sidebar and the
-    mobile drawer using the `GET /devices` query the Devices screen already
-    holds, rather than a new endpoint. The configurator itself remains
-    Phase 9 and unbuilt; only the nav item's visibility changed.
-  - A flaky-test fix: two e2e appliances under concurrent Playwright workers
-    could both bind the fixed Art-Net UDP 6454 (§7.2.5), the loser's lighting
-    device reporting `error` and `lighting-milestone`/`accessibility` failing
-    intermittently. `proskenion.main.apply_test_hooks` now honours
-    `PROSKENION_TEST_ARTNET_PORT`, gated on `environment = "development"`
-    exactly as every other `PROSKENION_TEST_` hook, so production is
-    unaffected regardless of the variable; `tests/e2e/fixtures/appliance.ts`
-    allocates a free port per appliance and sets it for every launch,
-    `bridged_app`'s included. The stub Art-Net node needed no change: it
-    already replies to whichever port the poll came from, which is always
-    this appliance's own. Test-only.
-  - Admin → System → Logs' third tab, System (§21.24, §16.7, §4.10): `GET
-    /system/logs` and `GET /system/logs/export` (admin only), reading
-    `/data/logs/application.log` and its rotated `application.log-
-    YYYYMMDD-HHMMSS[.gz]` files through a new `proskenion/core/log_reader.py`
-    that never loads a whole file into memory — the newest-first paginated
-    view walks each file backwards in bounded chunks, the plain-text export
-    streams forwards through each in turn — filtered by level (at or above),
-    module (logger-name prefix) and a date range, and redacted again on the
-    way out as defence in depth. Closes `docs/handover/operations.md`
-    Finding #1: reading the application's own logs no longer needs a shell.
-- v0.1.6:
-  - Comment and docstring sweep: 358 stale task-ID references (`P#-T#`) removed
-    from `proskenion/`, `web/src/`, `appliance/` and `tests/` comments and
-    docstrings, each rewritten to keep its meaning without the ID; § references
-    were kept. Test names and other identifiers (e.g. `describe`/`it` titles)
-    were left untouched — 18 remain, all of that kind. Several genuinely stale
-    "not built yet" / "arrives in Phase N" claims found along the way were
-    corrected against the current code (mixer service, hirer/pages backend,
-    the `mixer/__init__.py` package docstring, `versionCheck.ts`'s now-false
-    "no service worker" claim). `WORKLOG.md`, `CHANGELOG.md`, `docs/plans/*`
-    and the spec were left alone, as the historical record they are.
-  - Documentation gaps the Phase 7 milestone audit
-    (`docs/phase-7-milestone.md`) found closed: `docs/api.md` (route table:
-    method, path, tier, summary; conventions for versioning, errors, auth
-    and the WebSocket; the 12 served endpoints §16 doesn't mention) and
-    `docs/database.md` (schema table; migration conventions, `system_state`
-    domains, retention, snapshots and backup contents), both generated from
-    the live application and a freshly migrated database by
-    `tools/docgen.py` and held current by `tests/unit/tools/test_docgen.py`;
-    `docs/protocols/dmx-node.md` (the eDMX8 MAX as installed: address,
-    ports, universes, the broadcast ArtPollReply and desk-detection
-    filtering, what still waits on the integrator); and `ARCHITECTURE.md`'s
-    six missing Phase 7 decisions (the service worker's update policy, the
-    server-owned show timer, help coverage enforced against the rendered
-    DOM, the on-demand event bus consumers and the asyncio task budget, and
-    decisions D3 and D4 from `docs/plans/phase-7.md`).
-  - Driver-swap re-mapping (§5.5 *Driver references and swaps*, §21.24),
-    which had been a stub since Phase 1:
-    - Changing a device's driver (`PUT /devices/{id}`) marks every mixer
-      channel on it unmapped, keeping the old references so the screen can
-      show them; a save that is reverted restores them.
-    - `GET /devices/{id}/remap` lists every row holding a `driver_ref` to the
-      device (mixer channels, matrix inputs, matrix outputs) beside the
-      driver's own references. The only pre-selection is the same reference
-      with the same kind, or the desk's Main for the Main channel; never a
-      positional guess.
-    - `POST /devices/{id}/remap` applies the admin's choices in one
-      transaction after a pre-change snapshot. A mixer channel given nothing
-      stays unmapped; a matrix row, which has no unmapped state, must be
-      mapped or the whole request is refused.
-    - Unmapped now fails closed (§15.6): the mixer service does not control
-      the channel, the hirer resolver excludes it, and `/mixer/state` leaves
-      it out. Setting a channel's references in its editor re-maps it.
-    - Devices screen: the change-driver sheet takes the new driver's settings
-      beside the list of rows that will need a reference, then opens the
-      re-mapping screen. A "Re-map references" button finishes one left for
-      later. The Mix outputs table flags an unmapped output, as the input
-      table already did.
-    - The §22.5 driver-swap journey (`tests/e2e/driver-swap.spec.ts`): CQ-20B
-      to the stub mixer and back, re-mapped both ways, and a fader move
-      landing at the desk's own address afterwards.
-  - The `?` help sheet now works in the operator and hirer shells too, not
-    just admin (spec §21.24: "reachable from anywhere with ?") —
-    `shells/Shell.tsx` mounts it once for all three, with per-tier content:
-    a hirer sees their shortcuts and a short "who to ask" line, never the
-    recovery summary or documentation; an operator sees shortcuts, the
-    operator quick reference and the version; an admin sees every shortcut,
-    the version and build ID, the recovery summary, and all four bundled
-    documents. The build ID (the git short hash and build date, falling back
-    to "unknown" where `build_package.sh`'s clean-worktree builds have no
-    `.git`) is a new `vite.config.ts` `define`, `__BUILD_ID__`, alongside the
-    existing `__APP_VERSION__`. `operator-quick-reference.md`,
-    `hire-handover.md`, `recovery-card.md` and `accessibility-check.md` are
-    bundled into the web build with Vite's `?raw` import and rendered by a
-    small hand-written Markdown renderer (`help/docs/markdown.tsx` — no new
-    runtime dependency; a link from one bundled doc to another navigates
-    inside the app), so the documentation works with no internet and always
-    matches the installed version.
-  - Help coverage (§19.1) now also flags a destructive button
-    (`.btn-destructive`) and a plain button that opens a `ConfirmDialog`
-    (`confirmTrigger`, a new `ui/Button` prop, which also adds
-    `aria-haspopup="dialog"`), and any admin `Card` with a control of either
-    kind — or a bare, unwrapped `input`/`select`/`textarea` — and no help
-    trigger anywhere in it. The 26 Sep milestone audit's five never-rendered
-    cards (Snapshots, Images, the OS section, Restart/Reboot, Debug logging)
-    are now covered — `backup`/`updates`/`logs` `coverage.test.tsx` render
-    the whole screen rather than hand-picked cards — along with every other
-    destructive/confirm-gated button the wider rule newly caught across
-    Backup, Updates, Email, HDMI, KNX, Lighting, Mixer, Pages, Rules, Scenes
-    and the stage plan's fixture/group sheets.
-- v0.1.9:
-  - The `?` help sheet gains an "On this screen" section at the top (Simon's
-    request): a short summary of the open screen, then every inline help
-    (ⓘ) entry actually rendered on it, in the order the controls appear, then
-    — where one exists — a link into the matching section of the bundled
-    documentation. The entries are read from the rendered DOM
-    (`[data-help-trigger]`, the same marker `help/coverage.ts` already uses)
-    rather than a second, hand-maintained "screen -> help ids" list, so they
-    can never drift out of step with what a control's own `helpId` says —
-    `help/onScreen.ts`'s module doc explains the choice. The per-screen
-    summaries (`help/onScreen.ts`'s `ADMIN_SCREEN_HELP`/`OPERATOR_SCREEN_HELP`)
-    cover every admin and operator screen `navigation.ts` declares, plus the
-    hirer shell's one page-surface screen; a coverage test fails if a screen
-    is ever added there without one. Respects tier exactly as the rest of the
-    sheet does — a hirer sees only their own screen's help, an operator only
-    operator screens.
-  - The login screen now shows the build version discreetly below both
-    forms ("Proskenion v0.1.8") — already public at `/health`, so nothing new
-    is disclosed; it just saves reading it out over the phone from somewhere
-    else.
-  - Every mixer channel exists by default (§7.3). Adding a mixer — through
-    Admin → Devices or the first-run wizard — creates one channel per desk
-    channel the driver declares, in its order, named from the desk's labels,
-    visible to staff, with no hirer ceiling, tracked. On the CQ-20B that is
-    Input 1-16, ST1, ST2, USB and Bluetooth (each stereo source one
-    channel), Main LR and Out 1-6; a channel pointed at a linked pair
-    (Out 1/2) covers both outputs. What a hirer sees is still decided by
-    their pages. "Add missing channels" on Admin → Mixer
-    (`GET`/`POST /mixer/devices/{id}/missing-channels`) adds a channel for
-    each desk channel none covers, never renaming, reordering, re-pointing
-    or deleting an existing one — how a mixer configured before this gets
-    the rest. A driver change adds nothing by itself: once references are
-    re-mapped, the sheet offers to add the new driver's uncovered channels
-    (`missing_channels` on the re-map response).
+  helper's own `apply-update`.
 
 ### Fixed
-- v0.1.9 (image-level): ending emergency mode after a first install also
-  resets the rollback unit that failed on the no-application boot, so the
-  system reads `running` rather than `degraded` until a reboot.
-- v0.1.9: a second, page-level scrollbar behind the shell's intended one
-  (§21.6, §21.7), reported on the real appliance with a system banner up
-  (§21.26's "No Venue Default desk scene is set"). `.shell-main` (`#main`)
-  had `overflow: auto` but no `position` of its own, so it was never the
-  containing block for a `position: absolute` descendant with no closer
-  positioned ancestor — a visually-hidden `.sr-only` status label, in the
-  reported case. That descendant was placed against the document instead
-  of `#main`, escaping its clip; with a banner narrowing the space on offer,
-  a row near the bottom of a list could sit close enough to the fold that
-  its own label landed past the viewport, growing the document and pushing
-  the bottom status bar off-screen. `.shell-main` now has `position:
-  relative`, containing every descendant where the one intended scrollbar
-  already is, for every shell and every banner.
-- v0.1.1, from commissioning the real appliance on 24 September 2026 (P6-T22):
-  - Local backups and system images go to `/srv/local/backups` and
-    `/srv/local/images`, the directories the image makes the application's;
-    the nightly job wrote to the root-owned `/srv/local` and failed with EACCES.
-    Captured images are now `root:auditorium`, so the application can verify
-    and copy them.
-  - Saving the email settings writes `network.smtp_relay` to `system.json` and
-    re-renders the firewall; `DELETE /system/email` clears both. Mail had
-    timed out at connect because port 25 was never opened.
-  - `system.json`'s `devices` is derived from the device table, knxd.conf (the
-    KNX gateway) and the network settings (the control surface), so a device
-    edit no longer deletes the KNX gateway's udp/3671 rule. The application
-    reconciles `system.json` at start-up, so installing the package restores
-    the lost rule.
-  - `smtp-fallback.toml` is created application-owned (image), and a fallback
-    that cannot be saved after a delivered test email is reported in the
-    response instead of a 500.
-  - Long-running watchers (alerts, backup status, health, update and trial
-    watches) survive an exception in one iteration and log it by name
-    (`proskenion/core/tasks.py`); device-red alerting died silently before.
-  - A device-red email is sent once per outage: a driver's retry
-    (`connecting` then `error` again) is no longer a new green-to-red
-    transition. An unreachable DMX node had emailed every five minutes.
-- v0.1.2, from commissioning the real appliance on 24-25 September 2026:
-  - `knxd.service` waits (`ExecStartPre=auditorium-wait-for-knx-gateway`, up
-    to 30 s) for the gateway's own KNXnet/IP port to answer before knxd tries
-    its tunnel CONNECT; network-online.target fired 35 ms after the carrier
-    came up, well before the switch port was forwarding or ARP had settled,
-    so the first start failed on every boot (`Restart=always`, `RestartSec=5`
-    covers a gateway that is genuinely down). `knxd.socket` no longer warns
-    about a legacy `/var/run/knx` path.
-  - `/etc/logrotate.d/auditorium`'s application-log stanza names
-    `application.log` and `*.jsonl` explicitly, not `*.log`: the glob also
-    matched `access.log`, its own separately-tuned stanza below, and
-    logrotate refuses two stanzas claiming one file — `logrotate.service`
-    failed on every run.
-  - The backup USB is made writable by the application automatically:
-    `auditorium-backup-media.service` chowns `/mnt/backup` to the
-    application every time `mnt-backup.mount` starts. A freshly formatted
-    ext4 filesystem's root is `root:root`, and the nightly job's write failed
-    with "Permission denied" until someone ran `chown` by hand; a stick that
-    already holds backups at its root keeps working unchanged. A write to an
-    unwritable destination now reports plainly that the destination is not
-    writable, instead of the raw `PermissionError`.
-  - Admin → Email has a "Remove mail settings" action (with confirmation)
-    for the `DELETE /system/email` endpoint, which previously had no way to
-    be reached from the UI.
-  - Lighting: the `artnet` driver shares one socket on UDP 6454
-    (`ArtNetEndpoint`). The eDMX8 MAX broadcasts every `ArtPollReply` to port
-    6454, so a poll sent from an ephemeral port never heard its answer and
-    the node showed as not connected. Health counts only replies from the
-    node's own address.
-  - Lighting: visiting-desk detection (§7.2.7) is wired to real `ArtDmx`.
-    Only frames from the node's address on its configured input universes
-    (the new `input_universes` driver setting; blank turns detection off)
-    count, so the legacy eDMX4 broadcasting universe 0 during the parallel
-    run is ignored. Incoming levels fill `state.lighting.observed` for
-    display only.
-  - Image-level fixes (knxd, logrotate, backup media) reach an appliance only
-    with its next image build; the application package carries the rest.
-- v0.1.3, from Admin → Backup on the real appliance on 25 September 2026:
-  - The backup progress panel no longer stays on "Running the backup job"
-    after "Back up now" has already finished. `HelperClient.wait()`
-    (`proskenion/core/helper.py`) relayed a `progress` frame only while the
-    helper's status file read `running`; `auditorium-helper`'s last two
-    steps and its final `done` write happen back to back once the job
-    itself is over, so a poll this wide could — and, on the real appliance,
-    did — read the file already `done` without ever having seen those steps
-    as `running`, leaving no terminal frame to close the panel's `step < of`
-    gate. `wait()` now relays the terminal read too. The client no longer
-    depends on that frame alone either: `useRunBackupNow` and
-    `useCaptureImage` (`web/src/admin/backup/api.ts`) clear the operation's
-    live progress the moment their own request settles, the same reasoning
-    already applied to a dropped socket's resync (`clearProgressFor`,
-    `web/src/live/store.ts`). `image_capture` shared the same helper-poll
-    hole and is fixed the same way; `backup_verify`, `backup_restore` and
-    `update_apply` narrate their own terminal step directly and were never
-    affected.
-  - A freshly built appliance with no application ever installed now enters
-    emergency mode as `not_installed`, not `migration_failed`:
-    `auditorium-update-rollback` (`appliance/bin/auditorium-update-rollback`)
-    used the latter as `enter_emergency()`'s default reason for every
-    "cannot recover" case, including `current_version() is None` — no
-    migration was ever attempted, so it should never have been reported as
-    one. An application that *is* installed but has nothing older to fall
-    back to still reports `migration_failed`, unchanged. `not_installed`
-    joins the closed reason set (`appliance/lib/auditorium_emergency_reason.py`,
-    `appliance/lib/auditorium_emergency.py`, `proskenion/api/system.py`).
-  - Admin has a way back to the main interface again: the admin sidebar and
-    mobile header (`web/src/shells/AdminShell.tsx`) carry a "Main interface"
-    link to `/app`, so leaving admin no longer means editing the URL by hand.
-  - From the rebuild-and-restore rehearsal the same day — **image:** the first install ends emergency mode entered as
-    `not_installed`. Once `apply-update` has installed a version and seen its
-    healthy marker, `auditorium-helper` stops the responder, puts nginx back
-    on `auditorium.conf`, reloads it and clears the reason file
-    (`end_not_installed`, `appliance/lib/auditorium_emergency.py`); every
-    other reason still ends only on a reboot (§4.6). If nginx will not take
-    its normal site back, emergency mode is restored rather than left half
-    switched. `auditorium-install-package` says plainly either that
-    emergency mode ended or that a reboot is needed. Before, nginx went on
-    serving the emergency page in front of the running application until
-    someone rebooted.
-  - The wizard's certificate step keeps the self-signed certificate the
-    application installed at its first start, when it already names the
-    hostname and address and has time left, instead of issuing a new one the
-    browser then refused at TLS ("Could not reach the controller"). When a
-    certificate *is* replaced — by step 6, or by a restore bringing a
-    different one back — the response says so (`certificate_replaced`,
-    `certificate_names`), and the page says "The controller's certificate
-    has changed. Reload this page and accept the new certificate", with a
-    Reload button, or, on an address the new certificate does not cover
-    (the bare IP), which address to use instead. A network failure right
-    after the change is explained as the certificate, not an unreachable
-    controller.
-  - The Restore card's "Restarting the appliance…" clears: it now asks the
-    public `/health` whether a new process is up, and says "Restore complete
-    — the controller restarted at …". It used to wait for the live socket,
-    whose reconnection the restored database refuses whenever its
-    `token_version` differs from the session's, and which a replaced
-    certificate stops outright.
-  - A restore is recorded on the Backup page after a refresh: when, from
-    what (the uploaded file's archive id, or the copy it came from), and the
-    passwords still to re-enter, worked out from the live database so a
-    re-entered one drops off — until it is dismissed
-    (`POST /system/backup/restore/acknowledge`) or another restore supersedes
-    it. The record was already written into the restored database; the start
-    that follows now stamps it with the restart time, and the email relay's
-    and network backup destination's passwords are checked as well as the
-    devices'.
-  - The start after a restore derives `network.backup_destination` from the
-    restored database, as it already derived `devices` and
-    `network.smtp_relay`, and re-renders the firewall. The restore screen no
-    longer lists `network.smtp_relay`, `network.backup_destination` or the
-    device table under "Network settings the backup disagrees with (not
-    applied)": the application derives them from the database it just
-    restored.
-  - Package versus image: the `not_installed` fix above (like the earlier
-    `not_installed` reason itself) is image-level (`appliance/`) and reaches
-    an appliance only with its next image build; everything else in v0.1.3
-    is in the application package.
-- v0.1.4, P7-T4 (carry-forwards 1–3 from the WORKLOG after v0.1.3):
-  - **A stale Backup page after v0.1.3 installed, with no prompt (25 Sep).**
-    `nginx`'s `location /` carried no `Cache-Control` at all, so a plain
-    reload could keep running the old build until Ctrl+Shift+R — nothing in
-    `location /assets/`'s long-lived `immutable` caching was wrong, the app
-    shell just had no cache policy of its own. `location /` now sends
-    `Cache-Control: no-cache` (revalidate every load; the security headers
-    snippet is re-included there too, since a location with its own
-    `add_header` stops inheriting the server block's). On top of that, the
-    build embeds its own version (`vite.config.ts` reads it from
-    pyproject.toml's `[project] version`, so there is one number to bump,
-    not two that can drift — web's own `package.json` had drifted to
-    `0.1.0`); the running client compares it against `/health`'s `version`
-    on reconnect, every 5 minutes and on window focus
-    (`web/src/version/versionCheck.ts`) and shows "A new version is
-    installed — Refresh" (`NewVersionBanner`), never an auto-reload. No
-    service worker was added — see the write-up below. Image-level: the
-    nginx header. Package-level: the version embedding and the banner.
-  - **`uvicorn.error: "ASGI callable returned without completing
-    handshake."` on every refused `WS /ws` upgrade (401/403), roughly every
-    30 s once a client is stuck retrying one.** Confirmed against a real
-    `uvicorn.Server`, not `TestClient`: the 401/403 was already correct on
-    the wire (`authenticate_websocket`'s `send_denial_response`) — the
-    ERROR is a bookkeeping gap in this uvicorn/starlette pair, which never
-    marks a connection's handshake "complete" for the denial-response
-    extension's messages (only for `websocket.accept`/`.close`), so
-    `run_asgi()` logs it after every refusal regardless. A scoped
-    `logging.Filter` on `uvicorn.error` (`install_denial_log_filter`,
-    `proskenion/api/deps.py`, installed from `create_app`) demotes exactly
-    that message to INFO; nothing about the 401/403/4001 the client
-    receives changes. `?v=1`'s missing/unknown-version path (accept, then
-    close 4001) was already correct and untouched. Package-level.
-  - **The projector's connect timeout read as offline (red), not busy
-    (amber), while the legacy controller at `.250` also holds it.**
-    `docs/protocols/pjlink.md` §8's bench finding — a second PJLink client's
-    connect either never completes or completes with no greeting, bounded
-    only by the transport's own timeout — reaches `PJLinkDriver.connect()`
-    and `.probe()` as `ConfigurationError`(`TimeoutError`) or a bare
-    `TimeoutError`; both are now read as "busy" (`connect_busy`, the same
-    duck-typed pattern as `auth_holding` and the CQ-20B's `amber_failure`)
-    rather than left to propagate as a `config`-kind failure, which always
-    shows red. A refusal or an unresolved name still propagates and still
-    shows red. `DeviceManager` reads `connect_busy` exactly as it reads
-    `auth_holding`; because amber is never `status == "error"`,
-    `DeviceRedAlertMonitor` never starts a device-red alert for it. Package-level.
-- v0.1.4, Phase 7:
-  - Every destructive admin action takes a pre-change snapshot first (§18,
-    P7-T3): every `DELETE` route, the KNX import, a baseline restore and a
-    backup restore, all through one `VACUUM INTO` helper
-    (`proskenion/core/snapshots.py`) with a sidecar saying why, by whom and
-    when. A snapshot that cannot be taken refuses the action. The nightly
-    backup job now prunes the 90-day tables and keeps ten snapshots (five
-    under disk pressure) across restore, update and pre-change snapshots,
-    never the one a rollback or the Backup screen's undo relies on; before,
-    nothing older than 90 days was pruned unless the disk was nearly full.
-- v0.1.5, P7-T7 (the carry-forward sweep):
-  - A `network.backup_destination` given by hostname, not a literal address,
-    got no outbound firewall rule (`_ip()` rejected it silently).
-    `auditorium-config-apply` now resolves it exactly like
-    `network.smtp_relay` — at apply time, cached, re-resolved nightly,
-    falling back to the cache on a transient failure. Image-level.
-  - An OS-trial revert (§14.4) reused the application updater's rollback
-    banner key (`update_rolled_back`, §14.5) — since `state.system.banners`
-    is one shared dict, a completely unrelated successful package update
-    calling `clear_banner` on that key silently erased a still-unseen
-    OS-revert banner. Given its own key (`os_rolled_back`) and its own text.
-    Package-level.
-  - Two "already alerted" flags lived only in memory: a device-red alert
-    resent itself once after a restart mid-outage, and "both backup
-    destinations are unavailable" could be sent once each by its two
-    independent detectors. Both now check and set one persisted
-    `system_state` flag. Package-level.
-  - A recovery re-partition formatted the replacement SSD's local partition
-    and stopped, without the `backups/` and `images/` directories
-    `appliance/image/build.sh` creates at image-build time. Image-level (the
-    recovery environment ships on the recovery USB, not in the application
-    package).
-  - The systemd harness's "several requests at once" case failed once under
-    concurrent load: it checked the request queue had drained with one
-    immediate `find`, assuming a microsecond unlink had already happened by
-    the time every id's status was seen to settle. Replaced with a real wait
-    on the same condition. Test-only.
-  - §12.1's "wait up to 5 s for booth frames" at boot is implemented: the
-    renderer's first frame is armed only after `DeskInput.wait_at_boot()`
-    resolves — a desk detected, a driver confirming no input universe is
-    configured, or the full window — so a running desk is not overwritten by
-    the controller's own restored model. `GET /lighting/external-control`'s
-    `last_frame_at` is filled from the same desk input, as ISO 8601 with
-    offset. Package-level.
-  - Every `run_scene` rule logged `success` at dispatch, with the
-    `SceneRunHandle`'s `repr()` as `scene_result`: the scene engine's `run()`
-    returns once a run has started, not finished, and the rules engine
-    awaited only that. Now awaits the handle's own result before recording,
-    without blocking the engine's dispatch loop. Package-level.
-  - `PUT /devices/{id}` took no pre-change snapshot (§7.2.4/§18) when it
-    changed a device's driver or transport — the one part of a save a
-    snapshot cannot otherwise reconstruct once overwritten. Conditional: a
-    rename or an enable/disable toggle alone still takes none. Package-level.
-  - Schedule rules trusted the wall clock at boot regardless of whether it
-    had been verified (§4.9). `Scheduler` now holds fires — logged, not
-    silently dropped — while `TimeSyncMonitor.trustworthy` says no (not
-    synced, and no trustworthy RTC), and (re)plans everything once it says
-    yes. Package-level.
-  - `web/package.json`'s `version` was unused (the build reads pyproject's)
-    and had already drifted once; removed rather than kept in step.
-  - The Docker-backed backup-destination integration tests' SMB readiness
-    check only grepped `smbd`'s log for `daemon_ready`, which is not a
-    guarantee it will already answer a real login — replaced with a real
-    `smbclient` round trip through the same container. Test-only.
-  - A Snapshots list on the Backup page (approved 25 September 2026):
-    `GET /system/backup/snapshots` (admin-only) lists every pre-change/
-    -restore/-update snapshot newest first, with when, why and by whom from
-    its sidecar (or what little an older sidecar-less file can still say),
-    and a Restore button per row through the existing
-    `POST /system/backup/restore` path. Package-level.
-  - Error toasts (§21.26, B37) had no auto-dismiss and were passed
-    `duration: Infinity` in `web/src/api/errors.ts` — exactly the earlier
-    defect B37 records: three offline devices would have produced three
-    permanent toasts blocking every later one, including the success toast
-    for the fix. Now dismiss at 30 s like the spec table says, through a new
-    `ERROR_TOAST_DURATION_MS` constant used at every call site. The app's
-    `<Toaster/>` (now a dedicated `web/src/notifications/AppToaster.tsx`)
-    also had no responsive position — bottom-right on desktop, above the
-    tab bar on mobile — and sat top-right regardless of viewport; it now
-    sits bottom-right with a `mobileOffset` clearing the status bar (this
-    app's one persistent bottom bar) on narrow viewports. A fader-rejection
-    passage elsewhere in §21 still says an error toast "does not
-    auto-dismiss" — a contradiction B37, the later decision, wins; flagged
-    for the spec to be corrected. Package-level.
-- v0.1.6, the asyncio task count (§23.3, §22.7):
-  - The soak rehearsal measured about 79 tasks near idle against §23.3's
-    "under 30". With the soak's device set (KNX, Art-Net with a booth input,
-    CQ-20B with metering, PJLink, the stub matrix) and two WebSockets the
-    application ran 84, flat through socket churn, device edits, scene
-    recalls, KNX telegrams, desk frames and mixer kill/restore: no leaks,
-    but redundancy. It now runs 38 on Linux (40 on a Windows development
-    machine), with no behaviour changed:
-    - The event bus held one consumer task per subscription parked on an
-      empty queue — 38 of the 84. A subscriber's consumer now starts when an
-      event is queued for it and ends when its queue is empty: still one per
-      subscriber, in order, isolated, with the same overflow classes, stall
-      logging and failure retirement (`proskenion/core/bus.py`).
-    - Each WebSocket ran liveness and the absolute expiry as two tasks that
-      only slept. They are loop timers now, with the same ping cadence,
-      close codes, close-flush bound and stuck-close backstop; a socket costs
-      three tasks, uvicorn's own included (`proskenion/api/ws.py`).
-    - PJLink's wait between probes held an `Event.wait` task beside its sleep;
-      the state change is a future now. The CQ-20B metering session's TCP
-      watch runs as its task group's body instead of a third child beside a
-      parent that only waited.
-  - `tests/integration/test_task_budget.py` runs the application under a
-    real uvicorn server against that device set, with the stubs and clients
-    on a separate loop so the count is the application's alone, and asserts
-    the idle budget, three tasks per WebSocket, and the same tasks by
-    coroutine after sockets are opened and dropped and every device edited.
-    The 38 remaining are one per device loop and per socket plus the
-    lighting pipeline, rules, KNX and the watchers; §23.3's idle figure is
-    flagged for the spec. Package-level.
-  - Elapsed time across a daylight-saving change (§4.9). Adding a `timedelta`
-    to a Pacific/Auckland datetime moves the wall clock, not real time, and
-    subtracting two that share the zone compares wall clocks. After the
-    session caps (`proskenion/core/auth.py`), the sweep found three more
-    sites meaning real time, now all through one helper,
-    `proskenion/core/elapsed.py` (`elapsed_after`, `elapsed_before`,
-    `seconds_between`):
-    - the OS trial's re-anchored ten-minute deadline
-      (`proskenion/core/osupgrade.py`). A trial booted during the repeated
-      hour in April had its deadline written 49 minutes *before* its boot,
-      so the first check rebooted a healthy trial away;
-    - the network change's three-minute confirm window
-      (`proskenion/core/network.py`): 63 minutes, or already over, when
-      given a zoneinfo datetime. Latent — the production caller passes a
-      fixed-offset one — but the function no longer depends on that;
-    - a WebSocket's absolute-expiry check (`proskenion/api/ws.py`), which
-      closed a session an hour early or an hour late across a change.
-
-    Calendar arithmetic is unchanged on purpose: the cron scheduler, and
-    retention by days (`core/retention.py`, `core/backup_retention.py`).
-    Package-level.
-  - A false "operating system rolled back" alert while an OS upgrade was
-    being applied (§14.4). `stage-slot` records the trial and only then does
-    the application ask for the reboot; a trial check landing in between saw
-    a trial for a slot that was not running and reported it as reverted —
-    high-priority email, red banner, audit row — and cleared the record, so
-    the slot then booted with no trial on file and would never have been
-    confirmed or reverted. The check now asks whether the running boot began
-    before the trial was recorded (the trial's `started_at` against now less
-    the uptime, through the platform layer); if so, the reboot into it is
-    still to come and it waits. The same holds for an application restart in
-    that window and for an admin's rollback to a confirmed previous slot.
-    Package-level: no change to the helper or the image.
-- v0.1.6, three accessibility gaps from the Phase 7 milestone audit
-  (`docs/phase-7-milestone.md`; §24.3, §24.4, §24.7, §22.2):
-  - **Focus return on close (§24.3, §24.7).** Closing a sheet or
-    `ConfirmDialog` opened from a controlled `open` prop — almost every
-    sheet (about 28) and every `ConfirmDialog` (33 files), since none of
-    them use a Radix `Dialog.Trigger` — dropped focus to `<body>` instead of
-    the button that opened it. Fixed centrally in `web/src/components/ui/Sheet.tsx`:
-    a module-level `focusin` listener tracks the last element focused outside
-    every currently open dialog, which `onCloseAutoFocus` restores focus to
-    (falling back to the shell's `#main` landmark if that element is gone —
-    for example a row the dialog itself just deleted). Radix's own
-    `onOpenAutoFocus` event was tried first and rejected: a field with
-    `autoFocus` inside the panel (`ChangePasswordDialog` has one) wins the
-    race against it in a real browser, a gap a jsdom render does not show.
-    `Sheet.test.tsx`'s two recorded-defect cases now hold, and
-    `tests/e2e/users.spec.ts` adds a real-browser check on the operator
-    password sheet.
-  - **Real-browser axe on every admin screen and the main operator views**
-    (§24.4, §24.7), extending `tests/e2e/accessibility.spec.ts`: the nav
-    entries come from `web/src/navigation.ts`, so a screen added later is
-    swept automatically (Control Surface stays out, as designed). This
-    found and fixed two genuine violations, both by the smallest token
-    change §24 requires:
-    - `text-muted` measures below AA on `bg-elevated`/`bg-overlay` (§24.4's
-      own table), and a sheet or dialog's own fields (`.field-help`,
-      `.field-note`, and anything else using the token) render on
-      `bg-elevated` — `.sheet-content`/`.dialog-content` now redefine
-      `--color-text-muted` to `--color-text-secondary` for their own
-      contents, rather than each affected class being found and changed one
-      at a time.
-    - The inline help popover's body text used `--color-text-secondary` on
-      `bg-overlay`, its own background — exactly the combination §24.4 says
-      to avoid ("text on it uses text-primary"); changed to
-      `--color-text-primary`.
-    - Also found and fixed: `#main` (`Shell.tsx`) is `tabindex="-1"` for the
-      skip link, but `.shell-main` is the shell's own `overflow: auto`
-      scroll region (the header and status bar stay pinned, §21.7), and a
-      screen with no focusable content of its own (Health, Help) left it an
-      axe `scrollable-region-focusable` violation in Safari. Now
-      `tabindex="0"`, keeping the skip link's target while adding it to the
-      tab order.
-  - **The §22.2 group-palette ΔE2000 test**, which did not exist:
-    `web/src/styles/groupPalette.test.ts` checks, straight from the live
-    tokens, that every adjacent pair of the ten group hues clears its hue
-    gap (24°, or 44° in the blue region) and ΔE2000 ≥ 18, and that no
-    palette member (hues and neutrals) sits within ΔE 11 of a semantic
-    colour or the primary teal. One pair, Rose–Salmon, measures ΔE2000
-    17.995 — a few thousandths under the spec's stated minimum; recorded as
-    a known, narrow defect (`it.fails`) rather than changed, per the brief.
-- v0.1.6, the two §22.5 end-to-end journeys the Phase 7 milestone audit found
-  missing (`docs/phase-7-milestone.md`):
-  - **Admin sign-in through scene creation, trigger and log inspection**
-    (`tests/e2e/scene-execution.spec.ts`): an admin builds a scene in the real
-    admin UI — a DMX action that captures the stage bank's current look — an
-    operator triggers it from the Scenes view, the stub Art-Net node receives
-    the restored look, and the scene's own execution log shows the run with
-    its real outcome. A second test fires the same kind of action through a
-    `run_scene` rule instead (KNX-triggered, not scheduled — a schedule fires
-    on cron minutes, too slow to exercise here without slowing the suite)
-    and checks the Rules screen's own execution log: with external control
-    on, the rule's one DMX action is `⊘ external_control` (§8.8), so the run
-    is `partial`, not `success` — exactly the case
-    `proskenion/rules/engine.py`'s `_run_and_record` was fixed to report
-    correctly rather than logging "success" at dispatch regardless of the
-    scene's real result.
-  - **The visiting-desk hand-off: on, track, and off** (§7.2.7,
-    `tests/e2e/desk-handoff.spec.ts`): `lighting-milestone.spec.ts` covered
-    only the operator's manual toggle, never automatic detection from a real
-    ArtDmx socket. A real `ArtNetStub` bound to 127.0.0.2 (distinct from the
-    node stub's own 127.0.0.1, so the application's node-address filter has
-    something to reject) sends one ArtDmx frame at a time to the
-    application's Art-Net endpoint; the operator Lighting view shows the
-    "booth desk" banner, the patched fixture goes read-only and its shown
-    level follows two frames' different values ("track", §22.5's word for
-    this), and the banner clears within about five seconds of the frames
-    stopping. `tests/stubs/control.py` gains the desk stub and two control
-    routes (`configureDesk`/`emitDesk` in `fixtures/stubs.ts`); the platform
-    check that skips where 127.0.0.2 will not bind on loopback follows
-    `tests/unit/core/dmx/test_artnet_handoff.py`'s own.
-- v0.1.8: v0.1.7 plus the first-run wizard's detected timezone reading
-  /etc/localtime first (below); the v0.1.7 tag's CI run found it.
-- v0.1.7, from the first run of the suite on Linux (GitHub Actions):
-  - The first-run wizard's detected timezone reads /etc/localtime before the
-    older /etc/timezone, which `timedatectl set-timezone` leaves stale.
-  - The KNX telegram budget admits 15 per 1.1 s of release time, so up to
-    100 ms of delivery jitter can't put 16 on the bus in any one second
-    (§7.1). A slower runner showed release-side counting let jitter through.
-  - **A root-side write to a missing `boot-state.json` failed and left an
-    empty file behind** (`appliance/lib/auditorium_bootstate.py`, image-level).
-    To lock a document that does not exist yet, `locked()` creates it empty,
-    and the read-merge under that lock then refused the empty file as
-    invalid JSON. So when the file was absent — a re-created `/srv/appliance`,
-    a restore, a deleted file — `auditorium-helper`'s update record,
-    `confirm-slot` and trial records, and `auditorium-update-rollback`'s
-    rollback record all failed, and the empty file they left made every later
-    root-side read fail too, until the application next wrote a marker. An
-    empty document now reads as `{}`, as the application's own reader
-    (`proskenion.core.platform.BootStateStore`) already did; anything else
-    that is not JSON is still refused. Hidden on Windows, where the lock is a
-    no-op and nothing is created before the read. The image seeds the file at
-    build time, so a normally built appliance never had it absent.
-  - **The web app formatted several dates and times in the browser's own zone
-    instead of the appliance's, Pacific/Auckland (§4.9)** — `UsersScreen.tsx`'s
-    "Password last changed" date, `CertificatesScreen.tsx`'s issued/expiry
-    dates, `web/src/lib/time.ts`'s status bar clock (`formatClock`, via
-    `getHours()`/`getMinutes()`) and its `formatRelative` date fallback, and
-    `admin/backup/format.ts`'s Today/Yesterday day-boundary check
-    (`toLocaleDateString`/`toLocaleTimeString` with no `timeZone`, or
-    `setHours(0, 0, 0, 0)` against the runtime's own midnight). The UTC CI
-    runner showed 7 April for a password changed at `2026-04-08T09:00:00+12:00`
-    (`UsersScreen.test.tsx`), a day early — the same class of bug the operator
-    status bar clock (§21.7) exists to avoid: it is deliberately the
-    appliance's own time, not the viewing device's. Every date and time in
-    the app now goes through `web/src/lib/time.ts`'s formatters, which fix
-    the zone to Pacific/Auckland regardless of the runtime's own; an ESLint
-    rule (`no-restricted-properties` in `eslint.config.js`) bans
-    `toLocaleDateString`/`toLocaleTimeString`/`toLocaleString` and a `Date`'s
-    local-zone accessors everywhere else, and Vitest now runs under UTC
-    (`vite.config.ts`'s `test.env.TZ`) so this class of regression fails
-    locally exactly as it does on CI, rather than passing by accident on an
-    NZ machine.
 - Packages are written as pax, not ustar: a wheel name over 100 bytes made
   `tools/package.py build` fail.
-- Every installed version now gets `config.toml -> /data/config/auditorium.toml`
-  (§4.14); without it the application could not find its configuration after
-  any install or update.
-- `auditorium-core` runs `venv/bin/python -m proskenion.main`: the console
-  script's `#!` named the staging directory the environment was built in.
-- v0.1.7:
-  - **The Playwright e2e suite was not safe to run on Linux, as GitHub CI
-    does.** Each test starts a real appliance over its own temporary
-    directories, and `detect_platform()` (`proskenion/core/platform.py`)
-    honours those on Windows — a developer's own machine — by picking
-    `DevelopmentPlatform`, but on Linux it deliberately picks
-    `GenericLinuxPlatform`, which uses the real `/srv/appliance` and `/data`
-    whatever the configuration says (§5.4): two Playwright workers on the
-    same Linux runner would then share one real `/data` — certificates,
-    helper requests, backups. `tests/conftest.py` already solves this for
-    pytest by pointing detection at an empty machine root; a new
-    `PROSKENION_TEST_PLATFORM=development` hook
-    (`proskenion.main.apply_test_hooks`, honoured only in development, like
-    every other `PROSKENION_TEST_` hook) does the same for the e2e
-    appliance, a subprocess pytest never sees. Set for every launch in
-    `tests/e2e/fixtures/appliance.ts`, `bridged_app.py` included since it
-    hands over to the same entry point. CI's "Provide /data" step is gone
-    with it. `tools/e2e-linux.sh` (a sibling of `tools/test-linux.sh`) runs
-    the full suite in a container built from Microsoft's own Playwright
-    image, as a non-root user with no `/data` on the machine at all, and
-    checks afterwards that nothing created one.
-  - Running that suite on Linux for the first time also found the first-run
-    wizard's Welcome step (§10.4) failing on any host whose OS timezone is
-    not already Pacific/Auckland: `_detected_timezone()`
-    (`proskenion/core/setup.py`) reads the real `/etc/timezone`, which on the
-    appliance's own image is already Pacific/Auckland at build time, but on
-    a bare Ubuntu runner or container defaults to `Etc/UTC`, disagreeing with
-    what step 2 alone accepts (§4.9). Not an application bug — a real
-    appliance never has this file wrong — so the fix is in the two places
-    that stand in for it: `tools/e2e-linux.Dockerfile` re-points
-    `/etc/localtime`/`/etc/timezone` at Pacific/Auckland, and the tag-triggered
-    `e2e` job in `.github/workflows/ci.yml` runs `timedatectl set-timezone
-    Pacific/Auckland` first, since GitHub's `ubuntu-24.04` runners default to
-    UTC and would have hit the identical failure on the first `v*` tag.
+- Every installed version gets `config.toml -> /data/config/auditorium.toml`
+  (§4.14); without it the application could not find its configuration.
+- `auditorium-core` runs `venv/bin/python -m proskenion.main`; the console
+  script's `#!` named the staging directory.

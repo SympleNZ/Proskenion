@@ -4,9 +4,12 @@ download, destinations and the SFTP key. §22.4's round trip for each.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
+import sqlite3
 import time
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -16,9 +19,15 @@ from httpx import AsyncClient
 
 from proskenion.api.app import API_PREFIX, create_app
 from proskenion.config import Config
-from proskenion.core.backup import BackupPaths, BackupRunStatus, DestinationOutcome
+from proskenion.core.backup import BackupJob, BackupPaths, BackupRunStatus, DestinationOutcome
+from proskenion.core.backup_destinations import (
+    BackupDestination,
+    DestinationName,
+    FilesystemDestination,
+)
 from proskenion.core.helper import HelperError, HelperStatus
 from proskenion.core.ratelimit import RateLimiter
+from proskenion.core.secrets import DeviceSecret
 from proskenion.core.snapshots import snapshots_dir
 from proskenion.db.connection import Database
 from proskenion.db.crud import backup as backup_crud
@@ -65,6 +74,15 @@ def backup_paths(tmp_path: Path, config: Config) -> BackupPaths:
         usb_dir=tmp_path / "mnt-backup",
         staging_dir=tmp_path / "staging",
     )
+
+
+def _local_only(
+    paths: BackupPaths,
+) -> Callable[[], Awaitable[dict[DestinationName, BackupDestination]]]:
+    async def provider() -> dict[DestinationName, BackupDestination]:
+        return {"local": FilesystemDestination("local", paths.local_dir)}
+
+    return provider
 
 
 @pytest.fixture
@@ -146,6 +164,51 @@ async def test_verify_with_no_archives_is_a_clean_ok(admin: AsyncClient) -> None
     body = response.json()
     assert body["ok"] is True
     assert body["archive_id"] is None
+    assert body["outcome"] == "none"
+
+
+async def test_verify_of_an_unknown_archive_is_not_found(admin: AsyncClient) -> None:
+    response = await admin.post(
+        f"{SYSTEM}/backup/verify", params={"archive_id": "auditorium-20990101-0000"}
+    )
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "not_found"
+
+
+async def test_verify_of_a_named_archive_clears_an_earlier_untrusted_mark(
+    admin: AsyncClient, backup_paths: BackupPaths, db: Database, config: Config
+) -> None:
+    """How the rig's false mark on 20260927-0301 is cleared on demand."""
+    # The API's database is in memory; the archive is built from a small file.
+    source_db = backup_paths.staging_dir.parent / "source.db"  # type: ignore[union-attr]
+    conn = sqlite3.connect(source_db)
+    conn.execute("CREATE TABLE t (x INTEGER)")
+    conn.commit()
+    conn.close()
+    job = BackupJob(
+        db,
+        dataclasses.replace(backup_paths, db_path=source_db),
+        secret=DeviceSecret(os.urandom(32)),
+        destinations_provider=_local_only(backup_paths),
+    )
+    run = await job.run(source="manual")
+    assert run.archive_id is not None
+    await backup_crud.mark_verified(
+        db, run.archive_id, verified_at="x", untrusted=True, reason="is not present at ..."
+    )
+
+    response = await admin.post(
+        f"{SYSTEM}/backup/verify", params={"archive_id": run.archive_id}
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert (body["ok"], body["outcome"], body["destination"]) == (True, "verified", "local")
+
+    history = (await admin.get(f"{SYSTEM}/backup/history")).json()["archives"]
+    (row,) = [a for a in history if a["id"] == run.archive_id]
+    assert row["untrusted"] is False and row["untrusted_reason"] is None
+    assert row["checked_destinations"] == ["local"]
+    assert row["checked_at"] is not None
 
 
 async def test_history_and_download(
@@ -171,6 +234,9 @@ async def test_history_and_download(
     history = await admin.get(f"{SYSTEM}/backup/history")
     assert history.status_code == 200, history.text
     assert [a["id"] for a in history.json()["archives"]] == ["auditorium-20260920-0300"]
+    (row,) = history.json()["archives"]
+    assert row["checked_at"] is None  # recorded without an after-backup check
+    assert row["checked_destinations"] == []
 
     download = await admin.get(f"{SYSTEM}/backup/auditorium-20260920-0300/download")
     assert download.status_code == 200, download.text

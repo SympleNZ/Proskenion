@@ -73,7 +73,7 @@ export function DeskSceneBand({ scenes, lastRecalledScene, capabilities, connect
         ))}
       </div>
       {reason ? (
-        <p className="mixer-scene-recall-reason" role="status">
+        <p className="mixer-scene-recall-reason">
           {reason}
         </p>
       ) : null}

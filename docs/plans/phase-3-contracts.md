@@ -26,8 +26,10 @@ with `detail.reason = "no_projector"`.
 - `state` is one of `off`, `warming`, `on`, `cooling`, `error` or `unreachable`
 - `label` comes from PJLink's input type digit (1 RGB, 2 Video, 3 Digital,
   4 Storage, 5 Network) and the port digit
-- `remaining_s` is always `null` on PJLink Class 1; it exists for a projector
-  that reports a remaining time (§21.14)
+- `remaining_s` is `null` on PJLink Class 1, which reports no remaining time
+  (§21.14), except during the controller's own minimum warm-up hold (§7.4,
+  owner decision 2026-09-30), when it is the whole seconds left of that hold
+  and `state` is `warming`
 
 `POST /projector/power` — admin, operator. Body `{"on": true}`.
 `POST /projector/input` — admin, operator. Body `{"input": "31"}`.

@@ -30,6 +30,7 @@ RAISED_BY: Final[dict[str, tuple[str, str]]] = {
     "Backup media absent 48h+": ("proskenion.core.health", "BACKUP_BANNER_KEY"),
     "Backup failed, retry also failed": ("proskenion.core.backup", "BACKUP_FAILED_AMBER_KEY"),
     "Backup failed three nights running": ("proskenion.core.backup", "BACKUP_FAILED_RED_KEY"),
+    "Backup untrusted": ("proskenion.core.backup", "BACKUP_UNTRUSTED_KEY"),
     "Certificate expiring": ("proskenion.core.certs", "CERT_EXPIRING_BANNER_KEY"),
     "Certificate expired": ("proskenion.core.certs", "CERT_SELF_SIGNED_BANNER_KEY"),
     "Time not synchronised": ("proskenion.core.timesync", "DEGRADED_BANNER_KEY"),

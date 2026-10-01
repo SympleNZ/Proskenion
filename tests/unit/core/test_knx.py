@@ -430,6 +430,43 @@ class TestBudget:
         assert len(matches) == 1
         assert matches[0].apdu == bytes([0x00, 0x80, 3])
 
+    async def test_monitor_records_outgoing_at_transmit_not_at_enqueue(
+        self, running: KnxSubsystem, registry: InMemoryAddressRegistry, stub: KnxdStub
+    ) -> None:
+        """A burst of 24 queued writes: the monitor never runs ahead of the
+        sender, so no one-second window of outgoing entries exceeds the budget
+        and, at every moment, the monitor holds exactly what has left."""
+        count = 24
+        for i in range(count):
+            registry.register(f"18/0/{i}", "5.010", AddressDirection.OUTGOING)
+        for i in range(count):
+            await running.write(f"18/0/{i}", i, priority=Priority.FADE_STEP)
+
+        def outgoing() -> list[knx_module.MonitorEntry]:
+            return [e for e in running.monitor.recent() if e.direction == "outgoing"]
+
+        # Right after queueing, the burst is still mostly waiting.
+        assert len(outgoing()) < count
+        await wait_until(lambda: len(stub.writes) >= count, timeout_s=5.0)
+        await wait_until(lambda: len(outgoing()) >= count, timeout_s=5.0)
+        # Entries appear in the order sent, one per telegram.
+        assert [e.group_address for e in outgoing()] == [w.group_address for w in stub.writes]
+
+    async def test_monitor_omits_a_superseded_fade_step(
+        self, running: KnxSubsystem, registry: InMemoryAddressRegistry, stub: KnxdStub
+    ) -> None:
+        registry.register("19/0/0", "5.010", AddressDirection.OUTGOING)
+        for i in range(15):
+            registry.register(f"20/0/{i}", "5.010", AddressDirection.OUTGOING)
+            await running.write(f"20/0/{i}", 0, priority=Priority.SCENE_STATUS)
+        await wait_until(lambda: len(stub.writes) >= 15)
+        for value in (1, 2, 3):
+            await running.write("19/0/0", value, priority=Priority.FADE_STEP)
+        await wait_until(lambda: len(stub.writes) >= 16, timeout_s=5.0)
+        await asyncio.sleep(0.3)
+        entries = [e for e in running.monitor.recent() if e.group_address == "19/0/0"]
+        assert [(e.direction, e.value) for e in entries] == [("outgoing", 3)]
+
     async def test_alarm_and_scene_status_are_never_coalesced(
         self, running: KnxSubsystem, registry: InMemoryAddressRegistry, stub: KnxdStub
     ) -> None:

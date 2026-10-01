@@ -78,6 +78,18 @@ describe("GroupSheet edit mode (§21.18)", () => {
     expect(screen.getByLabelText("Stage Wash 5")).toBeChecked();
   });
 
+  it("saves the Indicator only toggle (migration 011)", () => {
+    const onSave = vi.fn();
+    render(
+      <GroupSheet mode="edit" open onOpenChange={() => undefined} group={GROUP} fixtures={FIXTURES} saving={false} onSave={onSave} deleting={false} onDelete={vi.fn()} />,
+    );
+    const toggle = screen.getByLabelText("Indicator only — no fader; used for panel status lights");
+    expect(toggle).not.toBeChecked();
+    fireEvent.click(toggle);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ indicator_only: true }));
+  });
+
   it("Delete group calls onDelete", () => {
     const onDelete = vi.fn();
     render(

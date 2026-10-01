@@ -83,18 +83,42 @@ export interface PeakMeterProps {
   /** One entry per driver reference, index 0 = left (§5.5). `null` when this channel has no meter data at all (B58). */
   values: readonly (number | null)[] | null;
   law: FaderLaw;
+  /** How many bars the channel meters with, for the slot drawn while no data has arrived. */
+  stereo?: boolean;
 }
 
-/** Renders nothing when there is no data — an absent meter, not an empty one (§21.13). */
-export function PeakMeter({ values, law }: PeakMeterProps) {
-  if (!values || values.length === 0) return null;
+/**
+ * Rendered only while metering is available — the caller omits it
+ * otherwise, so the bar is absent, not empty, and the fader re-centres
+ * (§21.13). With data: one bar per driver reference, and a hairline at the
+ * law's 0 dB, so the meter reads against the same reference as the scale.
+ *
+ * Metering available but no reading yet for this channel: the slot keeps
+ * its place, so every strip in a row has the same shape, drawn as a dashed
+ * outline with nothing inside. Never a dark, empty track: that reads as
+ * silence, a claim about the signal this interface has no data for (B58
+ * "absent, not zero").
+ */
+export function PeakMeter({ values, law, stereo = false }: PeakMeterProps) {
+  if (!values || values.length === 0) {
+    const count = stereo ? 2 : 1;
+    return (
+      <div className="mixer-meter" data-state="no-data" data-bars={count} title="No meter reading from the mixer for this channel" aria-hidden="true">
+        {Array.from({ length: count }, (_, index) => (
+          <div key={index} className="mixer-meter-bar" data-testid="meter-slot-empty" />
+        ))}
+      </div>
+    );
+  }
   const gradient = bandGradient(law);
+  const zero = clampPercent(dbToPosition(law, AMBER_TO_RED_DB));
   return (
-    <div className="mixer-meter" aria-hidden="true">
+    <div className="mixer-meter" data-bars={values.length} aria-hidden="true">
       {values.map((value, index) => (
         // A fixed, ordered set of driver references (§5.5) — never reordered or filtered — so the index is a stable key.
         <MeterBar key={index} value={value} law={law} gradient={gradient} />
       ))}
+      <div className="mixer-meter-zero" style={{ bottom: zero }} />
     </div>
   );
 }

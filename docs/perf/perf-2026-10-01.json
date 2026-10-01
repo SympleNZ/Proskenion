@@ -1,0 +1,120 @@
+{
+  "generated_at": "2026-09-30T23:50:46.681585+00:00",
+  "base_url": "https://auditorium.obhs.school.nz",
+  "signed_in_as": "admin",
+  "safety": {
+    "allow_device_writes": true,
+    "allow_scene_triggers": true
+  },
+  "spec": "docs/proskenion-spec-v3.1.html \u00a723.1, \u00a723.2",
+  "results": [
+    {
+      "row_id": "http_throughput",
+      "concern": "Concurrent HTTP requests",
+      "citation": "\u00a723.1",
+      "target_text": "100/sec sustained",
+      "measured_by": "wrk against representative endpoints",
+      "unit": "req_per_s",
+      "achieved": 61.1056790596115,
+      "p50_ms": 98.69740001158789,
+      "p95_ms": 605.2635600382926,
+      "max_ms": 1589.1672000288963,
+      "sample_count": 312,
+      "passed": false,
+      "skipped": false,
+      "notes": "10 workers cycling 4 endpoints (/health, /system/health, /mixer/state, /lighting/state) for 5 s after a 0.5 s warm-up; 0 failure(s).",
+      "extra": {
+        "endpoints": [
+          "/health",
+          "/system/health",
+          "/mixer/state",
+          "/lighting/state"
+        ],
+        "failures": 0
+      }
+    },
+    {
+      "row_id": "ws_clients",
+      "concern": "Concurrent WebSocket clients",
+      "citation": "\u00a723.1",
+      "target_text": "20 sustained, 50 peak",
+      "measured_by": "50 connections holding the lighting view",
+      "unit": "clients",
+      "achieved": 50.0,
+      "p50_ms": 118.49620001157746,
+      "p95_ms": 119.90803004591726,
+      "max_ms": 119.94470003992319,
+      "sample_count": 50,
+      "passed": true,
+      "skipped": false,
+      "notes": "50 of 50 requested connections held for 2 s; 0 failed to open; 50 of 50 received the broadcast within 5 s of the trigger. p50/p95/max above are delivery latency, not a \u00a723.1 target on their own (\u00a723.2 has no row for this frame specifically).",
+      "extra": {
+        "connect_failures": 0,
+        "delivered": 50
+      }
+    },
+    {
+      "row_id": "ws_control_writes",
+      "concern": "WebSocket control writes",
+      "citation": "\u00a723.1",
+      "target_text": "300/sec sustained",
+      "measured_by": "10 clients dragging simultaneously",
+      "unit": "writes_per_s",
+      "achieved": 2051.2978356257076,
+      "p50_ms": 3.7413000245578587,
+      "p95_ms": 8.992819924606009,
+      "max_ms": 23.52799999061972,
+      "sample_count": 6158,
+      "passed": true,
+      "skipped": false,
+      "notes": "10 clients dragging mixer channel 1 for 3 s; 0 nack/timeout(s). p50/p95/max are set-to-ack round trip (\u00a723.2 target: p50 15 ms, p99 60 ms).",
+      "extra": {
+        "channel_id": 1,
+        "failures": 0
+      }
+    },
+    {
+      "row_id": "db_inserts",
+      "concern": "Database writes",
+      "citation": "\u00a723.1",
+      "target_text": "100 inserts/sec sustained",
+      "measured_by": "Scene execution log under scripted load",
+      "unit": "inserts_per_s",
+      "achieved": 197.51449092836594,
+      "p50_ms": 23.28350010793656,
+      "p95_ms": 40.72782000293955,
+      "max_ms": 83.25280004646629,
+      "sample_count": 595,
+      "passed": true,
+      "skipped": false,
+      "notes": "5 workers triggering scene 3 ('Proskenion perf harness (transient \u2014 safe to delete)') for 3 s; 0 failure(s); 500 rows now in its execution log. p50/p95/max are the trigger call's own round trip (202 Accepted, \u00a716.8), not the log row's write time \u2014 the scene engine's own run-start lock (\u00a78.13's ``_run_gate``) serialises the actual insert, so this is the real production path, not an artificial ceiling.",
+      "extra": {
+        "scene_id": 3,
+        "logged_count": 500,
+        "failures": 0
+      }
+    },
+    {
+      "row_id": "knx_telegrams",
+      "concern": "KNX outgoing telegrams",
+      "citation": "\u00a723.1, \u00a77.1 (RATE_LIMIT_PER_SECOND)",
+      "target_text": "15/sec, enforced",
+      "measured_by": "Priority queue under simultaneous fades",
+      "unit": "telegrams_per_s",
+      "achieved": 70440.25157892857,
+      "p50_ms": null,
+      "p95_ms": null,
+      "max_ms": null,
+      "sample_count": 84,
+      "passed": false,
+      "skipped": false,
+      "notes": "689 test-write(s) sent (0 refused) over 4 s by 5 concurrent callers; 84 outgoing telegram(s) observed on GET /knx/monitor (SSE) for address id 47. Peak observed rate in any 1 s window: 84.0/s against the 15/s budget (\u00a77.1) \u2014 BREACHED. This checks the budget is enforced; raw telegram throughput beyond it is not independently observable from outside the process. A flood submitted all at once (as this scenario does, deliberately \u2014 \u00a723.1's own 'simultaneous fades') sends its first ~15 telegrams in one burst, then another ~15 about a second later as that whole burst ages out together; a window straddling two such bursts can read a little over 15 without the limiter actually being broken \u2014 see the module docstring before treating a marginal BREACHED as a defect.",
+      "extra": {
+        "sent": 689,
+        "failures": 0,
+        "peak_1s_rate": 84.0,
+        "budget_per_second": 15
+      }
+    }
+  ]
+}

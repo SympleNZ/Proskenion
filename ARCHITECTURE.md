@@ -415,6 +415,138 @@ a new component the day someone forgets to add its assertion; a general
 axe sweep run against every screen (`web/src/test/a11yScreens.test.tsx`)
 does not have that failure mode.
 
+## Phase 7 decisions made on site (29 September – 1 October 2026)
+
+Owner decisions and on-the-rig findings, each recorded in the specification's
+Appendix B under the number given. The spec has the full text; these are the
+reasons a successor most needs.
+
+**Phones are portrait-only (B68).** Phone landscape was the one target where
+the shell itself changed, and it still left about 226 px of fader travel on a
+390 px-tall screen. A "turn your phone upright" overlay is simpler and more
+honest than a cramped layout that looks supported and is not. The test is
+landscape, under 500 px tall and a coarse pointer, so no tablet and no short
+desktop window is ever blocked (§21.9).
+
+**The phone Mixer is one scrolling row with Main last (B69).** The pinned Main
+column left no room for even two strips at a phone's width. A sideways
+scrolling row is how the Pages surface and the Lighting rows already behaved,
+so one gesture works everywhere (§21.13).
+
+**At phone width the status bar is one summary LED (B70).** Five dots, a timer,
+a clock and the account chip do not fit across a phone. One LED showing the
+worst state answers "is anything wrong?", and a tap opens the named list, so
+no detail sheet becomes unreachable (§21.7).
+
+**The controller is a lighting desk, and "Stage all" is indicator-only (B71).**
+Under the multiplier model a group holding every stage fixture dominated every
+row whenever it sat at or above them, and a binding forced it to 1.0, so after
+any wall-panel use the row faders stopped working. The whole-stage fader is the
+Lighting view's Master; `lighting_groups.indicator_only` keeps "Stage all" as
+membership for the panel's *all* indicator only, with no fader and never bound.
+The panel's all-button is four bindings, one per row, so the rows remain the
+controls (§9.4, §8.8).
+
+**Panel indicators are on only when every member is at 100 % of output (B72).**
+A lamp lit while the Master is down, or one fixture is pulled down, claims
+something untrue. `derived_status.basis` is `level` (stored level, the default,
+so existing statuses read as before) or `output` (what was last sent, level ×
+master, glide included); the stage panel uses `output`. "Any fixture on" was
+rejected because the button sets every fixture to full and its lamp claims
+exactly that (§8.6).
+
+**Group faders set levels; they do not multiply (B73).** The multiplier model
+needed a max rule so double attenuation could not happen, which let one group
+silently override another; a ghost mark and a "held by" hint to explain it; and
+a forced 1.0 on every panel recall to keep the indicator honest. Three
+mechanisms to make a surprising model survivable. With levels there is nothing
+to explain or force, and output is level × master for a stage fixture and the
+level alone for a KNX house dimmer. This removed the group input to the
+compositor and the boot-time restore of multipliers (§7.2, §9.4, §12.3).
+
+**The projector holds a minimum warm-up (B74).** The installation's PT-EZ570
+reports PJLink `on` about 13 seconds after power-on while its lamp is still
+warming, so refusing a power-off only while it *reports* warming let one
+through at +20 s. `min_warmup_s` (default 60, 0 disables) holds the shown state
+at `warming`, measured from the controller's own command; a fault is still shown
+at once, so the hold can delay a state but never hide one (§7.4).
+
+**Every backup verifies after writing (B75).** The first monthly check after a
+re-image called a merely missing local copy corrupt, and checking one copy a
+month at random meant most archives were never read back at all. Each run now
+checks the built archive and reads every copy back through its own destination;
+the index follows what each reachable destination actually holds, and only a
+copy read and found corrupt is called untrusted. For local and USB the read-back
+may come from the page cache, so the monthly check remains what catches later
+decay (§13.4).
+
+**Admin has a Shut down control (B76).** Moving the controller into the rack
+needed a clean power-off and the only way was SSH. It runs through the
+privileged helper beside restart and reboot, never from the application
+directly, and its confirmation says the power must be cycled to start it again.
+The route (`POST /system/shutdown`) was in progress when this was written
+(§16.7, §21.24).
+
+**A device change is spoken once, by a single connection announcer (v0.1.18,
+§24.3).** On 1 October the Narrator pass stopped knxd and heard "KNX offline"
+buried in the same news read several times over, by the status bar, the phone
+LED, the offline banners and the mixer's notices. One visually hidden polite
+live region now says only what changed, coalesced over one second so a device
+that drops and returns inside the window is never mentioned; "connecting" is
+never spoken and the text clears after ten seconds so a browse cursor never
+finds a stale message. Everything else keeps its accessible name but is not a
+live region (§21.7, §21.26).
+
+**Every desk channel is created with the mixer (28 September; reverses the
+"add channels individually" default behind B43).** B43 still holds that the
+virtual surface is the venue's configuration and is never re-derived from the
+desk. What changed is the default: hiding a channel is now a switch
+(`visible_staff`) and hirers see only what their pages carry, so a full set
+costs the people using the room nothing, where starting from four of twenty
+meant deleting sixteen rows. "Add missing channels" creates rows no existing
+row covers and never renames, re-orders, re-points or deletes one, so it needs
+no snapshot; a driver swap never creates rows itself, and the re-map offers it
+afterwards (§5.5, §21.21).
+
+**The display scale is app-wide (v0.1.12, §21.9).** A 4K panel unscaled gives
+a third of a metre of fader travel with 126 px buttons stranded beside it.
+The factor is applied to the root `<html>` element, so the whole operator and
+admin interface sees the smaller logical viewport (a 4K panel at 2× lays out
+as 1920 × 1080), not only the Pages surface the first slider scaled. The test
+is the screen's size, not the device type, because a booth touchscreen is both
+a coarse pointer and a large display.
+
+**A panel press is followed by a re-assert of the derived statuses (v0.1.10,
+§8.6, B51).** Statuses are otherwise written only on change, but a KNX wall
+panel flips its own icon the instant a button is pressed. If the press then
+does nothing (the projector is warming, a guard blocks the rule, the telegram
+is debounced) no value changes, nothing is written, and the panel keeps
+showing a state the room is not in. After a telegram on an enabled rule's
+trigger address, once the rules and anything they started have finished (capped
+at 10 s, coalesced 250 ms), every enabled status with an address is re-sent at
+its current value, skipping any written since the press. It changes no value,
+so the rule layer never sees it as a state change (§8.7); on the rig a refused
+press is corrected within about a second.
+
+**DMX frames go out on a steady 40 fps grid while anything moves (v0.1.16).**
+Sending only on change made the frame rate follow the arrival of fader writes
+over Wi-Fi: on the rig a drag gave a median of one frame every 50 ms with gaps
+past 100 ms, each a visible jump that grew with drag speed. The grid is
+scheduled from the previous frame's due time, so it does not drift, and stops
+250 ms after nothing has moved, leaving the 1 Hz keepalive. An operator glide
+moves *output* (never the stored level) over 75 ms, so the interface,
+persistence and `level`-basis statuses never see it; REST writes, scenes, rules
+and explicit fades do not glide, so a fade keeps its own timing (§7.2, §23.1).
+
+**knxd runs with `-B single` and `-B pace` (29 and 30 September).**
+`-B single` rewrites every outgoing source to the address the gateway assigned
+the tunnel, so no `0.0.x` source ever reaches the bus and nothing the controller
+sends can clash with an undocumented device on the installation's line.
+`-B pace` (with `--arg=delay=40`) spaces telegrams 40 ms apart because the
+gateway dropped telegrams from a burst: the panel's status lamps, re-sent
+together after a press, lost their last rows. 40 ms sits inside the 15
+telegrams/second budget (§7.1).
+
 ## Not yet built
 
 **The control surface (Mackie Control over RTP-MIDI, per-strip banking) has

@@ -44,6 +44,9 @@ KNOWN_ABSENT: Final[dict[tuple[str, str], str]] = {
     ("POST", "/surface/identify"): "control surface: Phase 9",
     # Phase 6 contracts §5 renamed or folded these without the spec following
     # (docs/phase-7-milestone.md lists them for the coordinator):
+    #
+    # Folded into §16.7 ahead of the code (Simon, 1 Oct 2026; B76): the Admin
+    # shut-down control is being built now. Remove once it is served.
 }
 
 

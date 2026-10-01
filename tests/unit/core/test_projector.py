@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 import pytest
 
@@ -18,6 +19,7 @@ from proskenion.config import Config
 from proskenion.core.broadcast import Message
 from proskenion.core.bus import EventBus
 from proskenion.core.devices import DeviceManager
+from proskenion.core.drivers.capabilities import ProjectorState
 from proskenion.core.events import ProjectorStateChanged
 from proskenion.core.projector import (
     NoProjectorConfigured,
@@ -29,6 +31,33 @@ from proskenion.core.state import StateStore
 from proskenion.db.connection import Database
 from proskenion.db.crud import devices as devices_crud
 from tests.stubs.pjlink_stub import PJLinkStub
+
+
+class ManualClock:
+    """The service's clock and sleep for the minimum warm-up hold (§7.4):
+    time moves only when a test calls :meth:`advance`."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+        self._wakers: list[asyncio.Event] = []
+
+    def monotonic(self) -> float:
+        return self.now
+
+    async def sleep(self, delay: float) -> None:
+        until = self.now + delay
+        while self.now < until:
+            waker = asyncio.Event()
+            self._wakers.append(waker)
+            await waker.wait()
+
+    async def advance(self, seconds: float) -> None:
+        self.now += seconds
+        wakers, self._wakers = self._wakers, []
+        for waker in wakers:
+            waker.set()
+        for _ in range(5):  # let a woken hold task run up to its first real I/O
+            await asyncio.sleep(0)
 
 
 class FakePublisher:
@@ -54,13 +83,22 @@ class Rig:
 
 
 async def _build(
-    db: Database, dev_config: Config, stub: PJLinkStub | None, *, password: str | None = None
+    db: Database,
+    dev_config: Config,
+    stub: PJLinkStub | None,
+    *,
+    password: str | None = None,
+    min_warmup_s: int | None = None,
+    clock: ManualClock | None = None,
 ) -> Rig:
     bus = EventBus()
     await bus.start()
     state = StateStore(dev_config, bus)
     device_id: int | None = None
     if stub is not None:
+        driver: dict[str, Any] = {"password": password}
+        if min_warmup_s is not None:  # None: the driver's own default (60 s)
+            driver["min_warmup_s"] = min_warmup_s
         device = await devices_crud.create(
             db,
             category="projector",
@@ -68,7 +106,7 @@ async def _build(
             name="Projector",
             config={
                 "transport": {"type": "tcp", "host": "127.0.0.1", "port": stub.port},
-                "driver": {"password": password},
+                "driver": driver,
             },
         )
         device_id = device.id
@@ -85,7 +123,12 @@ async def _build(
 
     bus.subscribe(ProjectorStateChanged, collect, name="test:projector-events")
     publisher = FakePublisher()
-    service = ProjectorService(state, bus, db, manager, broadcaster=publisher)
+    if clock is None:
+        service = ProjectorService(state, bus, db, manager, broadcaster=publisher)
+    else:
+        service = ProjectorService(
+            state, bus, db, manager, broadcaster=publisher, clock=clock.monotonic, sleep=clock.sleep
+        )
     await service.start()
     return Rig(bus, state, manager, service, publisher, events, device_id)
 
@@ -260,9 +303,11 @@ async def test_power_and_input_are_refused_while_cooling_with_nothing_sent(
 async def test_set_power_on_reads_back_state_and_input(
     db: Database, dev_config: Config
 ) -> None:
+    """With the minimum warm-up disabled (0), the pre-2026-09-30 behaviour:
+    the projector's own report is shown at once (§7.4)."""
     async with PJLinkStub(inputs=("11", "31")) as stub:
         stub.set_power_immediately("0")
-        rig = await _build(db, dev_config, stub)
+        rig = await _build(db, dev_config, stub, min_warmup_s=0)
         try:
             await rig.service.set_power(True)
             assert rig.state.projector.get("state") == "on"
@@ -335,3 +380,253 @@ async def test_commands_answer_unreachable_when_the_device_is_not_connected(
         await service.stop()
         await manager.stop()
         await bus.stop()
+
+
+# -- the minimum warm-up hold (§7.4, B52; owner decision 2026-09-30) ----------------
+#
+# On the rig the projector reported "warming" for 13.4 s, then "on" while its
+# lamp was still visibly warming, and an off at +20 s went through. From our
+# own accepted power-on the service now shows "warming" for ``min_warmup_s``
+# (default 60 s) even once PJLink says "on". The stub here warms instantly —
+# reports "on" at once — the worst case of that finding. A restart during a
+# hold needs no test of its own: the service keeps no hold across a restart,
+# which is exactly test_boot_discovers_state_and_sends_no_power_command.
+
+
+async def _probe(rig: Rig) -> None:
+    """``probe()`` is the same code path a scheduled probe takes."""
+    driver = rig.devices.running_driver(rig.device_id) if rig.device_id else None
+    assert driver is not None
+    await driver.probe()
+
+
+async def _projector_reports_on(rig: Rig, stub: PJLinkStub) -> None:
+    """Let the stub finish its (instant) warm-up and have the driver see it."""
+    await _wait_for(lambda: stub.power == "1")
+    await _probe(rig)
+
+
+def _power_commands(stub: PJLinkStub) -> list[str]:
+    return [r.command for r in stub.received if r.command in ("%1POWR 0", "%1POWR 1")]
+
+
+async def test_hold_shows_warming_until_min_warmup_even_once_the_projector_says_on(
+    db: Database, dev_config: Config
+) -> None:
+    clock = ManualClock()
+    async with PJLinkStub(inputs=("11", "31")) as stub:
+        stub.set_power_immediately("0")
+        rig = await _build(db, dev_config, stub, clock=clock)
+        try:
+            await rig.service.set_power(True)
+            await _projector_reports_on(rig, stub)
+
+            assert rig.state.projector.get("state") == "warming"
+            assert rig.service.snapshot().state == "warming"
+            assert rig.service.warmup_remaining_s() == 60.0
+            assert rig.publisher.messages[-1]["state"] == "warming"
+
+            await clock.advance(59.5)
+            assert rig.state.projector.get("state") == "warming"
+            assert rig.service.warmup_remaining_s() == 1.0  # whole seconds, rounded up
+
+            await clock.advance(0.5)
+            # The frame follows the input read that the `on` transition makes.
+            await _wait_for(lambda: rig.publisher.messages[-1]["state"] == "on")
+            assert rig.state.projector.get("state") == "on"
+            assert rig.service.warmup_remaining_s() is None
+            assert rig.state.projector.get("input_ref") == stub.current_input
+            assert rig.publisher.messages[-1] == {
+                "type": "projector_state",
+                "state": "on",
+                "input_ref": stub.current_input,
+            }
+            await _wait_for(lambda: len(rig.events) == 3)
+            assert [(e.state, e.previous) for e in rig.events] == [
+                ("off", "unreachable"),
+                ("warming", "off"),
+                ("on", "warming"),
+            ]
+
+            # The `on` transition fired once: a later probe adds nothing.
+            await _probe(rig)
+            await asyncio.sleep(0.05)
+            assert [e.state for e in rig.events].count("on") == 1
+        finally:
+            await _teardown(rig)
+
+
+async def test_off_refused_at_20_s_and_accepted_at_61_s(
+    db: Database, dev_config: Config
+) -> None:
+    clock = ManualClock()
+    async with PJLinkStub() as stub:
+        stub.set_power_immediately("0")
+        rig = await _build(db, dev_config, stub, clock=clock)
+        try:
+            await rig.service.set_power(True)
+            await _projector_reports_on(rig, stub)
+
+            await clock.advance(20)
+            with pytest.raises(ProjectorUnavailable) as refused:
+                await rig.service.set_power(False)
+            assert (refused.value.state, refused.value.reason) == ("warming", "transitioning")
+            assert _power_commands(stub) == ["%1POWR 1"]  # the off never reached the wire
+
+            await clock.advance(41)
+            await _wait_for(lambda: rig.state.projector.get("state") == "on")
+            await rig.service.set_power(False)
+            assert _power_commands(stub) == ["%1POWR 1", "%1POWR 0"]
+        finally:
+            await _teardown(rig)
+
+
+async def test_input_is_refused_during_the_hold_with_nothing_sent(
+    db: Database, dev_config: Config
+) -> None:
+    clock = ManualClock()
+    async with PJLinkStub(inputs=("11", "31")) as stub:
+        stub.set_power_immediately("0")
+        stub.current_input = "11"
+        rig = await _build(db, dev_config, stub, clock=clock)
+        try:
+            await rig.service.set_power(True)
+            await _projector_reports_on(rig, stub)
+            await clock.advance(30)
+
+            with pytest.raises(ProjectorUnavailable) as refused:
+                await rig.service.set_input("31")
+            assert (refused.value.state, refused.value.reason) == ("warming", "transitioning")
+            assert not any(r.command == "%1INPT 31" for r in stub.received)
+            assert stub.current_input == "11"
+        finally:
+            await _teardown(rig)
+
+
+async def test_a_projector_reporting_off_during_the_hold_is_shown_off_at_once(
+    db: Database, dev_config: Config
+) -> None:
+    """A failed start wins immediately: the hold never keeps showing warming
+    for a projector that says it is off."""
+    clock = ManualClock()
+    async with PJLinkStub() as stub:
+        stub.set_power_immediately("0")
+        rig = await _build(db, dev_config, stub, clock=clock)
+        try:
+            await rig.service.set_power(True)
+            await _projector_reports_on(rig, stub)
+            await clock.advance(10)
+            assert rig.state.projector.get("state") == "warming"
+
+            stub.set_power_immediately("0")
+            await _probe(rig)
+
+            assert rig.state.projector.get("state") == "off"
+            assert rig.service.warmup_remaining_s() is None
+            assert rig.publisher.messages[-1]["state"] == "off"
+            # And with the projector off, power-on is not refused.
+            await rig.service.set_power(True)
+            assert _power_commands(stub) == ["%1POWR 1", "%1POWR 1"]
+        finally:
+            await _teardown(rig)
+
+
+@pytest.mark.parametrize("fault", [ProjectorState.ERROR, ProjectorState.UNREACHABLE])
+async def test_a_fault_during_the_hold_is_never_masked(
+    db: Database, dev_config: Config, fault: ProjectorState
+) -> None:
+    """``error`` and ``unreachable`` reports arrive through the same driver
+    listener a probe calls (§7.4); both are shown as reported, mid-hold."""
+    clock = ManualClock()
+    async with PJLinkStub() as stub:
+        stub.set_power_immediately("0")
+        rig = await _build(db, dev_config, stub, clock=clock)
+        try:
+            await rig.service.set_power(True)
+            await _projector_reports_on(rig, stub)
+            await clock.advance(5)
+
+            await rig.service._on_driver_state_changed(fault, ProjectorState.ON)
+
+            assert rig.state.projector.get("state") == fault.value
+            assert rig.service.warmup_remaining_s() is None
+            # The hold's end changes nothing further.
+            await clock.advance(60)
+            await asyncio.sleep(0.05)
+            assert rig.state.projector.get("state") == fault.value
+        finally:
+            await _teardown(rig)
+
+
+async def test_min_warmup_zero_shows_on_as_soon_as_the_projector_reports_it(
+    db: Database, dev_config: Config
+) -> None:
+    clock = ManualClock()
+    async with PJLinkStub() as stub:
+        stub.set_power_immediately("0")
+        rig = await _build(db, dev_config, stub, min_warmup_s=0, clock=clock)
+        try:
+            await rig.service.set_power(True)
+            await _projector_reports_on(rig, stub)
+            assert rig.state.projector.get("state") == "on"
+            assert rig.service.warmup_remaining_s() is None
+            await rig.service.set_power(False)  # no hold: accepted at once
+            assert _power_commands(stub) == ["%1POWR 1", "%1POWR 0"]
+        finally:
+            await _teardown(rig)
+
+
+async def test_a_custom_min_warmup_is_honoured(db: Database, dev_config: Config) -> None:
+    clock = ManualClock()
+    async with PJLinkStub() as stub:
+        stub.set_power_immediately("0")
+        rig = await _build(db, dev_config, stub, min_warmup_s=90, clock=clock)
+        try:
+            await rig.service.set_power(True)
+            await _projector_reports_on(rig, stub)
+            assert rig.service.warmup_remaining_s() == 90.0
+            await clock.advance(61)
+            assert rig.state.projector.get("state") == "warming"
+            await clock.advance(29)
+            await _wait_for(lambda: rig.state.projector.get("state") == "on")
+        finally:
+            await _teardown(rig)
+
+
+async def test_a_real_warm_up_longer_than_the_hold_still_shows_warming(
+    db: Database, dev_config: Config
+) -> None:
+    """The hold is a minimum: when it ends with the projector still
+    reporting warming, the state stays warming until the projector says on."""
+    clock = ManualClock()
+    async with PJLinkStub(warm_seconds=30.0) as stub:
+        stub.set_power_immediately("0")
+        rig = await _build(db, dev_config, stub, clock=clock)
+        try:
+            await rig.service.set_power(True)
+            assert stub.power == "3"
+            await clock.advance(60)
+            await asyncio.sleep(0.05)
+            assert rig.state.projector.get("state") == "warming"
+            assert rig.service.warmup_remaining_s() is None  # nothing left to count
+
+            stub.set_power_immediately("1")
+            await _probe(rig)
+            assert rig.state.projector.get("state") == "on"
+        finally:
+            await _teardown(rig)
+
+
+async def test_power_on_to_a_projector_already_on_starts_no_hold(
+    db: Database, dev_config: Config
+) -> None:
+    clock = ManualClock()
+    async with PJLinkStub() as stub:
+        stub.set_power_immediately("1")
+        rig = await _build(db, dev_config, stub, clock=clock)
+        try:
+            await rig.service.set_power(True)
+            assert rig.state.projector.get("state") == "on"
+            assert rig.service.warmup_remaining_s() is None
+        finally:
+            await _teardown(rig)

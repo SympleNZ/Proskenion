@@ -66,7 +66,7 @@ from proskenion.core.alerts import (
     wire_rule_alerts,
 )
 from proskenion.core.auth import JWT_SECRET_FILENAME, TokenService
-from proskenion.core.backup import BackupPaths, BackupStatusWatcher
+from proskenion.core.backup import BackupPaths, BackupStatusWatcher, reconcile_after_restore
 from proskenion.core.banners import DeviceOfflineBanner, VenueDefaultBanner
 from proskenion.core.broadcast import Broadcaster, progress_message
 from proskenion.core.bus import EventBus, Subscription
@@ -411,6 +411,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     owns_rules = app.state.rules is None
     owns_certs = app.state.certs is None
     cert_watch: asyncio.Task[None] | None = None
+    restore_reconcile: asyncio.Task[None] | None = None
     owns_updates = app.state.updates is None
     owns_os_upgrade = app.state.os_upgrade is None
     owns_images = app.state.images is None
@@ -436,9 +437,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # with its record already written into that database; this start is
         # the one that can say when the appliance came back (§21.24).
         try:
-            await backup_restore.mark_restarted(app.state.db)
+            restored = await backup_restore.mark_restarted(app.state.db)
         except Exception:
+            restored = None
             log.exception("could not stamp the restore record with this start")
+        # The restored database's archive index describes the destinations as
+        # they were when that archive was built; bring it into line now rather
+        # than at tonight's backup. In the background: listing the network
+        # destination must not hold up the start.
+        backup_paths = getattr(app.state, "backup_paths", None)
+        if restored is not None and backup_paths is not None:
+            restore_reconcile = asyncio.create_task(
+                reconcile_after_restore(app.state.db, backup_paths),
+                name="backup-reconcile-after-restore",
+            )
 
         # Certificate issuance and renewal (Q6, Q7): built once the platform
         # (data_dir) and the device manager (the device secret the
@@ -741,6 +753,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         backup_watch_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await backup_watch_task
+        if restore_reconcile is not None:
+            restore_reconcile.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await restore_reconcile
         bus.unsubscribe(rule_alert_subscription)
         if owns_alert_sink:
             app.state.alert_sink = None

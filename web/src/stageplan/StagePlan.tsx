@@ -28,6 +28,7 @@ import { ChannelFader } from "@/lighting/ChannelFader";
 import { colourToCss } from "@/lighting/colour";
 import { isReadOnlyUnderExternalControl, setLevelTargetsUnderExternalControl } from "@/lighting/externalControl";
 import type { FixtureProfile, LightingChannel, LightingGroup } from "@/lighting/types";
+import { toLogicalPx } from "@/lib/useDisplayScale";
 import { getDisplayLevel, useColour, useDisplayLevel, useExternalControl } from "@/live/store";
 
 import { useCreateGroup, useMoveFixture, useReorderBar, useSetLevels } from "./api";
@@ -172,8 +173,10 @@ function FixtureContextMenu({
     };
   }, [onClose]);
 
+  // x/y are the long-press's clientX/Y — physical px — while this fixed
+  // menu's left/top are laid out inside the display-scaled document (§21.9).
   return (
-    <div ref={ref} role="menu" aria-label="Fixture actions" className="stage-plan-context-menu" style={{ left: x, top: y }}>
+    <div ref={ref} role="menu" aria-label="Fixture actions" className="stage-plan-context-menu" style={{ left: toLogicalPx(x), top: toLogicalPx(y) }}>
       <button type="button" role="menuitem" className="menu-item" onClick={onOpenFader}>
         Open fader
       </button>
@@ -544,6 +547,7 @@ export function StagePlan({
           aria-label="Stage lighting plan"
           viewBox={`0 0 ${VIEW_WIDTH} ${viewHeight(orderedBarsList.length)}`}
           className="stage-plan-svg"
+          data-dragging={dragState !== null || undefined}
         >
           <defs>
             <filter id="fixture-node-bloom-filter" x="-100%" y="-100%" width="300%" height="300%">
@@ -628,7 +632,7 @@ export function StagePlan({
           if (!open) setFaderChannelId(null);
         }}
       >
-        <SheetContent title={faderFixture?.name ?? "Fixture"}>{faderFixture ? <ChannelFader channel={faderFixture} /> : null}</SheetContent>
+        <SheetContent title={faderFixture?.name ?? "Fixture"}>{faderFixture ? <ChannelFader channel={faderFixture} className="stage-plan-fader" /> : null}</SheetContent>
       </Sheet>
 
       {isAdmin ? (

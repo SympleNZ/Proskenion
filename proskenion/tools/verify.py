@@ -2,17 +2,23 @@
 
 ::
 
-    python -m proskenion.tools.verify [--config PATH]
+    python -m proskenion.tools.verify [--config PATH] [--archive ID]
 
 Run by ``auditorium-verify.timer`` on the first of the month, as the
 ``auditorium`` user. Picks a random recent archive, re-computes its
 whole-file checksum, extracts ``db/proskenion.db`` and runs a read-only
 ``PRAGMA integrity_check`` on it
-(:func:`proskenion.core.backup.run_monthly_verify`). A failure marks the
-archive ``untrusted`` in the database and persists the result to
-``system_state``, which the running application's
-:class:`~proskenion.core.backup.BackupStatusWatcher` turns into the
-``backup_untrusted`` banner and one email.
+(:func:`proskenion.core.backup.run_monthly_verify`), after reconciling the
+archive index with what each reachable destination actually holds. A copy
+that fails marks the archive ``untrusted`` in the database; an archive no
+destination holds any more is reported as missing instead, never as
+corrupt. Either result is persisted to ``system_state``, which the running
+application's :class:`~proskenion.core.backup.BackupStatusWatcher` turns
+into the ``backup_untrusted`` banner and one email, or the "missing" email.
+A pass clears any earlier untrusted mark on that archive and the banner.
+
+``--archive ID`` checks that archive instead of a random one — how an
+archive wrongly marked untrusted is cleared on demand.
 
 Exit code is 1 when the check failed, for the same reason
 :mod:`proskenion.tools.backup` returns non-zero on a failed backup: the
@@ -49,6 +55,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=None,
         help=f"bootstrap configuration file (default: ${CONFIG_ENV_VAR} or {DEFAULT_CONFIG_PATH})",
     )
+    parser.add_argument(
+        "--archive",
+        metavar="ID",
+        default=None,
+        help="check this archive (auditorium-YYYYMMDD-HHMM) instead of a random one",
+    )
     return parser.parse_args(argv)
 
 
@@ -60,11 +72,11 @@ def _paths(config: Config) -> BackupPaths:
     )
 
 
-async def run_verify(config: Config) -> VerifyStatus:
+async def run_verify(config: Config, archive_id: str | None = None) -> VerifyStatus:
     db = Database()
     await db.open(config.database.path)
     try:
-        return await run_monthly_verify(db, _paths(config))
+        return await run_monthly_verify(db, _paths(config), archive_id=archive_id)
     finally:
         await db.close()
 
@@ -85,7 +97,11 @@ def main(
         print(f"auditorium-verify: {exc}", file=err)
         return EXIT_CONFIG_ERROR
 
-    status = asyncio.run(run_verify(config))
+    try:
+        status = asyncio.run(run_verify(config, args.archive))
+    except LookupError as exc:
+        print(f"auditorium-verify: {exc}", file=err)
+        return EXIT_CONFIG_ERROR
 
     if status.ok:
         print(f"auditorium-verify: {status.archive_id or '(none)'}: {status.detail}", file=out)

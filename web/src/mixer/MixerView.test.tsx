@@ -238,6 +238,18 @@ describe("MixerView — meters", () => {
     });
     expect(within(stereoStrip).getAllByTestId("meter-bar")).toHaveLength(2);
     expect(within(monoStrip).queryAllByTestId("meter-bar")).toHaveLength(0);
+    // Metering is up, so the mono channel keeps its meter slot — drawn as
+    // "no reading", never as a bar at the floor (B58) — and every strip in
+    // the row keeps the same shape.
+    expect(within(monoStrip).getAllByTestId("meter-slot-empty")).toHaveLength(1);
+    expect(within(stereoStrip).queryAllByTestId("meter-slot-empty")).toHaveLength(0);
+  });
+
+  it("draws a stereo channel's empty slot as two bars before any reading arrives", async () => {
+    withFaderLaw({ "/mixer/state": () => baseState() });
+    renderWithProviders(<MixerView />, { route: "/app/mixer" });
+    const stereoStrip = await screen.findByTestId("mixer-input-6");
+    expect(within(stereoStrip).getAllByTestId("meter-slot-empty")).toHaveLength(2);
   });
 
   it("shows the metering-unavailable notice and renders no bars when the capability is absent", async () => {
@@ -253,6 +265,9 @@ describe("MixerView — meters", () => {
       applyMessage({ type: "mixer_meters", channels: { "6": [-12.4, -13.1] } });
     });
     expect(screen.queryAllByTestId("meter-bar")).toHaveLength(0);
+    // Absent, not empty (§21.13): no slot either, so the fader re-centres.
+    expect(screen.queryAllByTestId("meter-slot-empty")).toHaveLength(0);
+    expect(document.querySelector(".fader-meter-slot")).toBeNull();
   });
 
   // The wording is the interface's own for each closed reason

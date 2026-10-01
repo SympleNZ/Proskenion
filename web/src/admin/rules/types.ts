@@ -146,9 +146,19 @@ export interface DerivedStatus {
   compare_level: number | null;
   device_id: number | null;
   compare_state: string | null;
+  /** What a lighting status compares (migration 011): stored levels, or what the room sees. */
+  basis: StatusBasis;
   created_at: string;
   updated_at: string;
 }
+
+/**
+ * `level`: each member's stored level (§8.6 as written). `output`: what the
+ * room sees — each member's level × the master (groups set levels), so the
+ * master at 0 reads off whatever the faders say. `level` for non-lighting
+ * statuses.
+ */
+export type StatusBasis = "level" | "output";
 
 export interface DerivedStatusesResponse {
   derived_statuses: DerivedStatus[];
@@ -163,6 +173,7 @@ export interface DerivedStatusInput {
   compare_level: number | null;
   device_id: number | null;
   compare_state: string | null;
+  basis: StatusBasis;
 }
 
 /** One row of `GET /derived-status/state` and the `GET /derived-status/monitor` SSE stream (§8.10). */

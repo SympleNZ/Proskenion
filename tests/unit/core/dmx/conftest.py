@@ -72,11 +72,13 @@ def knx(
 def config(
     *channels: DmxChannel | KnxChannel,
     groups: dict[int, set[int]] | None = None,
+    indicator_only: set[int] | None = None,
 ) -> LightingConfig:
     return LightingConfig(
         tuple(c for c in channels if isinstance(c, DmxChannel)),
         tuple(c for c in channels if isinstance(c, KnxChannel)),
         {g: frozenset(m) for g, m in (groups or {}).items()},
+        indicator_only=frozenset(indicator_only or ()),
     )
 
 
@@ -162,7 +164,7 @@ class Rig:
         self.configure(cfg or LightingConfig())
 
     def configure(self, cfg: LightingConfig) -> None:
-        self.fades.configure(cfg.ranges(), cfg.groups.keys())
+        self.fades.configure(cfg.ranges())
         self.compositor.configure(cfg)
 
     def set_level(self, channel_id: int, level: float) -> None:
@@ -170,9 +172,6 @@ class Rig:
 
     def set_colour(self, channel_id: int, **components: int) -> None:
         self.writer.set_item("colour", channel_id, components)
-
-    def set_group(self, group_id: int, multiplier: float) -> None:
-        self.writer.set_item("group_multipliers", group_id, multiplier)
 
     def set_master(self, master: float) -> None:
         self.writer.set("master", master)

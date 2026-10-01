@@ -685,6 +685,8 @@ class TestMonitor:
         )
         response = await monitor_endpoint(claims, services.knx)
         assert response.media_type == "text/event-stream"
+        # nginx must not buffer the live stream (perf run on the CM5, 1 Oct 2026).
+        assert response.headers["x-accel-buffering"] == "no"
         iterator = response.body_iterator
 
         await services.stub.send_telegram("1/0/1", "1.001", True)

@@ -1,21 +1,28 @@
 """The lighting service: what the API, rules and scene engine call (spec §7.2, §9, §12.1).
 
-Nothing outside this package writes ``state.lighting`` levels, colour or group
-multipliers directly. Callers ask this service, which funnels every write
+Nothing outside this package writes ``state.lighting`` levels or colour
+directly. Callers ask this service, which funnels every write
 through the fade engine (§7.2.6, §10.6) — a direct set is a zero-duration fade
 — so precedence, clamping and ownership hold on every path.
 
 The pieces, and who owns what
 -----------------------------
 :class:`~proskenion.core.dmx.fade.FadeEngine`
-    Sole writer of levels, colour and group multipliers (owner ``fade_engine``).
+    Sole writer of levels and colour (owner ``fade_engine``). A group fader
+    sets its members' levels through it (:meth:`LightingService.set_group_level`).
 :class:`~proskenion.core.dmx.compositor.Compositor`
     The DMX pass (sole writer of the universe buffers) and the KNX pass (sole
     producer of dimmer writes). Reads the level store; never writes it.
 :class:`~proskenion.core.dmx.renderer.FrameRenderer`
-    Change-driven DMX frames, 40 fps cap, keepalive. Gated by external control.
+    Change-driven DMX frames: a steady 40 fps while anything moves, the
+    keepalive at rest. Gated by external control.
 :class:`~proskenion.core.dmx.renderer.KnxDimmerPass`
     KNX dimmer writes. Never gated by external control.
+:class:`~proskenion.core.dmx.bump.BumpHolds`
+    Who holds which group's BUMP (owner decision 2026-10-01). While a group
+    has a holder, its DMX members are composited at full — an output
+    overlay on the compositor, never a level write
+    (:meth:`LightingService.bump_group`).
 :class:`ExternalControl`
     ``external_active = detected OR manual`` (§7.2.7), published as
     ``state.lighting.external_control`` by this service (owner ``lighting``),
@@ -28,7 +35,7 @@ the Art-Net input listener (``observed``) and the rules engine
 Boot (§12.1, §12.3) — :meth:`LightingService.start`
 ---------------------------------------------------
 The application's boot sequence has already run ``StateStore.restore``, which
-brings back levels, colour and group multipliers, and external control only
+brings back levels and colour, and external control only
 if it was ``manual``. ``start`` then loads the configuration, seeds each
 channel's power-on colour where nothing was restored, sets the master to 100
 (it is never persisted), and starts the passes. Unless external control is
@@ -47,11 +54,12 @@ from __future__ import annotations
 import logging
 import math
 import time
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Hashable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, get_args
 
 from proskenion.core.bus import EventBus, Subscription
+from proskenion.core.dmx.bump import BUMP_HOLD_TIMEOUT_S, BumpHolds
 from proskenion.core.dmx.compositor import (
     COLOUR_MAX,
     KNX_DEADBAND,
@@ -126,10 +134,12 @@ async def load_lighting_config(db: Database) -> LightingConfig:
     """
     profiles = {p.id: p for p in await lighting_crud.list_fixture_profiles(db)}
     addresses = {a.id: a.group_address for a in await knx_crud.list_addresses(db)}
+    group_rows = await lighting_crud.list_groups(db)
     groups = {
         g.id: frozenset(m.channel_id for m in await lighting_crud.get_group_members(db, g.id))
-        for g in await lighting_crud.list_groups(db)
+        for g in group_rows
     }
+    indicator_only = frozenset(g.id for g in group_rows if g.indicator_only)
     dmx: list[DmxChannel] = []
     knx: list[KnxChannel] = []
     colours: dict[int, Colour] = {}
@@ -182,7 +192,7 @@ async def load_lighting_config(db: Database) -> LightingConfig:
                 "unknown lighting channel type; skipped",
                 extra={"channel_id": row.id, "type": row.type},
             )
-    return LightingConfig(tuple(dmx), tuple(knx), groups, colours)
+    return LightingConfig(tuple(dmx), tuple(knx), groups, colours, indicator_only)
 
 
 def _fade_mode(channel_id: int, configured: str) -> FadeMode:
@@ -303,6 +313,32 @@ class ExternalControl:
 # -- the service -------------------------------------------------------------
 
 
+class IndicatorOnlyGroupError(Exception):
+    """An indicator-only group has no fader and cannot be recalled.
+
+    It exists for a derived status that reads its members' levels (migration
+    011); a fader or a binding on it is refused.
+    """
+
+    def __init__(self, group_id: int) -> None:
+        super().__init__(f"lighting group {group_id} is indicator-only and has no fader")
+        self.group_id = group_id
+
+
+class BumpRefusedError(Exception):
+    """A BUMP press the group cannot take (owner decision 2026-10-01).
+
+    ``reason`` is ``external_control`` (stage output is suspended, §7.2.7)
+    or ``no_dmx_members`` (the group holds no stage fixture, and a bump
+    affects DMX members only).
+    """
+
+    def __init__(self, group_id: int, reason: str) -> None:
+        super().__init__(f"lighting group {group_id} cannot be bumped: {reason}")
+        self.group_id = group_id
+        self.reason = reason
+
+
 @dataclass(frozen=True)
 class SnapshotResult:
     """What applying a snapshot did: a handle per channel, and what it could not do.
@@ -317,7 +353,7 @@ class SnapshotResult:
 
 @dataclass(frozen=True)
 class GroupRecall:
-    """What a group recall did: a fade per member, and the members it could not touch.
+    """What a group write or recall did: a fade per member, and those it could not touch.
 
     ``refused`` holds members a critical scene has locked (§10.6); the rest
     are set, as §8.15's philosophy asks.
@@ -346,6 +382,7 @@ class LightingService:
         keepalive_s: float = DEFAULT_KEEPALIVE_S,
         fade_clock: Clock | None = None,
         fade_sleep: Sleeper | None = None,
+        bump_timeout_s: float = BUMP_HOLD_TIMEOUT_S,
     ) -> None:
         self._state = state
         self._bus = bus
@@ -362,6 +399,7 @@ class LightingService:
         self.knx_pass = KnxDimmerPass(
             self.compositor, state, knx, fades=self.fades, clock=self._clock
         )
+        self.bumps = BumpHolds(self._apply_bumps, timeout_s=bump_timeout_s)
         self.external = ExternalControl(self._on_external_change)
         self._subscription: Subscription | None = None
         self._started = False
@@ -431,6 +469,7 @@ class LightingService:
         if self._subscription is not None:
             self._bus.unsubscribe(self._subscription)
             self._subscription = None
+        self.bumps.stop()
         await self.renderer.stop()
         await self.knx_pass.stop()
         await self.fades.stop()
@@ -457,8 +496,12 @@ class LightingService:
         its ``min_value`` or ``max_value`` changed — is clamped (§7.2.3: a
         stored level is always within range, whatever the path).
         """
-        self.fades.configure(config.ranges(), config.groups.keys())
+        self.fades.configure(config.ranges())
         self.compositor.configure(config)
+        # A bumped group that has gone, or become indicator-only, lets go;
+        # the rest are re-resolved against the new membership.
+        self.bumps.retain(g for g in config.groups if g not in config.indicator_only)
+        self._apply_bumps()
         for channel_id, colour in config.power_on_colours.items():
             if self._view.colour(channel_id) is None:
                 self.fades.fade_channel(channel_id, colour=colour, force=True)
@@ -481,14 +524,25 @@ class LightingService:
         *,
         fade_ms: int = 0,
         owner: SceneRun | None = None,
+        glide: bool = False,
     ) -> FadeHandle:
         """Set a channel's level (0–100) over ``fade_ms`` — ``POST /lighting/channels/{id}/level``.
 
         Raises :class:`~proskenion.core.dmx.fade.UnknownChannelError` and
         :class:`~proskenion.core.dmx.fade.ChannelLockedError`. The handle's
         ``target_level`` is the value after clamping.
+
+        ``glide`` marks a direct operator write — a fader, a keyboard step, a
+        tap — whose DMX output should glide to the new level rather than jump
+        (:meth:`~proskenion.core.dmx.compositor.Compositor.request_glide`).
+        The stored level is the target at once either way. It applies only
+        to an unowned write with ``fade_ms`` 0; an explicit fade keeps its
+        own timing.
         """
-        return self.fades.fade_channel(channel_id, level=level, fade_ms=fade_ms, owner=owner)
+        handle = self.fades.fade_channel(channel_id, level=level, fade_ms=fade_ms, owner=owner)
+        if glide and fade_ms == 0 and owner is None:
+            self.compositor.request_glide((channel_id,))
+        return handle
 
     def set_colour(
         self,
@@ -515,35 +569,92 @@ class LightingService:
             channel_id, level=level, colour=colour, fade_ms=fade_ms, owner=owner
         )
 
-    def set_group_multiplier(
+    def set_group_level(
         self,
         group_id: int,
-        multiplier: float,
+        level: float,
         *,
         fade_ms: int = 0,
         owner: SceneRun | None = None,
-    ) -> FadeHandle:
-        """Set a group multiplier, **0.0–1.0**, over ``fade_ms``.
+        glide: bool = False,
+    ) -> GroupRecall:
+        """A group fader: every member's level to ``level`` (0–100) over ``fade_ms``.
 
-        ``POST /lighting/groups/{id}/level`` carries its value on the 0–100
-        scale (§16.5); the handler divides by 100. The multiplier scales the
-        group's DMX members only; a KNX house dimmer in the group is unaffected
-        (§9.4, §9.5). A binding rule's recall is :meth:`recall_group`, which
-        forces the multiplier to 1.0 without a visible jump (§8.8).
+        Owner decision 2026-09-30, replacing §9.4's multiplier: a group fader
+        sets levels, as on a traditional desk, and fixture faders then trim
+        individually. ``POST /lighting/groups/{id}/level`` and the WebSocket
+        ``lighting_group`` domain carry ``level`` on the same 0–100 scale.
+
+        Each member is an ordinary channel write through the fade engine, so
+        it is clamped to that channel's own ``min_value``–``max_value``, fades
+        with smoothstep like any channel write, and a KNX house dimmer in the
+        group is set like a DMX fixture (§9.5: the master still scales only the
+        DMX ones). External control does not refuse it, as it does not refuse
+        a fixture fader: the store takes the levels and DMX output stays
+        suspended until control returns (§7.2.7). A member locked by a
+        critical scene is left alone and reported in ``refused`` (§10.6);
+        every other member is set, as §8.15's philosophy asks. A member the
+        configuration cannot drive (not fully patched) is skipped.
+
+        Every fade starts in this one synchronous call, so no frame is
+        composited between two members' starts and a row moves as one. With
+        ``glide`` (a group fader on the WebSocket, as :meth:`set_level`) every
+        member set is asked to glide in the same call, so they glide in step
+        and land on the same frame.
+
+        Raises :class:`~proskenion.core.dmx.fade.UnknownGroupError`,
+        :class:`IndicatorOnlyGroupError` (it has no fader), and ``ValueError``
+        for a non-finite level.
         """
-        return self.fades.fade_group(group_id, multiplier, fade_ms=fade_ms, owner=owner)
+        members = self.config.groups.get(group_id)
+        if members is None:
+            raise UnknownGroupError(group_id)
+        if group_id in self.config.indicator_only:
+            raise IndicatorOnlyGroupError(group_id)
+        if not math.isfinite(level):
+            raise ValueError(f"level must be a finite number, got {level!r}")
+        channels = self.config.channels()
+        handles: dict[int, FadeHandle] = {}
+        refused: list[int] = []
+        for channel_id in sorted(members):
+            if channel_id not in channels:
+                continue
+            try:
+                handles[channel_id] = self.fades.fade_channel(
+                    channel_id, level=level, fade_ms=fade_ms, owner=owner
+                )
+            except ChannelLockedError:
+                refused.append(channel_id)
+        if glide and fade_ms == 0 and owner is None:
+            self.compositor.request_glide(handles)
+        return GroupRecall(handles, tuple(refused))
 
-    def set_master(self, level: float) -> float:
+    def group_level(self, group_id: int) -> float | None:
+        """What a group fader shows: its highest member's stored level, 0–100.
+
+        ``None`` for a group with no drivable member. The web works this out
+        itself from the channel levels it already has; this is for the API's
+        answers (a refused write's current value).
+        """
+        members = self.config.groups.get(group_id, frozenset())
+        channels = self.config.channels()
+        levels = [self._view.level(c) for c in members if c in channels]
+        return max(levels) if levels else None
+
+    def set_master(self, level: float, *, glide: bool = False) -> float:
         """Set the master dimmer, 0–100, at once — no fade, not persisted (§9.5).
 
         It scales stage (DMX) output only; KNX house dimmers are outside it,
         so moving it sends nothing to the KNX bus. Returns the value stored
-        after clamping.
+        after clamping. ``glide`` (the master fader on the WebSocket) glides
+        every fixture's output to the new value, as :meth:`set_level` does.
         """
         if not math.isfinite(level):
             raise ValueError(f"master must be a finite number, got {level!r}")
         value = clamp_level(level)
         self._writer.set("master", value)
+        if glide:
+            self.compositor.request_glide()
         return value
 
     @property
@@ -553,65 +664,81 @@ class LightingService:
     def composited_level(self, channel_id: int) -> float | None:
         """Where a channel actually lands — the §9.4 ghost mark.
 
-        A DMX fixture lands after its groups and the master; a KNX house
-        dimmer at its own clamped level, since neither scales it (§9.5).
+        A DMX fixture lands at its level × the master; a KNX house dimmer at
+        its own clamped level, since the master does not scale it (§9.5).
         """
         return self.compositor.composited_level(channel_id)
 
-    def recall_group(self, group_id: int, level: float, *, fade_ms: int = 0) -> GroupRecall:
-        """A binding rule's recall: every member of the group to ``level`` (§8.2, §8.8, §9.4).
+    def output_level(self, channel_id: int) -> float | None:
+        """What a channel was last actually output at: for a DMX fixture its last
+        composited frame, mid-glide included; otherwise :meth:`composited_level`."""
+        return self.compositor.output_level(channel_id)
 
-        The group multiplier is forced to 1.0 by an ordinary write, so a bank
-        switched on from the wall panel comes up at exactly ``level`` whatever
-        the group fader was left at; then every member fades to ``level`` over
-        ``fade_ms``. The master applies as usual.
+    # -- bump: flash while held (owner decision 2026-10-01) ------------------
 
-        Forcing the multiplier alone would make every stage member whose group
-        was left below full jump up before its fade began — an off press would
-        flash on first. So each DMX member that groups scale is first *rebased*:
-        its stored level is set to what it was showing, its level times its
-        effective group multiplier (the highest across its groups), and it
-        fades from there. The rebase, the multiplier write and the start of
-        every fade happen in this one synchronous call, so no frame is
-        composited between them and nothing on stage visibly moves until the
-        fade does. A member with ``min_value`` above zero is exempt from group
-        scaling (§7.2.3) and a KNX house dimmer is never group-scaled (§9.5),
-        so neither needs a rebase; a house dimmer's level is simply set.
+    def bump_group(self, group_id: int, holder: Hashable, *, held: bool) -> None:
+        """A group's BUMP pressed (or its hold refreshed), or released, by ``holder``.
 
-        Every write goes through the fade engine. A member locked by a
-        critical scene is left alone and reported in ``refused`` (§10.6).
-        Raises :class:`~proskenion.core.dmx.fade.UnknownGroupError` for a group
-        the configuration does not have.
+        While any holder holds a group, its **DMX** members output at full,
+        clamped to their own range and scaled by the master — an overlay on
+        the compositor; no level is written, no fader moves, and releasing
+        returns the output to the members' own levels. KNX house dimmers are
+        not bumped, as the master does not scale them (§9.5): the flash is a
+        stage overlay. A member a critical scene has locked is not bumped
+        either (§10.6): the alarm's lighting wins over a flash.
+
+        A press refused: :class:`~proskenion.core.dmx.fade.UnknownGroupError`,
+        :class:`IndicatorOnlyGroupError` (it has no strip, so no BUMP), and
+        :class:`BumpRefusedError` while external control is active or for a
+        group with no DMX member. A release is never refused; releasing what
+        is not held does nothing. ``holder`` must be the same value (the
+        WebSocket connection id) across press, refreshes and release — the
+        hold expires unless refreshed (:mod:`proskenion.core.dmx.bump`).
         """
+        if not held:
+            self.bumps.release(group_id, holder)
+            return
         members = self.config.groups.get(group_id)
         if members is None:
             raise UnknownGroupError(group_id)
-        channels = self.config.channels()
-        present = [channels[c] for c in sorted(members) if c in channels]
-        refused = [c.id for c in present if self.fades.locked_by(c.id) is not None]
-        free = [c for c in present if c.id not in refused]
-        # Every rebase is worked out before anything is written, against the
-        # multipliers the last frame was composited from.
-        rebases: list[tuple[int, float]] = []
-        for channel in free:
-            if not isinstance(channel, DmxChannel) or channel.min_value > 0:
-                continue
-            stored = self._view.level(channel.id)
-            shown = clamp_level(stored, channel.min_value, channel.max_value) * (
-                self.compositor.effective_group_multiplier(channel.id)
-            )
-            target = clamp_level(level, channel.min_value, channel.max_value)
-            start = _toward(shown, target)
-            if start != stored:
-                rebases.append((channel.id, start))
-        for channel_id, start in rebases:
-            self.fades.fade_channel(channel_id, level=start)
-        self.fades.fade_group(group_id, 1.0)
-        handles = {
-            channel.id: self.fades.fade_channel(channel.id, level=level, fade_ms=fade_ms)
-            for channel in free
-        }
-        return GroupRecall(handles, tuple(refused))
+        if group_id in self.config.indicator_only:
+            raise IndicatorOnlyGroupError(group_id)
+        if self.external.active:
+            raise BumpRefusedError(group_id, "external_control")
+        if members.isdisjoint(self.compositor.dmx_channel_ids):
+            raise BumpRefusedError(group_id, "no_dmx_members")
+        self.bumps.hold(group_id, holder)
+
+    def release_bumps(self, holder: Hashable) -> frozenset[int]:
+        """Every bump ``holder`` holds — its socket closed or went to the background."""
+        return self.bumps.release_holder(holder)
+
+    @property
+    def bumped_groups(self) -> frozenset[int]:
+        return self.bumps.groups
+
+    def _apply_bumps(self) -> None:
+        """Hand the compositor the DMX channels the held bumps cover, and redraw."""
+        groups = self.config.groups
+        locked = self.fades.locks()
+        channels: set[int] = set()
+        for group_id in self.bumps.groups:
+            channels.update(c for c in groups.get(group_id, ()) if c not in locked)
+        if self.compositor.set_bumped(channels):
+            self.renderer.mark_dirty()
+
+    def recall_group(self, group_id: int, level: float, *, fade_ms: int = 0) -> GroupRecall:
+        """A binding rule's recall: every member of the group to ``level`` (§8.2, §8.8).
+
+        Exactly a group-fader write (:meth:`set_group_level`) with no scene
+        owner. §8.8's "force the group multiplier to 1.0" has nothing left to
+        do now that groups do not scale, so a bank switched on from the wall
+        panel comes up at exactly ``level`` × the master, and nothing needs
+        rebasing first. :class:`IndicatorOnlyGroupError` is the backstop for
+        a binding stored before its group became indicator-only (the API
+        refuses new ones).
+        """
+        return self.set_group_level(group_id, level, fade_ms=fade_ms)
 
     def apply_knx_status(self, channel_id: int, level: float) -> None:
         """A KNX dimmer reported its level — §9.6 status sync.
@@ -677,8 +804,8 @@ class LightingService:
         **Anything else is a person at the wall panel, and the panel wins.**
         The level store takes the reported value, which cancels any fade on
         the channel where it stands, and the value is recorded as the one
-        the dimmer already holds, so nothing is sent back. Neither group
-        faders nor the master scale a house dimmer (§9.5), so the stored
+        the dimmer already holds, so nothing is sent back. The master does
+        not scale a house dimmer (§9.5), so the stored
         level is exactly the dimmer's value and there is no scaled value to
         send; and re-sending a level while the panel's own fade is running
         would stop that fade where it was.
@@ -718,7 +845,7 @@ class LightingService:
         """The current look in §8.12's ``dmx_snapshot`` format — ``POST /lighting/snapshot``.
 
         Levels are the stored (set) levels, not composited output — a scene
-        recalls what was set, and the group and master apply on playback.
+        recalls what was set, and the master applies on playback.
         Colour fixtures carry their ``r``/``g``/``b`` (and ``w``). KNX dimmers
         are left out unless asked for: a ``dmx`` action is skipped during
         external control (§8.8), and house lighting must never be gated by it.
@@ -768,12 +895,18 @@ class LightingService:
     # -- scene precedence (§10.6, §8.14) -------------------------------------
 
     def begin_critical_scene(self, run: SceneRun, channel_ids: Iterable[int] = ()) -> None:
-        """Cancel every fade at its current value and lock ``channel_ids`` to ``run``."""
+        """Cancel every fade at its current value and lock ``channel_ids`` to ``run``.
+
+        A held bump lets go of the channels now locked (see :meth:`bump_group`).
+        """
         self.fades.begin_critical(run, channel_ids)
+        self._apply_bumps()
 
     def release_scene(self, run: SceneRun) -> list[int]:
         """Release a critical run's locks when it completes."""
-        return self.fades.release(run)
+        released = self.fades.release(run)
+        self._apply_bumps()
+        return released
 
     def cancel_scene(self, run: SceneRun) -> list[int]:
         """Stop a run's fades where they are (an aborted scene)."""
@@ -806,6 +939,10 @@ class LightingService:
 
     def _on_external_change(self, state: ExternalControlState, active: bool) -> None:
         self._writer.set("external_control", state)
+        if active:
+            # Stage output is suspended: every bump lets go, so none is
+            # waiting to flash the moment control returns.
+            self.bumps.release_all()
         if active and not self.renderer.suspended:
             self.renderer.suspend()
             log.info("external control active; DMX output suspended", extra={"state": state})
@@ -814,20 +951,6 @@ class LightingService:
             # frame: every channel is recomposited and sent (§7.2.7 *Resuming*).
             self.renderer.resume()
             log.info("external control ended; DMX output resumed")
-
-
-def _toward(value: float, target: float) -> float:
-    """``value`` to one decimal (§9.2), rounded toward ``target`` and never past it.
-
-    A rebased level rounded away from the target could show one DMX step
-    brighter than the fixture was just before an off fade, or dimmer just
-    before an on fade. Rounding toward the target keeps a recalled member's
-    output monotonic from its first frame.
-    """
-    tenths = value * 10
-    if target <= value:
-        return max(math.floor(tenths + 1e-6) / 10, target)
-    return min(math.ceil(tenths - 1e-6) / 10, target)
 
 
 def _parse_snapshot_entry(entry: Mapping[str, object]) -> tuple[float | None, Colour | None]:
@@ -852,6 +975,7 @@ def _parse_snapshot_entry(entry: Mapping[str, object]) -> tuple[float | None, Co
 __all__ = [
     "LIGHTING_OWNER",
     "MASTER_AT_BOOT",
+    "BumpRefusedError",
     "ExternalControl",
     "GroupRecall",
     "LightingService",

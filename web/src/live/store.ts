@@ -194,6 +194,14 @@ export interface WriteFeedback {
 
 export const levelKey = (channelId: number): Key => `level:${channelId}`;
 export const colourKey = (channelId: number): Key => `colour:${channelId}`;
+/**
+ * A group fader's own key. It never holds an authoritative value: a group has
+ * no stored level of its own (owner decision 2026-09-30 — a group fader sets
+ * its members' levels, and `lighting_state` has no `groups` section). The key
+ * carries only the pending overlay of a drag in flight, so the fader holds
+ * the value under the finger until the write is acknowledged; otherwise the
+ * fader shows its members' levels (`useGroupLevel`).
+ */
 export const groupKey = (groupId: number): Key => `group:${groupId}`;
 export const bindingKey = (bankId: number): Key => `binding:${bankId}`;
 export const observedKey = (channelId: number): Key => `observed:${channelId}`;
@@ -540,6 +548,7 @@ export function getColour(channelId: number): Colour | null {
   return read<Colour>(colourKey(channelId)) ?? null;
 }
 
+/** A group fader's drag in flight (0–100), or `null` — see `groupKey`. */
 export function getGroup(groupId: number): number | null {
   return read<number>(groupKey(groupId)) ?? null;
 }
@@ -862,10 +871,6 @@ export function setColour(channelId: number, components: Partial<Colour>): void 
   put(key, Object.freeze(next));
 }
 
-export function setGroup(groupId: number, multiplier: number): void {
-  put(groupKey(groupId), multiplier);
-}
-
 export function setMaster(level: number): void {
   put(MASTER_KEY, level);
 }
@@ -930,13 +935,15 @@ export function setMixerMetering(state: MixerMeteringState): void {
 }
 
 /**
- * Nothing is replayed on resync, and a stale meter is worse than none: a
- * reconnecting client shows no bars until the next frame arrives (§16.8).
- * The metering-availability marker is cleared with it, for the same
- * reason — it too travels only on `mixer_meters` and is never replayed
- * (`docs/plans/phase-4-contracts.md`); a client falls back to
- * `GET /mixer/state`'s own `metering_reason` until the next frame says
- * otherwise.
+ * Cleared first, so a channel whose reading turns out to be unavailable
+ * shows nothing rather than a frozen value from before the drop — but never
+ * left empty for long: the server answers every `resync` with a fresh
+ * `mixer_meters` catch-up naming every channel's *current* reading, read
+ * live rather than replayed (§16.8, B58), so bars reappear as that frame
+ * arrives rather than waiting on the next change. The metering-availability
+ * marker is cleared with it, for the same reason, and is carried by that
+ * same catch-up frame; a client falls back to `GET /mixer/state`'s own
+ * `metering_reason` only until it arrives.
  */
 export function clearMeters(): void {
   applyFrame(() => {
@@ -1124,11 +1131,9 @@ function applyLighting(frame: Frame): void {
     if (w !== null) colour.w = w;
     if (Object.keys(colour).length > 0) setColour(id, colour);
   }
-  for (const [raw, value] of Object.entries(asMap(frame["groups"]))) {
-    const id = channelId(raw);
-    const multiplier = asNumber(value);
-    if (id !== null && multiplier !== null) setGroup(id, multiplier);
-  }
+  // No `groups` section: a group fader sets its members' levels and has no
+  // value of its own (owner decision 2026-09-30). An older server's section
+  // is ignored — its multipliers no longer mean anything here.
   // Stage-bank states (§7.1), keyed by rule id — for the stage banks
   // row; the frame shape was already documented in LiveState but not read.
   for (const [raw, value] of Object.entries(asMap(frame["bindings"]))) {
@@ -1411,7 +1416,6 @@ export interface LiveState {
   lighting: {
     levels: Map<number, number>;
     colours: Map<number, Colour>;
-    groups: Map<number, number>;
     master: number | null;
     bindings: Map<number, boolean>;
     observed: Map<number, number>;
@@ -1431,7 +1435,6 @@ export interface LiveState {
 export function getLiveState(): LiveState {
   const levels = new Map<number, number>();
   const colours = new Map<number, Colour>();
-  const groups = new Map<number, number>();
   const bindings = new Map<number, boolean>();
   const observed = new Map<number, number>();
   const mixer = new Map<Key, MixerStrip>();
@@ -1449,9 +1452,6 @@ export function getLiveState(): LiveState {
         break;
       case "colour":
         if (id !== null) colours.set(id, read<Colour>(key) as Colour);
-        break;
-      case "group":
-        if (id !== null) groups.set(id, read<number>(key) as number);
         break;
       case "binding":
         if (id !== null) bindings.set(id, read<boolean>(key) as boolean);
@@ -1477,7 +1477,6 @@ export function getLiveState(): LiveState {
     lighting: {
       levels,
       colours,
-      groups,
       master: getMaster(),
       bindings,
       observed,
