@@ -63,6 +63,7 @@ from proskenion.api.deps import (
     settle_hirer_permissions,
 )
 from proskenion.api.errors import ApiError, ErrorCode
+from proskenion.api.snapshots import PreChangeSnapshot
 from proskenion.core import auth, hirer_permissions
 from proskenion.core.auth import TokenClaims
 from proskenion.core.bus import EventBus
@@ -72,6 +73,7 @@ from proskenion.core.hirer_permissions import HirerConfiguration, HirerPermissio
 from proskenion.db.connection import Database
 from proskenion.db.crud import hirer as hirer_crud
 from proskenion.db.crud import mixer as mixer_crud
+from proskenion.db.crud import pages as pages_crud
 from proskenion.db.crud import scenes as scenes_crud
 from proskenion.db.crud import users as users_crud
 from proskenion.db.crud.base import ConflictError, NotFoundError
@@ -299,6 +301,7 @@ async def update_config(
     body: HirerConfigBody,
     request: Request,
     claims: Annotated[TokenClaims, Depends(require_admin)],
+    snapshot: PreChangeSnapshot,
     db: Annotated[Database, Depends(get_db)],
     bus: Annotated[EventBus, Depends(get_bus)],
     if_unmodified_since_version: Annotated[str | None, Header()] = None,
@@ -353,6 +356,13 @@ async def update_config(
             {"field": "ceilings", "channel_id": unreachable[0]},
         )
 
+    # The assigned-pages list is replaced wholesale: a snapshot first, unless the
+    # same pages are posted back (a ceiling or a switch changing on its own).
+    await snapshot.before_replacing(
+        "the hirer's assigned pages",
+        sorted(await pages_crud.list_hirer_page_ids(db)),
+        sorted(body.pages),
+    )
     try:
         row = await hirer_crud.write_config(
             db,

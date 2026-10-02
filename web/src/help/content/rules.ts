@@ -34,6 +34,10 @@ export const rules = {
     term: "Debounce (ms)",
     body: "A repeat telegram within this window is ignored, so a panel that sends on press and release does not restart a fade. KNX triggers only.",
   },
+  "rules.trigger.knx.source": {
+    term: "Only from device",
+    body: "Optional. The KNX individual address (area.line.device) of the one device whose telegrams fire this rule, e.g. 1.1.26 for the back-of-house panel. Empty means any device. Two panels that send on the same group address can then start different rules.",
+  },
   "rules.trigger.schedule.cron": {
     term: "Cron expression",
     body: "Minute, hour, day-of-month, month, day-of-week, evaluated in Pacific/Auckland. A time inside the September daylight-saving gap is skipped; the repeated April hour runs once.",
@@ -118,7 +122,7 @@ export const rules = {
   },
   "rules.derived.reflects": {
     term: "Reflects",
-    body: "What this status is derived from: a lighting group reaching a level, a device's state, or external control being active.",
+    body: "What this status is derived from: a lighting group reaching a level, a device's state, external control being active, or an HDMI destination showing a particular input.",
   },
   "rules.derived.group": {
     term: "Group",
@@ -142,6 +146,14 @@ export const rules = {
   "rules.derived.state": {
     term: "State",
     body: "The state that turns this status on.",
+  },
+  "rules.derived.hdmi-destination": {
+    term: "HDMI destination",
+    body: "Which HDMI destination this status watches.",
+  },
+  "rules.derived.hdmi-input": {
+    term: "Shows input",
+    body: "On while the destination is showing this input. Off while it shows another, and off while its outputs disagree. One status per input, each on its own feedback address, gives a panel's buttons exactly one lamp lit.",
   },
   "rules.derived.save": {
     term: "Save",

@@ -108,6 +108,7 @@ from proskenion.scene.mixer_handlers import (
     MixerFaderHandler,
     MixerMuteHandler,
     MixerRecallHandler,
+    MixerStepHandler,
 )
 
 #: §12.1, §4.11: how long boot waits for the knxd socket before serving
@@ -656,6 +657,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
             app.state.scene_engine.handlers.register(
                 "mixer_mute", MixerMuteHandler(app.state.mixer)
+            )
+            # A panel's volume up/down (migration 013): relative, clamped,
+            # held to the hirer ceiling while access is enabled.
+            app.state.scene_engine.handlers.register(
+                "mixer_step",
+                MixerStepHandler(
+                    app.state.mixer, app.state.db, lambda: state_store.hirer.permissions
+                ),
             )
         # §8: the rule layer, after the lighting service, the scene engine and
         # the KNX subsystem it drives.

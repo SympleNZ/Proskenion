@@ -1015,6 +1015,7 @@ async def create_channel(
 @router.put("/lighting/channels/{channel_id}", response_model=ChannelModel)
 async def update_channel(
     _: Admin,
+    snapshot: PreChangeSnapshot,
     request: Request,
     db: Db,
     bus: Bus,
@@ -1032,6 +1033,13 @@ async def update_channel(
     if errors:
         raise ApiError(
             ErrorCode.VALIDATION_FAILED, "The fixture's shape is not valid", errors
+        )
+    if group_ids is not None:
+        # A fixture's group memberships are replaced wholesale (each group's
+        # member list is rewritten): a snapshot first, unless the same groups.
+        held_groups = (await _group_ids_by_channel(db)).get(channel_id, NO_GROUPS)
+        await snapshot.before_replacing(
+            f"lighting channel {channel_id}'s groups", sorted(held_groups.ids), sorted(group_ids)
         )
 
     try:
@@ -1202,6 +1210,7 @@ async def create_group(
 @router.put("/lighting/groups/{group_id}", response_model=GroupModel)
 async def update_group(
     _: Admin,
+    snapshot: PreChangeSnapshot,
     request: Request,
     db: Db,
     bus: Bus,
@@ -1212,6 +1221,14 @@ async def update_group(
     version = _version_or_422(if_unmodified_since_version)
     fields = _provided(body)
     channel_ids = fields.pop("channel_ids", None)
+    if channel_ids is not None and await lighting_crud.get_group(db, group_id) is not None:
+        # The membership list is replaced wholesale: a snapshot first, unless the
+        # same members are sent back in the same order.
+        await snapshot.before_replacing(
+            f"lighting group {group_id}'s members",
+            await _group_channel_ids(db, group_id),
+            channel_ids,
+        )
     try:
         group = await lighting_crud.update_group(db, group_id, version, **fields)
     except NotFoundError as exc:
@@ -1587,6 +1604,7 @@ async def create_profile(_: Admin, db: Db, bus: Bus, body: ProfileCreate) -> Pro
 @router.put("/lighting/profiles/{profile_id}", response_model=ProfileModel)
 async def update_profile(
     _: Admin,
+    snapshot: PreChangeSnapshot,
     db: Db,
     bus: Bus,
     profile_id: int,
@@ -1595,6 +1613,18 @@ async def update_profile(
 ) -> ProfileModel:
     version = _version_or_422(if_unmodified_since_version)
     fields = _provided(body)
+    if fields.get("channels") is not None:
+        held_profile = await lighting_crud.get_fixture_profile(db, profile_id)
+        if held_profile is not None:
+            # The profile's channel map is replaced wholesale: a snapshot first.
+            await snapshot.before_replacing(
+                f"fixture profile {profile_id}'s channel map",
+                [
+                    {"offset": c.offset, "role": c.role, "default": c.default}
+                    for c in held_profile.channels
+                ],
+                fields["channels"],
+            )
     try:
         profile = await lighting_crud.update_fixture_profile(db, profile_id, version, **fields)
     except NotFoundError as exc:

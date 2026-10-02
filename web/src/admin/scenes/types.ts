@@ -11,12 +11,13 @@ export interface SceneDetail extends Scene {
   actions: readonly Action[];
 }
 
-/** The eight §8.12 domains, in the order §21.16's picker shows them. */
+/** The eight §8.12 domains plus `mixer_step` (migration 013), in the order §21.16's picker shows them. */
 export const DOMAINS = [
   "knx",
   "dmx",
   "mixer_recall",
   "mixer_fader",
+  "mixer_step",
   "mixer_mute",
   "projector_power",
   "projector_input",
@@ -30,6 +31,7 @@ export const DOMAIN_LABELS: Readonly<Record<Domain, string>> = {
   dmx: "Lighting DMX",
   mixer_recall: "Mixer recall",
   mixer_fader: "Mixer fader",
+  mixer_step: "Volume step",
   mixer_mute: "Mixer mute",
   projector_power: "Projector power",
   projector_input: "Projector input",
@@ -81,6 +83,8 @@ export interface Action {
   hdmi_destination: number | null;
   hdmi_input_id: number | null;
   device_id: number | null;
+  /** `mixer_step` (migration 013): signed dB relative to the current level, e.g. 2 or -2. */
+  mixer_step_db: number | null;
   created_at: string;
   updated_at: string;
 }

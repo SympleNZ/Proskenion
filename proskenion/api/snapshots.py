@@ -73,6 +73,26 @@ class PreChange:
         self.taken.append(info)
         return info
 
+    async def before_replacing(
+        self, what: str, current: object, replacement: object
+    ) -> SnapshotInfo | None:
+        """The snapshot a ``PUT`` that replaces a whole list takes first.
+
+        Owner decision, 2 October 2026: a request that swaps a collection
+        wholesale (a page's items, a group's members, a destination's outputs)
+        is destructive exactly as a delete is, and is reversible the same way.
+        ``current`` and ``replacement`` are the list as stored and the list
+        the request carries, in a comparable form; when they are equal the
+        request changes nothing, so no snapshot is taken — otherwise an editor
+        that saves a whole page for a rename would push real snapshots out of
+        the ten §15.3 keeps. The caller reads ``current`` after its own
+        existence check, so a request for something that does not exist
+        answers ``not_found`` without a snapshot (there is nothing to lose).
+        """
+        if current == replacement:
+            return None
+        return await self(f"replace {what}")
+
 
 def get_pre_change(
     request: Request,

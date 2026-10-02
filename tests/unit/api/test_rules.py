@@ -24,9 +24,11 @@ from proskenion.config import Config
 from proskenion.core.auth import COOKIE_NAME, TokenService
 from proskenion.core.ratelimit import RateLimiter
 from proskenion.db.connection import Database
+from proskenion.db.crud import devices as devices_crud
 from proskenion.db.crud import knx as knx_crud
 from proskenion.db.crud import lighting as lighting_crud
 from proskenion.db.crud import rules as rules_crud
+from proskenion.db.crud import video as video_crud
 from tests.unit.api.conftest import ADMIN_PASSWORD, OPERATOR_PASSWORD, make_client
 from tests.unit.rules.conftest import Rig, add_scene, start_rig, stop_rig
 
@@ -828,3 +830,140 @@ async def test_the_monitor_without_a_running_engine_is_device_unavailable(
     response = await client.get(f"{STATUSES}/monitor")
     assert response.status_code == 503
     assert code(response) == "device_unavailable"
+
+
+# -- migration 013: only from device, HDMI shows input ----------------------------------------
+
+
+async def test_a_knx_rule_may_be_limited_to_one_device(client: AsyncClient, rig: Rig) -> None:
+    await login(client)
+    scene = await add_scene(rig.db, rig.venue, "Projector on (back of house)")
+    response = await client.post(
+        RULES, json=alarm_rule(rig, scene, trigger_source_address=" 01.1.026 ")
+    )
+    assert response.status_code == 201, response.text
+    rule = response.json()
+    assert rule["trigger_source_address"] == "1.1.26"  # stored as a telegram spells it
+
+    await rig.telegram("0/5/0", True, source="1.1.27")
+    await asyncio.sleep(0.05)
+    assert rig.scenes.calls == []
+    await rig.telegram("0/5/0", True, source="1.1.26")
+    await rig.settle(lambda: len(rig.scenes.calls) == 1)
+
+    cleared = await client.put(
+        f"{RULES}/{rule['id']}",
+        json={"trigger_source_address": ""},
+        headers={VERSION: rule["updated_at"]},
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["trigger_source_address"] is None  # blank is any source
+
+
+@pytest.mark.parametrize("bad", ["1.1", "1/1/26", "16.1.1", "1.1.256", "back of house"])
+async def test_a_malformed_source_address_is_refused(
+    client: AsyncClient, rig: Rig, bad: str
+) -> None:
+    await login(client)
+    scene = await add_scene(rig.db, rig.venue, "Projector on")
+    response = await client.post(RULES, json=alarm_rule(rig, scene, trigger_source_address=bad))
+    assert response.status_code == 422
+    assert code(response) == "validation_failed"
+    assert "trigger_source_address" in fields(response)
+
+
+async def test_only_a_knx_trigger_may_be_limited_to_one_device(
+    client: AsyncClient, rig: Rig
+) -> None:
+    await login(client)
+    scene = await add_scene(rig.db, rig.venue, "Morning")
+    response = await client.post(
+        RULES,
+        json={
+            "name": "Morning",
+            "trigger_type": "schedule",
+            "cron": "0 8 * * MON-FRI",
+            "action_type": "run_scene",
+            "scene_id": scene,
+            "trigger_source_address": "1.1.26",
+        },
+    )
+    assert response.status_code == 422
+    assert "trigger_source_address" in fields(response)
+
+
+async def _matrix(rig: Rig) -> tuple[int, int, int]:
+    matrix = await devices_crud.create(
+        rig.db, category="video_matrix", driver_key="lkv422", name="Matrix", config={}
+    )
+    back = await video_crud.create_input(
+        rig.db, device_id=matrix.id, driver_ref="2", name="Back of house"
+    )
+    room = await video_crud.create_destination(rig.db, device_id=matrix.id, name="The room")
+    return matrix.id, room.id, back.id
+
+
+async def test_an_hdmi_shows_input_status_round_trips_and_blocks_deletes(
+    client: AsyncClient, rig: Rig
+) -> None:
+    await login(client)
+    _, room, back = await _matrix(rig)
+    response = await client.post(
+        STATUSES,
+        json={
+            "name": "HDMI on back of house",
+            "knx_address_id": await new_status_address(rig, "3/1/2"),
+            "source_type": "video_destination_input",
+            "video_destination_id": room,
+            "compare_input_id": back,
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert (body["video_destination_id"], body["compare_input_id"]) == (room, back)
+    await rig.settle(lambda: rig.knx.to("3/1/2") == [False])  # not reported yet
+
+    references = await video_crud.references_input(rig.db, back)
+    assert [(r.entity, r.name) for r in references] == [
+        ("derived_status", "HDMI on back of house")
+    ]
+    assert [r.entity for r in await video_crud.references_destination(rig.db, room)] == [
+        "derived_status"
+    ]
+
+
+async def test_an_hdmi_shows_input_status_needs_a_destination_and_an_input_on_its_matrix(
+    client: AsyncClient, rig: Rig
+) -> None:
+    await login(client)
+    _, room, _ = await _matrix(rig)
+    missing = await client.post(
+        STATUSES, json={"name": "HDMI", "source_type": "video_destination_input"}
+    )
+    assert missing.status_code == 422
+    assert set(fields(missing)) == {"video_destination_id", "compare_input_id"}
+
+    other = await devices_crud.create(
+        rig.db, category="video_matrix", driver_key="lkv422", name="Other", config={}
+    )
+    elsewhere = await video_crud.create_input(
+        rig.db, device_id=other.id, driver_ref="1", name="Elsewhere"
+    )
+    mismatched = await client.post(
+        STATUSES,
+        json={
+            "name": "HDMI",
+            "source_type": "video_destination_input",
+            "video_destination_id": room,
+            "compare_input_id": elsewhere.id,
+        },
+    )
+    assert mismatched.status_code == 422
+    assert "compare_input_id" in fields(mismatched)
+
+    stray = await client.post(
+        STATUSES,
+        json={"name": "Ext", "source_type": "external_control", "video_destination_id": room},
+    )
+    assert stray.status_code == 422
+    assert "video_destination_id" in fields(stray)

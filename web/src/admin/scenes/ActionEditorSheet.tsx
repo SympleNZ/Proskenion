@@ -129,6 +129,12 @@ function MixerLevelField({
   );
 }
 
+/** A step's editable text: the saved step, or 2 dB (volume up) for a new action. */
+function stepText(action: Action | undefined): string {
+  const step = action?.mixer_step_db;
+  return step === null || step === undefined ? "2" : String(step);
+}
+
 export interface ActionEditorSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -198,6 +204,8 @@ export function ActionEditorSheet({
   const [mixerChannelId, setMixerChannelId] = useState<number | null>(action?.mixer_channel_id ?? null);
   const [mixerDb, setMixerDb] = useState<number | null>(action?.mixer_db ?? null);
   const [mixerMuted, setMixerMuted] = useState<boolean>(action?.mixer_muted ?? false);
+  // Text, so "-" can be typed on the way to "-2".
+  const [mixerStepDb, setMixerStepDb] = useState<string>(stepText(action));
   const [errors, setErrors] = useState<Readonly<Record<string, string>>>({});
 
   // Reset to the target action (or a blank new one) whenever the sheet opens
@@ -226,6 +234,7 @@ export function ActionEditorSheet({
       setMixerChannelId(action?.mixer_channel_id ?? null);
       setMixerDb(action?.mixer_db ?? null);
       setMixerMuted(action?.mixer_muted ?? false);
+      setMixerStepDb(stepText(action));
       setErrors({});
     }
   }
@@ -251,6 +260,7 @@ export function ActionEditorSheet({
       hdmi_destination: null,
       hdmi_input_id: null,
       device_id: action?.device_id ?? null,
+      mixer_step_db: null,
     } satisfies ActionFields;
     if (domain === "dmx") {
       return { ...base, dmx_snapshot: dmxSnapshot, dmx_fade_ms: dmxFadeMs };
@@ -282,6 +292,15 @@ export function ActionEditorSheet({
     if (domain === "mixer_mute") {
       return { ...base, mixer_channel_id: mixerChannelId, mixer_muted: mixerMuted };
     }
+    if (domain === "mixer_step") {
+      const step = Number(mixerStepDb.trim());
+      return {
+        ...base,
+        // Main LR when nothing is chosen yet: a panel's volume buttons are the master.
+        mixer_channel_id: mixerChannelId ?? mainChannel?.id ?? null,
+        mixer_step_db: mixerStepDb.trim() !== "" && Number.isFinite(step) ? step : null,
+      };
+    }
     return base;
   }
 
@@ -308,6 +327,12 @@ export function ActionEditorSheet({
   }
 
   const outgoing = (knxAddresses.data ?? []).filter((address) => address.direction !== "incoming");
+  const mainChannel = (mixerChannels.data ?? []).find((channel) => channel.channel_kind === "main");
+  // The step picker lists Main LR first: it is what a panel's volume buttons move.
+  const stepChannels = [
+    ...(mainChannel ? [mainChannel] : []),
+    ...(mixerChannels.data ?? []).filter((channel) => channel !== mainChannel),
+  ];
   const saving = create.isPending || update.isPending;
 
   return (
@@ -622,6 +647,56 @@ export function ActionEditorSheet({
               />
               <div className="field-error" role="alert" aria-live="assertive">
                 {errors["mixer_db"] ? <span>{errors["mixer_db"]}</span> : null}
+              </div>
+            </>
+          ) : null}
+
+          {domain === "mixer_step" ? (
+            <>
+              <div className="field schema-field">
+                <FieldLabel htmlFor="action-mixer-step-channel" help="scenes.action.mixer.channel">
+                  Channel
+                </FieldLabel>
+                <Select
+                  id="action-mixer-step-channel"
+                  value={mixerChannelId ?? mainChannel?.id ?? ""}
+                  onChange={(event) =>
+                    setMixerChannelId(event.currentTarget.value ? Number(event.currentTarget.value) : null)
+                  }
+                >
+                  <option value="">Choose a channel…</option>
+                  {stepChannels.map((channel) => (
+                    <option key={channel.id} value={channel.id}>
+                      {channel.channel_kind === "main" ? channel.name + " (Main LR)" : channel.name}
+                    </option>
+                  ))}
+                </Select>
+                <div className="field-error" role="alert" aria-live="assertive">
+                  {errors["mixer_channel_id"] ? <span>{errors["mixer_channel_id"]}</span> : null}
+                </div>
+              </div>
+              <div className="field schema-field">
+                <FieldLabel htmlFor="action-mixer-step-db" help="scenes.action.mixer.step">
+                  Step (dB)
+                </FieldLabel>
+                <Input
+                  id="action-mixer-step-db"
+                  mono
+                  type="number"
+                  step={0.5}
+                  min={-20}
+                  max={20}
+                  value={mixerStepDb}
+                  onChange={(event) => setMixerStepDb(event.currentTarget.value)}
+                />
+                <p className="field-help">
+                  Positive is louder, negative quieter, from wherever the fader is now — e.g. 2 for volume up, -2 for
+                  volume down. Stops at the top of the fader and, while hirer access is on, at the hirer limit. Up from
+                  Off starts at -40 dB; down past the bottom turns the channel off.
+                </p>
+                <div className="field-error" role="alert" aria-live="assertive">
+                  {errors["mixer_step_db"] ? <span>{errors["mixer_step_db"]}</span> : null}
+                </div>
               </div>
             </>
           ) : null}

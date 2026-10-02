@@ -119,6 +119,7 @@ show nothing").
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
@@ -148,6 +149,10 @@ MIXER_OWNER = "mixer"
 
 #: The status-bar / state-key slot the one configured mixer occupies (§5.6).
 MIXER_SLOT = slot_name(Category.MIXER)
+
+#: Where a relative step up from off (−∞) lands (``mixer_step``, migration
+#: 013): quiet enough to be safe, loud enough that the first press is heard.
+STEP_FLOOR_DB = -40.0
 
 
 class DriverSource(Protocol):
@@ -321,6 +326,9 @@ class MixerService:
         #: again: after attaching (and seeding), and after every later
         #: connection's opening sync — see :meth:`add_sync_listener`.
         self._sync_listeners: list[Callable[[], Awaitable[None]]] = []
+        #: Serialises :meth:`step_level`'s read-modify-write, so two steps in
+        #: flight at once both count (each reads the other's result).
+        self._step_lock = asyncio.Lock()
         self._subscription: Subscription | None = None
         self._config_subscription: Subscription | None = None
         self._started = False
@@ -853,6 +861,46 @@ class MixerService:
             self._reflect_untracked_write(channel_id)
         return clamped
 
+    async def step_level(
+        self,
+        channel_id: int,
+        step_db: float,
+        *,
+        ceiling_db: float | None = None,
+        floor_db: float = STEP_FLOOR_DB,
+        source: str = "app",
+    ) -> StepOutcome:
+        """Move ``channel_id`` by ``step_db`` from the level this service holds
+        for it now — a panel's volume button (``mixer_step``, migration 013).
+
+        Where it lands is :func:`step_target`: clamped to the fader law and to
+        ``ceiling_db`` when given; up from off starts at ``floor_db``; down
+        past the bottom of the law is off. Nothing is sent when the result
+        equals the current level (already at the top, already off). The read
+        and the write happen under one lock, so presses in quick succession
+        accumulate rather than each stepping from the same stale level.
+        Raises :class:`UnknownMixerChannelError`, :class:`NoMixerConfigured`
+        or :class:`MixerOffline` — never stepping from a level it cannot
+        trust to a desk it cannot reach.
+        """
+        async with self._step_lock:
+            self._require_channel(channel_id)
+            driver = self._require_driver()
+            law = driver.capabilities()
+            before = self._levels.get(channel_id)
+            target, clamped = step_target(
+                before,
+                step_db,
+                min_db=law.min_db,
+                max_db=law.max_db,
+                floor_db=floor_db,
+                ceiling_db=ceiling_db,
+            )
+            if target == before:
+                return StepOutcome(before, before, clamped, sent=False)
+            applied = await self.set_level(channel_id, target, source=source)
+            return StepOutcome(before, applied, clamped, sent=True)
+
     async def set_mute(self, channel_id: int, muted: bool, *, source: str = "app") -> bool:
         channel = self._require_channel(channel_id)
         driver = self._require_driver()
@@ -994,6 +1042,54 @@ class MixerService:
             )
 
 
+@dataclass(frozen=True, slots=True)
+class StepOutcome:
+    """What :meth:`MixerService.step_level` did: dB before and after
+    (``None`` = off), whether the law's top or the ceiling held it back, and
+    whether anything was sent."""
+
+    before: float | None
+    after: float | None
+    clamped: bool
+    sent: bool
+
+
+def step_target(
+    current: float | None,
+    step_db: float,
+    *,
+    min_db: float,
+    max_db: float,
+    floor_db: float = STEP_FLOOR_DB,
+    ceiling_db: float | None = None,
+) -> tuple[float | None, bool]:
+    """Where a relative step lands: ``(dB or None for off, held back by the top)``.
+
+    * The top is the law's ``max_db``, or ``ceiling_db`` when that is lower.
+      A step never ends above it; one that would is applied **at** it and
+      reported clamped (B35's "at the ceiling is a success"). A level already
+      above a ceiling steps down to it at most.
+    * Up from off (``None``, −∞) lands on ``floor_db``, held within the law
+      and the top; down from off stays off.
+    * Down past the bottom of the law (``min_db``) is off, so repeated
+      presses end at silence rather than at −89 dB.
+    * Results are rounded to 0.01 dB so repeated ±2 dB presses do not
+      accumulate float error.
+    """
+    top = max_db if ceiling_db is None else min(max_db, ceiling_db)
+    if current is None:
+        if step_db <= 0:
+            return None, False
+        start = max(min(floor_db, max_db), min_db)
+        return (top, True) if start > top else (round(start, 2), False)
+    target = current + step_db
+    if step_db < 0 and target < min_db:
+        return None, False
+    if target > top:
+        return round(max(top, min_db), 2), True
+    return round(max(target, min_db), 2), False
+
+
 def _clamp(db: float | None, min_db: float, max_db: float) -> float | None:
     if db is None:
         return None
@@ -1046,6 +1142,7 @@ async def ensure_main_channel(
 __all__ = [
     "MIXER_OWNER",
     "MIXER_SLOT",
+    "STEP_FLOOR_DB",
     "ChannelLive",
     "DriverSource",
     "MixerOffline",
@@ -1053,7 +1150,9 @@ __all__ = [
     "MixerService",
     "MixerServiceError",
     "NoMixerConfigured",
+    "StepOutcome",
     "UnknownDeskSceneError",
     "UnknownMixerChannelError",
     "ensure_main_channel",
+    "step_target",
 ]

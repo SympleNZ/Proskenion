@@ -14,7 +14,10 @@ one transaction, the same shape as
 Two things block a delete, both ``ON DELETE RESTRICT`` from ``scene_actions``
 (§15.8): a matrix input named by ``hdmi_input_id`` and a destination named by
 ``hdmi_destination``. Both guards list the scene, not the action, matching
-the existing ``knx`` and ``lighting`` reference lists. Nothing else blocks —
+the existing ``knx`` and ``lighting`` reference lists. Since migration 013 a
+``video_destination_input`` derived status blocks the same way, through
+``derived_status.video_destination_id`` and ``compare_input_id`` (also
+``RESTRICT``), and is listed by its own name. Nothing else blocks —
 ``video_destinations.default_input_id`` is ``ON DELETE SET NULL`` and
 ``video_destination_outputs`` cascades from either side — and deleting the
 owning ``devices`` row cascades to every input, output and destination on it
@@ -146,16 +149,31 @@ async def _scene_action_references(
 ) -> list[Reference]:
     """Scenes whose actions still name ``row_id`` through ``column``
     (``hdmi_destination`` or ``hdmi_input_id``) — the 409 ``in_use`` body,
-    named by the scene rather than the action (§15.8, §21.22)."""
+    named by the scene rather than the action (§15.8, §21.22) — followed by
+    any ``video_destination_input`` derived status that names it through the
+    matching ``derived_status`` column (migration 013)."""
     cursor = await conn.execute(
         f"SELECT sa.id AS id, s.name AS name FROM scene_actions sa "
         f"JOIN scenes s ON s.id = sa.scene_id WHERE sa.{column} = ? ORDER BY sa.id",
         (row_id,),
     )
-    return [
+    scene_refs = [
         Reference(entity="scene_actions", id=int(r["id"]), name=str(r["name"]))
         for r in await cursor.fetchall()
     ]
+    status_column = {
+        "hdmi_destination": "video_destination_id",
+        "hdmi_input_id": "compare_input_id",
+    }[column]
+    cursor = await conn.execute(
+        f"SELECT id, name FROM derived_status WHERE {status_column} = ? ORDER BY id",
+        (row_id,),
+    )
+    status_refs = [
+        Reference(entity="derived_status", id=int(r["id"]), name=str(r["name"]))
+        for r in await cursor.fetchall()
+    ]
+    return scene_refs + status_refs
 
 
 # -- matrix inputs -------------------------------------------------------------

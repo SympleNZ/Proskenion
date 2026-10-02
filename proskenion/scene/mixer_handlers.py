@@ -1,4 +1,4 @@
-"""``mixer_recall``, ``mixer_fader`` and ``mixer_mute`` (§8.12, §7.3, §13.5).
+"""``mixer_recall``, ``mixer_fader``, ``mixer_mute`` and ``mixer_step`` (§8.12, §7.3, §13.5).
 
 Phase 4's three mixer domains, in the same shape as
 :mod:`proskenion.scene.av_handlers`'s ``projector_power``, ``projector_input``
@@ -64,6 +64,26 @@ a hirer session) is held to the hirer's ceilings, read live from
 
 A run staff started — Restore Venue Default included — is never clamped
 (Q8c): the ceiling is a limit on hirers, not on the desk.
+
+``mixer_step`` — a relative move (migration 013)
+-------------------------------------------------
+A wall panel's volume up/down: ``mixer_step_db`` (signed) is added to the
+level the mixer service holds for the channel now
+(:meth:`~proskenion.core.mixer.service.MixerService.step_level`, which owns
+the arithmetic in :func:`~proskenion.core.mixer.service.step_target`). Main LR
+is the device's ``main`` channel and is named by ``mixer_channel_id`` like any
+other. Clamped to the fader law; up from off lands on
+:data:`~proskenion.core.mixer.service.STEP_FLOOR_DB` (−40 dB); down past the
+bottom of the law is off. **The channel's hirer ceiling**
+(``mixer_channels.hirer_max_db``) is the top whenever the run was started by
+a hirer *or hirer access is enabled* — unlike ``mixer_fader``. A wall panel is
+in the room the hirer has, and a panel press reaches the rule layer as staff;
+without this a hirer could walk past every ceiling the venue set by holding
+volume-up. The ceiling is read from configuration rather than the hirer
+snapshot because Main LR is usually on no hirer page and so has no ceiling in
+the snapshot. While access is disabled, staff step to the top of the law.
+An unavailable mixer fails the action ✗ with the usual wording: there is no
+level to step from.
 
 Mixer offline
 --------------
@@ -251,4 +271,61 @@ class MixerMuteHandler:
         return ActionOutcome.confirmed({"channel_id": channel_id, "muted": muted})
 
 
-__all__ = ["MixerFaderHandler", "MixerMuteHandler", "MixerRecallHandler"]
+class MixerStepHandler:
+    """``mixer_step``: ± dB from the current level, clamped, ceiling-aware,
+    through :class:`MixerService` (see the module docstring)."""
+
+    def __init__(
+        self,
+        mixer: MixerService | None,
+        db: Database,
+        permissions: PermissionsSource = _no_permissions,
+    ) -> None:
+        self._mixer = mixer
+        self._db = db
+        self._permissions = permissions
+
+    def unsupported(self, action: SceneAction, capabilities: Capabilities) -> str | None:
+        return None  # every configured mixer accepts a level (§5.5)
+
+    async def _ceiling(self, channel_id: int, context: ActionContext) -> float | None:
+        if not (context.hirer_originated or self._permissions().enabled):
+            return None
+        channel = await mixer_crud.get_channel(self._db, channel_id)
+        return None if channel is None else channel.hirer_max_db
+
+    async def execute(self, action: SceneAction, context: ActionContext) -> ActionOutcome:
+        if self._mixer is None:
+            return ActionOutcome.skipped("the mixer service is not running")
+        assert action.mixer_channel_id is not None  # required by validation (§8.12)
+        assert action.mixer_step_db is not None  # required by validation (§8.12)
+        channel_id = action.mixer_channel_id
+        ceiling = await self._ceiling(channel_id, context)
+        if context.discarded:  # checked immediately before the service call
+            return ActionOutcome.skipped(context.discard_reason() or "discarded")
+        try:
+            outcome = await self._mixer.step_level(
+                channel_id, action.mixer_step_db, ceiling_db=ceiling
+            )
+        except UnknownMixerChannelError:
+            return ActionOutcome.failed("no such mixer channel")
+        except NoMixerConfigured:
+            return ActionOutcome.skipped("no mixer is configured")
+        except MixerOffline:
+            return ActionOutcome.failed(_MIXER_UNAVAILABLE, {"channel_id": channel_id})
+        detail: dict[str, object] = {
+            "channel_id": channel_id,
+            "step_db": action.mixer_step_db,
+            "from_db": outcome.before,
+            "db": outcome.after,
+        }
+        if ceiling is not None:
+            detail["ceiling_db"] = ceiling
+        if outcome.clamped:
+            detail["clamped"] = True
+        if not outcome.sent:
+            detail["unchanged"] = True
+        return ActionOutcome.confirmed(detail)
+
+
+__all__ = ["MixerFaderHandler", "MixerMuteHandler", "MixerRecallHandler", "MixerStepHandler"]

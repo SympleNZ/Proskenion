@@ -7,6 +7,28 @@ next image build; everything else ships in the application package.
 
 ## Unreleased
 
+## [0.1.20] - 2026-10-02
+
+### Added
+- KNX rules can be limited to one sending device ("Only from device"), so
+  the two wall panels can do different things on the same address: the
+  back-of-house panel's projector-on can also switch the HDMI to input 2.
+- A panel status that follows the HDMI matrix ("HDMI shows input X"). Two of
+  them give the panels an exclusive pair of input buttons, exactly one lit.
+- A "Volume step" scene action: nudge a mixer channel or Main LR by ±dB per
+  press. It is clamped to the fader's top and to the hirer volume limit
+  whenever hire access is on. It is ready for the volume up/down buttons the
+  integrator is adding.
+
+### Changed
+- Replacing a whole list (a page's buttons, a group's members, the hirer's
+  pages and four more) now takes an undo snapshot first, as deletes do
+  (owner decision).
+- The security alarm turns the stage off: KNX `5/1/0` runs a critical
+  "Alarm — All Off" scene. This is configuration on the appliance, not code.
+
+## [0.1.19] - 2026-10-02
+
 ### Added
 - **BUMP on lighting group strips** (owner decision): hold to flash the
   group's DMX fixtures to full, scaled by the Master; release to return.

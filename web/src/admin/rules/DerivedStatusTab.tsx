@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/Sheet";
 import { EmptyState, ErrorState, Skeleton } from "@/components/ui/EmptyState";
 import { useLightingGroups } from "@/lighting/api";
+import { useHdmiState } from "@/video/api";
 
 import {
   useCreateDerivedStatus,
@@ -53,6 +54,7 @@ export function DerivedStatusTab({ visible }: { visible: boolean }) {
   const knxAddresses = useKnxAddresses();
   const lightingGroups = useLightingGroups();
   const devices = useDevices();
+  const hdmi = useHdmiState();
 
   const createStatus = useCreateDerivedStatus();
   const updateStatus = useUpdateDerivedStatus();
@@ -211,6 +213,8 @@ export function DerivedStatusTab({ visible }: { visible: boolean }) {
           outgoingAddresses={outgoingAddresses}
           lightingGroups={lightingGroups.data?.groups ?? []}
           devices={devices.data?.devices ?? []}
+          hdmiDestinations={hdmi.data?.destinations ?? []}
+          hdmiInputs={hdmi.data?.inputs ?? []}
           saving={createStatus.isPending || updateStatus.isPending}
           deleting={deleteStatus.isPending}
           onSave={handleSave}

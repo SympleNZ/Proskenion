@@ -63,6 +63,40 @@ describe("DerivedStatusEditor", () => {
     expect(onSave.mock.calls[1]?.[0]).toMatchObject({ source_type: "external_control", basis: "level" });
   });
 
+  it("reflects an HDMI destination showing one input (migration 013)", async () => {
+    const { onSave } = renderEditor({
+      hdmiDestinations: [{ id: 7, name: "The room" }],
+      hdmiInputs: [
+        { id: 1, name: "Side of stage" },
+        { id: 2, name: "Back of house" },
+      ],
+    });
+    fireEvent.change(screen.getByLabelText("Reflects"), { target: { value: "video_destination_input" } });
+    expect(screen.queryByLabelText("Group")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Compare")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("HDMI destination"), { target: { value: "7" } });
+    fireEvent.change(screen.getByLabelText("Shows input"), { target: { value: "2" } });
+    expect(screen.getByText(/off while it shows another or its outputs disagree/)).toBeInTheDocument();
+
+    fireEvent.submit(screen.getByLabelText("Reflects").closest("form") as HTMLFormElement);
+    await vi.waitFor(() => expect(onSave).toHaveBeenCalled());
+    expect(onSave.mock.calls[0]?.[0]).toMatchObject({
+      source_type: "video_destination_input",
+      video_destination_id: 7,
+      compare_input_id: 2,
+      lighting_group_id: null,
+      compare_level: null,
+      basis: "level",
+    });
+  });
+
+  it("sends no destination or input for any other source", async () => {
+    const { onSave } = renderEditor();
+    fireEvent.submit(screen.getByLabelText("Reflects").closest("form") as HTMLFormElement);
+    await vi.waitFor(() => expect(onSave).toHaveBeenCalled());
+    expect(onSave.mock.calls[0]?.[0]).toMatchObject({ video_destination_id: null, compare_input_id: null });
+  });
+
   it("refuses an address a rule triggers on, as a field error on the address (§8.7)", () => {
     renderEditor({
       fieldErrors: {

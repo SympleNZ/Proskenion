@@ -10,7 +10,15 @@ Triggers (§8.3) — a closed set, extensible in code only
 ------------------------------------------------------
 ``knx``
     A :class:`~proskenion.core.events.KnxTelegramReceived` on the rule's
-    address, subject to the match (:func:`proskenion.rules.model.matches`).
+    address, subject to the match (:func:`proskenion.rules.model.matches`)
+    and, when the rule has a ``trigger_source_address`` ("only from device",
+    migration 013), to the telegram's ``source_address`` being that
+    individual address (:func:`proskenion.rules.model.source_matches`). A
+    telegram from another device is ``not_matched``: not a firing, not
+    logged, and — being checked before debounce — it never opens the rule's
+    debounce window, so the side-of-stage panel cannot swallow a
+    back-of-house press. ``POST /rules/{id}/fire`` and ``/test`` carry no
+    source and are not filtered.
 ``device_state``
     A :class:`~proskenion.core.events.DeviceStatusChanged` *transition* into
     ``trigger_state`` — a connection status (``connected``, ``degraded``, …)
@@ -38,7 +46,8 @@ Re-asserting the panel after a press
 A wall panel flips its own icon when pressed, before anything happens. Once
 a telegram on the trigger address of an enabled knx rule has been handled —
 whatever became of it: fired, failed, blocked by its guard, debounced,
-suppressed, not matched — and what it started has finished (a scene's
+suppressed, not matched, or from a device the rule's source filter does not
+name (the panel flipped its icon all the same) — and what it started has finished (a scene's
 result, a binding's fades), the derived statuses are re-asserted
 (:meth:`~proskenion.rules.derived.DerivedStatusEngine.reassert`): written
 again at their current value, so a press that took effect is confirmed and
@@ -148,6 +157,7 @@ from proskenion.rules.model import (
     parse_device_state_guard,
     parse_external_control_guard,
     parse_time_window,
+    source_matches,
     state_has_producer,
     state_matches,
 )
@@ -479,6 +489,8 @@ class RulesEngine:
                     device_id=s.device_id,
                     compare_state=s.compare_state,
                     basis=s.basis,
+                    video_destination_id=s.video_destination_id,
+                    compare_input_id=s.compare_input_id,
                 )
                 for s in statuses
                 # A lamp-only status (Q6) has no address to look up and is
@@ -528,6 +540,7 @@ class RulesEngine:
                     check_match=True,
                     debounce=True,
                     completions=completions,
+                    source_address=event.source_address,
                 )
         finally:
             self._spawn(self._press_finished(completions))
@@ -850,13 +863,23 @@ class RulesEngine:
         hirer_originated: bool = False,
         extra_detail: Mapping[str, Any] | None = None,
         completions: list[Awaitable[Any]] | None = None,
+        source_address: str | None = None,
     ) -> FireReport:
         """One rule, one firing. ``completions``, when given, collects what the
         action leaves running — a scene's task, a binding's fades — so the
-        caller can wait for it to finish (the re-assert after a press)."""
+        caller can wait for it to finish (the re-assert after a press).
+        ``source_address`` is an incoming telegram's sender; only a telegram
+        passes one, and only then is a rule's "only from device" filter
+        applied (see the module docstring)."""
         if not rule.enabled and not ignore_enabled:
             return FireReport(rule.id, triggered_by, "disabled")
         if check_match and rule.trigger_type == "knx" and not self._matches(rule, value):
+            return FireReport(rule.id, triggered_by, "not_matched")
+        if (
+            source_address is not None
+            and rule.trigger_type == "knx"
+            and not source_matches(rule.trigger_source_address, source_address)
+        ):
             return FireReport(rule.id, triggered_by, "not_matched")
         if debounce:
             window = self._debounce_s(rule)

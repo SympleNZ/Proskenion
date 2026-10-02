@@ -66,6 +66,8 @@ class SceneAction:
     device_id: int | None
     created_at: str
     updated_at: str
+    #: ``mixer_step`` (migration 013): signed dB, relative to the current level.
+    mixer_step_db: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +138,10 @@ def _action_from_row(row: base.Row) -> SceneAction:
         device_id=_opt_int(row, "device_id"),
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
+        # .get(): a row read against a schema before migration 013 lacks it.
+        mixer_step_db=(
+            None if row.get("mixer_step_db") is None else float(row["mixer_step_db"])
+        ),
     )
 
 
@@ -260,6 +266,7 @@ async def create_action(
     hdmi_destination: int | None = None,
     hdmi_input_id: int | None = None,
     device_id: int | None = None,
+    mixer_step_db: float | None = None,
 ) -> SceneAction:
     now = base.now_iso()
     async with db.write() as conn:
@@ -288,6 +295,9 @@ async def create_action(
                 "device_id": device_id,
                 "created_at": now,
                 "updated_at": now,
+                # Only when set, so rows can still be built against a schema
+                # before migration 013 (the migration tests do).
+                **({} if mixer_step_db is None else {"mixer_step_db": mixer_step_db}),
             },
         )
         row = await base.get(conn, ACTIONS_TABLE, row_id)

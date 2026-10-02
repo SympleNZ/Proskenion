@@ -1,7 +1,8 @@
 /*
  * The derived-status editor (spec §8.6, §8.9, §21.17 *Derived status tab*).
- * Three source types, each binding one outgoing DPT 1.x address to one
- * predicate. The two constraints that matter here are both enforced
+ * Four source types, each binding one outgoing DPT 1.x address to one
+ * predicate — the fourth, "HDMI shows input" (migration 013), lights one of
+ * a panel's mutually exclusive input buttons. The two constraints that matter here are both enforced
  * server-side and surfaced as `422` field errors: an address already bound
  * to another status, and an address a rule triggers on (§8.7 — a status
  * write must never look like a state change to the rule layer).
@@ -29,7 +30,14 @@ const SOURCE_LABELS: Readonly<Record<SourceType, string>> = {
   lighting_group_all_at: "Lighting group, all at a level",
   device_state: "Device state",
   external_control: "External control",
+  video_destination_input: "HDMI shows input",
 };
+
+/** A destination or input as the "HDMI shows input" pickers need it. */
+export interface NamedOption {
+  id: number;
+  name: string;
+}
 
 const STATE_SUGGESTIONS = [...CONNECTION_STATES, ...STATE_ALIASES];
 
@@ -43,6 +51,8 @@ interface FormState {
   device_id: number | null;
   compare_state: string;
   basis: StatusBasis;
+  video_destination_id: number | null;
+  compare_input_id: number | null;
 }
 
 function initialState(status: DerivedStatus | undefined): FormState {
@@ -56,6 +66,8 @@ function initialState(status: DerivedStatus | undefined): FormState {
     device_id: status?.device_id ?? null,
     compare_state: status?.compare_state ?? "",
     basis: status?.basis ?? "level",
+    video_destination_id: status?.video_destination_id ?? null,
+    compare_input_id: status?.compare_input_id ?? null,
   };
 }
 
@@ -71,6 +83,8 @@ function buildInput(form: FormState): DerivedStatusInput {
     device_id: form.source_type === "device_state" ? form.device_id : null,
     compare_state: form.source_type === "device_state" ? form.compare_state : null,
     basis: form.source_type === "lighting_group_all_at" ? form.basis : "level",
+    video_destination_id: form.source_type === "video_destination_input" ? form.video_destination_id : null,
+    compare_input_id: form.source_type === "video_destination_input" ? form.compare_input_id : null,
   };
 }
 
@@ -81,6 +95,9 @@ export interface DerivedStatusEditorProps {
   outgoingAddresses: readonly KnxAddress[];
   lightingGroups: readonly LightingGroup[];
   devices: readonly Device[];
+  /** The matrix's destinations and inputs, for "HDMI shows input". */
+  hdmiDestinations?: readonly NamedOption[];
+  hdmiInputs?: readonly NamedOption[];
   saving: boolean;
   deleting?: boolean;
   onSave: (input: DerivedStatusInput) => Promise<void>;
@@ -96,6 +113,8 @@ export function DerivedStatusEditor({
   outgoingAddresses,
   lightingGroups,
   devices,
+  hdmiDestinations = [],
+  hdmiInputs = [],
   saving,
   deleting = false,
   onSave,
@@ -286,6 +305,64 @@ export function DerivedStatusEditor({
                   ))}
                 </datalist>
               </Field>
+            </>
+          ) : null}
+
+          {form.source_type === "video_destination_input" ? (
+            <>
+              <Field
+                label="HDMI destination"
+                htmlFor={`${idPrefix}-hdmi-destination`}
+                helpId="rules.derived.hdmi-destination"
+                error={fieldErrors["video_destination_id"]}
+                errorId={`${idPrefix}-hdmi-destination-error`}
+              >
+                <Select
+                  id={`${idPrefix}-hdmi-destination`}
+                  value={form.video_destination_id ?? ""}
+                  aria-invalid={fieldErrors["video_destination_id"] ? true : undefined}
+                  onChange={(event) =>
+                    set("video_destination_id", event.currentTarget.value ? Number(event.currentTarget.value) : null)
+                  }
+                >
+                  <option value="">Choose a destination…</option>
+                  {hdmiDestinations.map((destination) => (
+                    <option key={destination.id} value={destination.id}>
+                      {destination.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field
+                label="Shows input"
+                htmlFor={`${idPrefix}-hdmi-input`}
+                helpId="rules.derived.hdmi-input"
+                error={fieldErrors["compare_input_id"]}
+                errorId={`${idPrefix}-hdmi-input-error`}
+              >
+                <Select
+                  id={`${idPrefix}-hdmi-input`}
+                  value={form.compare_input_id ?? ""}
+                  aria-invalid={fieldErrors["compare_input_id"] ? true : undefined}
+                  onChange={(event) =>
+                    set("compare_input_id", event.currentTarget.value ? Number(event.currentTarget.value) : null)
+                  }
+                >
+                  <option value="">Choose an input…</option>
+                  {hdmiInputs.map((input) => (
+                    <option key={input.id} value={input.id}>
+                      {input.name}
+                    </option>
+                  ))}
+                </Select>
+                <p className="field-help">
+                  On while the destination shows this input; off while it shows another or its outputs disagree. One
+                  status per input, each on its own feedback address, lights exactly one of a panel&apos;s input buttons.
+                </p>
+              </Field>
+              {hdmiDestinations.length === 0 ? (
+                <p className="field-help">No HDMI destinations are configured yet.</p>
+              ) : null}
             </>
           ) : null}
 

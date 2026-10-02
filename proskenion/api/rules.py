@@ -50,6 +50,7 @@ from proskenion.db.crud import knx as knx_crud
 from proskenion.db.crud import lighting as lighting_crud
 from proskenion.db.crud import rules as rules_crud
 from proskenion.db.crud import scenes as scenes_crud
+from proskenion.db.crud import video as video_crud
 from proskenion.db.crud.base import ConflictError, InUseError, NotFoundError
 from proskenion.db.crud.knx import KnxGroupAddress
 from proskenion.db.crud.refs import ConstraintError
@@ -67,6 +68,7 @@ from proskenion.rules.model import (
     TriggerType,
     allowed_match_types,
     dpt_class,
+    normalise_individual_address,
     parse_device_state_guard,
     parse_external_control_guard,
     parse_match_value,
@@ -116,6 +118,9 @@ class RuleModel(BaseModel):
     trigger_device_id: int | None
     trigger_state: str | None
     trigger_for_ms: int | None
+    #: "Only from device" (migration 013): a knx trigger fires only for
+    #: telegrams from this individual address, e.g. ``1.1.26``. ``null`` = any.
+    trigger_source_address: str | None = None
     guard_type: str | None
     guard_value: str | None
     action_type: str
@@ -153,6 +158,7 @@ class RuleCreate(BaseModel):
     trigger_device_id: int | None = None
     trigger_state: str | None = ModelField(default=None, max_length=32)
     trigger_for_ms: int | None = ModelField(default=None, ge=0, le=86_400_000)
+    trigger_source_address: str | None = ModelField(default=None, max_length=16)
     guard_type: GuardType | None = None
     guard_value: str | None = ModelField(default=None, max_length=64)
     action_type: ActionType
@@ -186,6 +192,7 @@ class RuleUpdate(BaseModel):
     trigger_device_id: int | None = None
     trigger_state: str | None = ModelField(default=None, max_length=32)
     trigger_for_ms: int | None = ModelField(default=None, ge=0, le=86_400_000)
+    trigger_source_address: str | None = ModelField(default=None, max_length=16)
     guard_type: GuardType | None = None
     guard_value: str | None = ModelField(default=None, max_length=64)
     action_type: ActionType | None = None
@@ -257,6 +264,10 @@ class DerivedStatusModel(BaseModel):
     basis: str
     created_at: str
     updated_at: str
+    #: ``video_destination_input`` (migration 013): the HDMI destination and
+    #: the input it must be showing. ``null`` for every other source type.
+    video_destination_id: int | None = None
+    compare_input_id: int | None = None
 
 
 class DerivedStatusesResponse(BaseModel):
@@ -279,6 +290,8 @@ class DerivedStatusCreate(BaseModel):
     device_id: int | None = None
     compare_state: str | None = ModelField(default=None, max_length=32)
     basis: Basis = "level"
+    video_destination_id: int | None = None
+    compare_input_id: int | None = None
 
 
 class DerivedStatusUpdate(BaseModel):
@@ -293,6 +306,8 @@ class DerivedStatusUpdate(BaseModel):
     device_id: int | None = None
     compare_state: str | None = ModelField(default=None, max_length=32)
     basis: Basis | None = None
+    video_destination_id: int | None = None
+    compare_input_id: int | None = None
 
 
 _STATUS_NOT_NULL = frozenset({"name", "enabled", "source_type", "basis"})
@@ -365,6 +380,22 @@ def _as_text(value: Scalar | None) -> str | None:
     return str(value)
 
 
+def _tidy_source_address(values: dict[str, Any]) -> None:
+    """A blank "only from device" is none; a valid one is stored in the form a
+    telegram's ``source_address`` takes (``01.1.026`` → ``1.1.26``). An
+    invalid one is left for :func:`_validate_rule` to report."""
+    if "trigger_source_address" not in values:
+        return
+    raw = values["trigger_source_address"]
+    if raw is None or not raw.strip():
+        values["trigger_source_address"] = None
+        return
+    try:
+        values["trigger_source_address"] = normalise_individual_address(raw)
+    except ValueError:
+        pass
+
+
 def rule_model(rule: Rule, engine: RulesEngine | None = None) -> RuleModel:
     """The read model. With the running engine, ``next_fire_at`` is the
     scheduler's own plan; without it, the cron's next time from now."""
@@ -392,6 +423,7 @@ def rule_model(rule: Rule, engine: RulesEngine | None = None) -> RuleModel:
         trigger_device_id=rule.trigger_device_id,
         trigger_state=rule.trigger_state,
         trigger_for_ms=rule.trigger_for_ms,
+        trigger_source_address=rule.trigger_source_address,
         guard_type=rule.guard_type,
         guard_value=rule.guard_value,
         action_type=rule.action_type,
@@ -492,8 +524,17 @@ async def _validate_rule(db: Database, values: Mapping[str, Any]) -> None:
                     f"“{bound[0].name}”; the rule layer never fires on the "
                     "controller's own writes (§8.7)",
                 )
+        source = values.get("trigger_source_address")
+        if source is not None:
+            try:
+                normalise_individual_address(source)
+            except ValueError as exc:
+                errors.add("trigger_source_address", str(exc))
     else:
         must_be_empty("knx_address_id", "only a knx trigger has a group address")
+        must_be_empty(
+            "trigger_source_address", "only a knx trigger can be limited to one device"
+        )
         must_be_empty("match_value", "only a knx trigger matches a value")
         must_be_empty("match_value_max", "only a knx trigger matches a value")
         must_be_empty("debounce_ms", "debounce applies to knx triggers only (§8.4)")
@@ -656,6 +697,7 @@ async def create_rule(
     values = body.model_dump()
     values["match_value"] = _as_text(body.match_value)
     values["match_value_max"] = _as_text(body.match_value_max)
+    _tidy_source_address(values)
     await _validate_rule(db, values)
     try:
         rule = await rules_crud.create_rule(db, **values)
@@ -750,6 +792,7 @@ async def update_rule(
     for name in ("match_value", "match_value_max"):
         if name in changes:
             changes[name] = _as_text(changes[name])
+    _tidy_source_address(changes)
     merged = {**_rule_values(current), **changes}
     await _validate_rule(db, merged)
     try:
@@ -862,6 +905,8 @@ async def _status_model(db: Database, status: DerivedStatus) -> DerivedStatusMod
         basis=status.basis,
         created_at=status.created_at,
         updated_at=status.updated_at,
+        video_destination_id=status.video_destination_id,
+        compare_input_id=status.compare_input_id,
     )
 
 
@@ -949,6 +994,33 @@ async def _validate_status(
         for name in ("device_id", "compare_state"):
             if values.get(name) is not None:
                 errors.add(name, "only a device_state status names a device and state")
+    if source == "video_destination_input":
+        destination_id = values.get("video_destination_id")
+        input_id = values.get("compare_input_id")
+        destination = None
+        if destination_id is None:
+            errors.add("video_destination_id", "this status reflects an HDMI destination")
+        else:
+            destination = await video_crud.get_destination(db, destination_id)
+            if destination is None:
+                errors.add("video_destination_id", "there is no HDMI destination with that id")
+        if input_id is None:
+            errors.add("compare_input_id", "the input the destination must be showing")
+        else:
+            input_row = await video_crud.get_input(db, input_id)
+            if input_row is None:
+                errors.add("compare_input_id", "there is no HDMI input with that id")
+            elif destination is not None and input_row.device_id != destination.device_id:
+                errors.add(
+                    "compare_input_id",
+                    "that input is on a different matrix from the destination",
+                )
+    else:
+        for name in ("video_destination_id", "compare_input_id"):
+            if values.get(name) is not None:
+                errors.add(
+                    name, "only a video_destination_input status names a destination and input"
+                )
     if errors:
         raise _invalid(errors, "The derived status is not valid")
 
@@ -1043,6 +1115,8 @@ async def update_derived_status(
         "device_id": current.device_id,
         "compare_state": current.compare_state,
         "basis": current.basis,
+        "video_destination_id": current.video_destination_id,
+        "compare_input_id": current.compare_input_id,
         **changes,
     }
     await _validate_status(db, merged, status_id=status_id)

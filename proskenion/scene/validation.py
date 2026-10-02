@@ -1,11 +1,12 @@
 """Scene actions validated on save (§8.12, §5.5, §16.1).
 
 ``scene_actions.domain`` is not validated in the data layer; this is where
-the eight-domain vocabulary is enforced, with the fields each domain needs,
-the snapshot's channels checked against the patch, and — §5.5's third place
-capability is enforced — an action type the target driver does not support
-refused. Every problem is collected per field, so the editor can mark each
-one (``validation_failed`` carries field-level errors in ``detail``).
+the domain vocabulary (§8.12's eight, plus ``mixer_step``) is enforced,
+with the fields each domain needs, the snapshot's channels checked against
+the patch, and — §5.5's third place capability is enforced — an action
+type the target driver does not support refused. Every problem is collected
+per field, so the editor can mark each one (``validation_failed`` carries
+field-level errors in ``detail``).
 """
 
 from __future__ import annotations
@@ -40,6 +41,10 @@ from proskenion.scene.domains import (
 Fail = Callable[[str, str], None]
 """Record one problem against one field."""
 
+#: The largest relative mixer step one action may take, either way (dB).
+#: A panel's volume button is a nudge; a bigger jump is a ``mixer_fader``.
+MAX_STEP_DB = 20.0
+
 #: Keys a §8.12 snapshot entry may carry.
 SNAPSHOT_KEYS = frozenset({"level", "r", "g", "b", "w"})
 
@@ -72,6 +77,7 @@ ACTION_COLUMNS: tuple[str, ...] = (
     "hdmi_destination",
     "hdmi_input_id",
     "device_id",
+    "mixer_step_db",
 )
 
 
@@ -100,6 +106,7 @@ def provisional_action(scene_id: int, values: Mapping[str, Any], action_id: int 
         device_id=values.get("device_id"),
         created_at="",
         updated_at="",
+        mixer_step_db=values.get("mixer_step_db"),
     )
 
 
@@ -149,6 +156,8 @@ async def validate_action(
             await _validate_mixer_fader(db, devices, values, fail)
         case "mixer_mute":
             await _validate_mixer_mute(db, values, fail)
+        case "mixer_step":
+            await _validate_mixer_step(db, values, fail)
         case "projector_power":
             if values.get("projector_power") not in PROJECTOR_POWER_VALUES:
                 fail("projector_power", "must be on or off")
@@ -333,6 +342,35 @@ async def _validate_mixer_mute(db: Database, values: Mapping[str, Any], fail: Fa
         fail("mixer_muted", "must be true or false — a scene never toggles (§21.16)")
 
 
+async def _validate_mixer_step(db: Database, values: Mapping[str, Any], fail: Fail) -> None:
+    """``mixer_channel_id`` is required and must exist — Main LR is the
+    device's ``main`` channel, an ordinary channel id; ``mixer_step_db`` is a
+    signed, finite, non-zero number of decibels no larger than
+    :data:`MAX_STEP_DB` either way. Where the step lands is decided at run
+    time, against the level the desk holds then
+    (:meth:`~proskenion.core.mixer.service.MixerService.step_level`)."""
+    _require(values, "mixer_channel_id", fail)
+    channel_id = values.get("mixer_channel_id")
+    if channel_id is not None:
+        channel = await mixer_crud.get_channel(db, int(channel_id))
+        if channel is None:
+            fail("mixer_channel_id", "no such mixer channel")
+    step = values.get("mixer_step_db")
+    if step is None:
+        fail("mixer_step_db", "is required: the step in dB, e.g. 2 or -2")
+        return
+    if isinstance(step, bool) or not isinstance(step, int | float) or not math.isfinite(step):
+        fail("mixer_step_db", "must be a number of decibels, e.g. 2 or -2")
+        return
+    if step == 0:
+        fail("mixer_step_db", "a step of 0 dB does nothing")
+    elif abs(step) > MAX_STEP_DB:
+        fail(
+            "mixer_step_db",
+            f"must be at most {MAX_STEP_DB:g} dB either way; set a level for a bigger change",
+        )
+
+
 async def _validate_hdmi_source(db: Database, values: Mapping[str, Any], fail: Fail) -> None:
     """``hdmi_destination`` is required; ``hdmi_input_id`` is optional — ``None``
     routes to the destination's own ``default_input_id`` (§13.5, "Restore
@@ -406,6 +444,7 @@ async def _check_capability(
 
 __all__ = [
     "ACTION_COLUMNS",
+    "MAX_STEP_DB",
     "ActionValidationError",
     "provisional_action",
     "validate_action",

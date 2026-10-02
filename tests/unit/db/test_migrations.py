@@ -283,6 +283,7 @@ async def test_shipped_migrations_apply_and_create_the_schema(raw_db: Database) 
         "010_password_status.sql",
         "011_lighting_indicators.sql",
         "012_backup_checked.sql",
+        "013_panel_capabilities.sql",
     ]
     assert await _tables(raw_db) == {
         "schema_versions",
@@ -701,6 +702,7 @@ async def test_006_applies_on_a_database_at_005_with_derived_status_rows(
         "010_password_status.sql",
         "011_lighting_indicators.sql",
         "012_backup_checked.sql",
+        "013_panel_capabilities.sql",
     ]
 
     status = await rules.get_derived_status(raw_db, status_id)
@@ -797,6 +799,7 @@ async def test_006_applies_on_a_database_at_005_with_derived_status_rows(
 
 async def test_shipped_migrations_revert(db: Database) -> None:
     assert await revert_to(db, 5) == [
+        "013_panel_capabilities.sql",
         "012_backup_checked.sql",
         "011_lighting_indicators.sql",
         "010_password_status.sql",
@@ -921,7 +924,11 @@ async def test_011_adds_indicator_only_and_basis_with_todays_behaviour_as_defaul
     """011_lighting_indicators.sql on a database already holding a group and a
     status: both keep today's behaviour (an ordinary group, a stored-level
     status) until someone says otherwise, and the new values are constrained."""
-    assert await revert_to(db, 10) == ["012_backup_checked.sql", "011_lighting_indicators.sql"]
+    assert await revert_to(db, 10) == [
+        "013_panel_capabilities.sql",
+        "012_backup_checked.sql",
+        "011_lighting_indicators.sql",
+    ]
     address = await knx.create_address(
         db, group_address="4/0/9", name="All status", dpt="1.001", direction="both"
     )
@@ -940,7 +947,11 @@ async def test_011_adds_indicator_only_and_basis_with_todays_behaviour_as_defaul
         status_id = cursor.lastrowid
     assert group_id is not None and status_id is not None
 
-    assert await migrate(db) == ["011_lighting_indicators.sql", "012_backup_checked.sql"]
+    assert await migrate(db) == [
+        "011_lighting_indicators.sql",
+        "012_backup_checked.sql",
+        "013_panel_capabilities.sql",
+    ]
     group = await lighting.get_group(db, group_id)
     assert group is not None and group.indicator_only is False
     status = await rules.get_derived_status(db, status_id)
@@ -954,7 +965,11 @@ async def test_011_adds_indicator_only_and_basis_with_todays_behaviour_as_defaul
             async with db.write() as conn:
                 await conn.execute(sql)
 
-    assert await revert_to(db, 10) == ["012_backup_checked.sql", "011_lighting_indicators.sql"]
+    assert await revert_to(db, 10) == [
+        "013_panel_capabilities.sql",
+        "012_backup_checked.sql",
+        "011_lighting_indicators.sql",
+    ]
     assert "indicator_only" not in await _columns(db, "lighting_groups")
     assert "basis" not in await _columns(db, "derived_status")
 
@@ -964,7 +979,7 @@ async def test_012_adds_the_after_backup_check_columns_to_existing_archives(
 ) -> None:
     """012_backup_checked.sql on a database already holding an archive row: the
     row reads as "not checked after backup" (NULL, '') rather than failing."""
-    assert await revert_to(db, 11) == ["012_backup_checked.sql"]
+    assert await revert_to(db, 11) == ["013_panel_capabilities.sql", "012_backup_checked.sql"]
     async with db.write() as conn:
         await conn.execute(
             "INSERT INTO backup_archives (id, created_at, source, size_bytes, sha256, "
@@ -973,7 +988,7 @@ async def test_012_adds_the_after_backup_check_columns_to_existing_archives(
             "1, 'x', 11, '0.1.16', 1)"
         )
 
-    assert await migrate(db) == ["012_backup_checked.sql"]
+    assert await migrate(db) == ["012_backup_checked.sql", "013_panel_capabilities.sql"]
     async with db.read() as conn:
         cursor = await conn.execute(
             "SELECT checked_at, checked_destinations FROM backup_archives"
@@ -981,6 +996,47 @@ async def test_012_adds_the_after_backup_check_columns_to_existing_archives(
         row = await cursor.fetchone()
     assert row is not None and (row[0], row[1]) == (None, "")
 
-    assert await revert_to(db, 11) == ["012_backup_checked.sql"]
+    assert await revert_to(db, 11) == ["013_panel_capabilities.sql", "012_backup_checked.sql"]
     assert "checked_at" not in await _columns(db, "backup_archives")
     assert "checked_destinations" not in await _columns(db, "backup_archives")
+
+
+async def test_013_adds_the_panel_capability_columns_with_todays_behaviour_as_default(
+    db: Database,
+) -> None:
+    """013_panel_capabilities.sql on a database already holding a rule, a status
+    and a scene action: each reads exactly as before (any source, no video
+    comparison, no step), and the revert drops the columns again."""
+    assert await revert_to(db, 12) == ["013_panel_capabilities.sql"]
+    async with db.write() as conn:
+        await conn.execute(
+            "INSERT INTO scenes (name, created_at, updated_at) VALUES ('Projector on', 'x', 'x')"
+        )
+        await conn.execute(
+            "INSERT INTO rules (name, trigger_type, action_type, message, created_at, updated_at)"
+            " VALUES ('Tell me', 'surface', 'notify', 'hello', 'x', 'x')"
+        )
+        await conn.execute(
+            "INSERT INTO derived_status (name, source_type, created_at, updated_at)"
+            " VALUES ('External', 'external_control', 'x', 'x')"
+        )
+        await conn.execute(
+            "INSERT INTO scene_actions (scene_id, sort_order, domain, projector_power,"
+            " created_at, updated_at) VALUES (1, 0, 'projector_power', 'on', 'x', 'x')"
+        )
+
+    assert await migrate(db) == ["013_panel_capabilities.sql"]
+    rule = (await rules.list_rules(db))[0]
+    assert rule.trigger_source_address is None
+    status = (await rules.list_derived_status(db))[0]
+    assert (status.video_destination_id, status.compare_input_id) == (None, None)
+    async with db.read() as conn:
+        cursor = await conn.execute("SELECT mixer_step_db FROM scene_actions")
+        row = await cursor.fetchone()
+    assert row is not None and row[0] is None
+
+    assert await revert_to(db, 12) == ["013_panel_capabilities.sql"]
+    assert "trigger_source_address" not in await _columns(db, "rules")
+    assert "video_destination_id" not in await _columns(db, "derived_status")
+    assert "compare_input_id" not in await _columns(db, "derived_status")
+    assert "mixer_step_db" not in await _columns(db, "scene_actions")

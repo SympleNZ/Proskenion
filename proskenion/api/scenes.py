@@ -178,6 +178,8 @@ class ActionModel(BaseModel):
     device_id: int | None
     created_at: str
     updated_at: str
+    #: ``mixer_step`` (migration 013): signed dB relative to the current level.
+    mixer_step_db: float | None = None
 
 
 class ActionsResponse(BaseModel):
@@ -211,6 +213,7 @@ class ActionFields(BaseModel):
     hdmi_destination: int | None = None
     hdmi_input_id: int | None = None
     device_id: int | None = None
+    mixer_step_db: float | None = None
 
 
 class ActionUpdate(BaseModel):
@@ -236,6 +239,7 @@ class ActionUpdate(BaseModel):
     hdmi_destination: int | None = None
     hdmi_input_id: int | None = None
     device_id: int | None = None
+    mixer_step_db: float | None = None
 
 
 class ReferenceModel(BaseModel):
@@ -321,6 +325,7 @@ _NO_HANDLER_REASON: Final[Mapping[str, str]] = {
     "mixer_recall": "Mixer actions arrive with the mixer driver",
     "mixer_fader": "Mixer actions arrive with the mixer driver",
     "mixer_mute": "Mixer actions arrive with the mixer driver",
+    "mixer_step": "Mixer actions arrive with the mixer driver",
     "projector_power": "Projector actions arrive with the projector driver",
     "projector_input": "Projector actions arrive with the projector driver",
     "hdmi_source": "HDMI actions arrive with the HDMI matrix driver",
@@ -391,6 +396,7 @@ def action_model(action: SceneAction) -> ActionModel:
         device_id=action.device_id,
         created_at=action.created_at,
         updated_at=action.updated_at,
+        mixer_step_db=action.mixer_step_db,
     )
 
 
@@ -538,7 +544,7 @@ async def scenes_log(
 
 @router.get("/scenes/domains", response_model=DomainsResponse)
 async def list_domains(_: Admin, db: Db, engine: Engine) -> DomainsResponse:
-    """Whether each of the eight §8.12 domains may be picked for a new action (§21.16).
+    """Whether each scene action domain (§8.12's eight, plus ``mixer_step``) may be picked (§21.16).
 
     Available once a handler is registered for the domain and, for a
     device-backed domain (§5.5's ``DOMAIN_CATEGORY``), a device of that

@@ -93,6 +93,39 @@ describe("RuleEditor", () => {
     expect(screen.getByLabelText("Address")).toHaveAttribute("aria-invalid", "true");
   });
 
+  it("limits a knx trigger to one device's telegrams, empty meaning any (migration 013)", async () => {
+    const { onSave } = renderEditor({ rule: RULE_BINDING });
+    const source = screen.getByLabelText("Only from device");
+    expect(source).toHaveValue("");
+    expect(screen.getByText(/e\.g\. 1\.1\.26 \(back-of-house panel\)/)).toBeInTheDocument();
+
+    fireEvent.change(source, { target: { value: " 1.1.26 " } });
+    fireEvent.submit(source.closest("form") as HTMLFormElement);
+    await vi.waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave.mock.calls[0]?.[0]).toMatchObject({ trigger_source_address: "1.1.26" });
+
+    fireEvent.change(source, { target: { value: "" } });
+    fireEvent.submit(source.closest("form") as HTMLFormElement);
+    await vi.waitFor(() => expect(onSave).toHaveBeenCalledTimes(2));
+    expect(onSave.mock.calls[1]?.[0]).toMatchObject({ trigger_source_address: null });
+
+    // Not a knx trigger: no field, and nothing sent.
+    fireEvent.change(source, { target: { value: "1.1.26" } });
+    fireEvent.change(screen.getByLabelText("Trigger"), { target: { value: "schedule" } });
+    expect(screen.queryByLabelText("Only from device")).not.toBeInTheDocument();
+    fireEvent.submit(screen.getByLabelText("Trigger").closest("form") as HTMLFormElement);
+    await vi.waitFor(() => expect(onSave).toHaveBeenCalledTimes(3));
+    expect(onSave.mock.calls[2]?.[0]).toMatchObject({ trigger_source_address: null });
+  });
+
+  it("shows the server's verdict on a malformed device address on that field", () => {
+    renderEditor({
+      rule: RULE_BINDING,
+      fieldErrors: { trigger_source_address: "a device's individual address is spelt area.line.device, e.g. 1.1.26" },
+    });
+    expect(screen.getByLabelText("Only from device")).toHaveAttribute("aria-invalid", "true");
+  });
+
   it("explains that notify is a log-only alert until email arrives", () => {
     renderEditor();
     fireEvent.change(screen.getByLabelText("Action"), { target: { value: "notify" } });

@@ -33,6 +33,7 @@ const AVAILABILITY: readonly DomainAvailability[] = [
   { domain: "dmx", available: true, reason: null },
   { domain: "mixer_recall", available: false, reason: "Mixer actions arrive with the mixer driver" },
   { domain: "mixer_fader", available: false, reason: "Mixer actions arrive with the mixer driver" },
+  { domain: "mixer_step", available: false, reason: "Mixer actions arrive with the mixer driver" },
   { domain: "mixer_mute", available: false, reason: "Mixer actions arrive with the mixer driver" },
   { domain: "projector_power", available: false, reason: "Projector actions arrive with the projector driver" },
   { domain: "projector_input", available: false, reason: "Projector actions arrive with the projector driver" },
@@ -48,7 +49,10 @@ const AVAILABILITY_WITH_AV: readonly DomainAvailability[] = AVAILABILITY.map((ro
 
 /** The same list, with the three Phase 4 mixer domains available — a configured mixer. */
 const AVAILABILITY_WITH_MIXER: readonly DomainAvailability[] = AVAILABILITY.map((row) =>
-  row.domain === "mixer_recall" || row.domain === "mixer_fader" || row.domain === "mixer_mute"
+  row.domain === "mixer_recall" ||
+  row.domain === "mixer_fader" ||
+  row.domain === "mixer_mute" ||
+  row.domain === "mixer_step"
     ? { ...row, available: true, reason: null }
     : row,
 );
@@ -411,5 +415,39 @@ describe("ActionEditorSheet", () => {
     const body = saved as { mixer_channel_id: number; mixer_muted: boolean };
     expect(body.mixer_channel_id).toBe(4);
     expect(body.mixer_muted).toBe(true);
+  });
+
+  it("the volume step form defaults to Main LR and +2 dB, and saves a signed step (migration 013)", async () => {
+    let saved: unknown;
+    route({
+      "/knx/addresses": () => [],
+      "/mixer/state": () => ({ device_id: 9, capabilities: { scene_recall: true } }),
+      "/mixer/desk-scenes": () => ({ desk_scenes: [] }),
+      "/mixer/channels": () => ({
+        channels: [
+          { id: 4, device_id: 9, channel_kind: "input", name: "Wireless 1", short_name: "WL1", notes: null, driver_refs: ["ip1"], visible_staff: true, hirer_max_db: null, show_pan: false, tracked: true, sort_order: 0, unmapped: false, updated_at: "" },
+          { id: 1, device_id: 9, channel_kind: "main", name: "Main", short_name: "LR", notes: null, driver_refs: ["main"], visible_staff: true, hirer_max_db: -10, show_pan: false, tracked: true, sort_order: 9, unmapped: false, updated_at: "" },
+        ],
+      }),
+      "/scenes/7/actions": (body) => {
+        saved = body;
+        return { id: 1 };
+      },
+    });
+    renderSheet(AVAILABILITY_WITH_MIXER);
+    fireEvent.click(screen.getByRole("button", { name: "Volume step" }));
+
+    const main = await screen.findByRole("option", { name: "Main (Main LR)" });
+    expect((main as HTMLOptionElement).selected).toBe(true);
+    const options = within(screen.getByLabelText("Channel")).getAllByRole("option");
+    expect(options.map((o) => o.textContent)).toEqual(["Choose a channel…", "Main (Main LR)", "Wireless 1"]);
+    expect(screen.getByLabelText("Step (dB)")).toHaveValue(2);
+    expect(screen.getByText(/Up from Off starts at -40 dB/)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Step (dB)"), { target: { value: "-2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add action" }));
+
+    await waitFor(() => expect(saved).toBeDefined());
+    expect(saved).toMatchObject({ domain: "mixer_step", mixer_channel_id: 1, mixer_step_db: -2, mixer_db: null });
   });
 });

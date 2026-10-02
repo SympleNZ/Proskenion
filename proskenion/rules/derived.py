@@ -6,6 +6,7 @@ An outgoing KNX address that continuously reflects state::
     STATUS  knx 4/0/4   =  every fixture in "Stage row 1" at 100%, as the room sees it
     STATUS  knx 1/2/2   =  projector state is ON
     STATUS  knx 1/0/9   =  external control active
+    STATUS  knx 3/1/2   =  "The room" HDMI destination shows input 2
 
 **Derived, never written by whatever fired** (§8.6, B51). Nothing tells this
 module "bank 1 is on". It watches the state store, and after any change it
@@ -15,8 +16,8 @@ one bank is switched off on its own, why dragging a fixture down in the web
 interface turns a panel indicator off, and why a lost telegram self-corrects
 at the next change. Bindings hold no state of their own.
 
-The three predicates
---------------------
+The four predicates
+-------------------
 ``lighting_group_all_at``
     Every member channel is at ``compare_level``. A member whose own range
     cannot reach ``compare_level`` is compared with the nearest level it can
@@ -49,6 +50,17 @@ The three predicates
     projector's connection record.
 ``external_control``
     External control is active (§7.2.7).
+``video_destination_input`` (migration 013)
+    The HDMI destination ``video_destination_id`` currently shows
+    ``compare_input_id``: ``state.hdmi.destinations[id]`` has that
+    ``input_id`` and is **not** ``diverged``. A diverged destination's
+    outputs disagree, so it shows no one input and every status on it reads
+    false; so does a destination the matrix has not reported. Two statuses on
+    one destination (input 1, input 2) on two feedback addresses are a
+    panel's mutually exclusive pair: the video service writes a routing
+    change to ``state.hdmi`` with no await between items, so one recompute
+    sees it whole and flips both together. An ``hdmi`` change wakes a
+    recompute directly — there is no frame to wait for.
 
 Timing: after the frame, coalesced, on change of value
 ------------------------------------------------------
@@ -204,6 +216,9 @@ class StatusSpec:
     compare_state: str | None = None
     #: ``level`` (stored) or ``output`` (composited) — ``lighting_group_all_at`` only.
     basis: str = "level"
+    #: ``video_destination_input`` only (migration 013).
+    video_destination_id: int | None = None
+    compare_input_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -381,6 +396,10 @@ class DerivedStatusEngine:
         if change.domain == "devices":
             self._wake.set()
             return
+        if change.domain == "hdmi":
+            if change.field == "destinations" and self._video_statuses_in_use():
+                self._wake.set()
+            return
         if change.domain == "projector":
             if change.field == "state":
                 # The lamp frame's ``transitioning`` flag (§7.4, §21.9) tracks
@@ -402,6 +421,11 @@ class DerivedStatusEngine:
             self._wake.set()
         elif change.field == "master" and self._output_basis_in_use():
             self._on_master_change()
+
+    def _video_statuses_in_use(self) -> bool:
+        return any(
+            s.enabled and s.source_type == "video_destination_input" for s in self._statuses
+        )
 
     def _output_basis_in_use(self) -> bool:
         return any(s.enabled and s.basis == "output" for s in self._statuses)
@@ -554,7 +578,22 @@ class DerivedStatusEngine:
             if self._is_projector(spec.device_id):
                 return state_matches(spec.compare_state, self._projector_state())
             return False
+        if spec.source_type == "video_destination_input":
+            if spec.video_destination_id is None or spec.compare_input_id is None:
+                return False
+            return self.destination_shows(spec.video_destination_id, spec.compare_input_id)
         return False
+
+    def destination_shows(self, destination_id: int, input_id: int) -> bool:
+        """``state.hdmi.destinations[destination_id]`` is on ``input_id`` and
+        not diverged — false while the matrix has not reported it."""
+        destinations = self._state.hdmi.get("destinations")
+        if not isinstance(destinations, Mapping):
+            return False
+        entry = destinations.get(str(destination_id))
+        if not isinstance(entry, Mapping) or entry.get("diverged"):
+            return False
+        return entry.get("input_id") == input_id
 
     @property
     def external_active(self) -> bool:

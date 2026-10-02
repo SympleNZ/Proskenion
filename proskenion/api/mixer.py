@@ -700,6 +700,7 @@ async def create_mixer_channel(
 @router.put("/mixer/channels/{channel_id}", response_model=MixerChannelModel)
 async def update_mixer_channel(
     _: Admin,
+    snapshot: PreChangeSnapshot,
     request: Request,
     db: Db,
     bus: Bus,
@@ -721,6 +722,14 @@ async def update_mixer_channel(
         if driver_refs:
             # Choosing references for a channel is re-mapping it (§21.21).
             fields["unmapped"] = False
+    if driver_refs is not None:
+        # The channel's desk references are replaced wholesale: a snapshot first,
+        # unless the same references are sent back in the same order.
+        await snapshot.before_replacing(
+            f"mixer channel {channel_id}'s desk references",
+            [r.driver_ref for r in await mixer_crud.get_channel_refs(db, channel_id)],
+            driver_refs,
+        )
     try:
         channel = await mixer_crud.update_channel(db, channel_id, version, **fields)
     except NotFoundError as exc:

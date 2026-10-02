@@ -16,7 +16,12 @@ export type GuardType = (typeof GUARD_TYPES)[number];
 export const ACTION_TYPES = ["run_scene", "lighting_group", "notify"] as const;
 export type ActionType = (typeof ACTION_TYPES)[number];
 
-export const SOURCE_TYPES = ["lighting_group_all_at", "device_state", "external_control"] as const;
+export const SOURCE_TYPES = [
+  "lighting_group_all_at",
+  "device_state",
+  "external_control",
+  "video_destination_input",
+] as const;
 export type SourceType = (typeof SOURCE_TYPES)[number];
 
 /** §8.4: debounce applies to knx triggers only, default 500 ms. */
@@ -38,6 +43,8 @@ export interface Rule {
   trigger_device_id: number | null;
   trigger_state: string | null;
   trigger_for_ms: number | null;
+  /** "Only from device" (migration 013): a knx trigger fires only for telegrams from this individual address, e.g. `1.1.26`. `null` = any. */
+  trigger_source_address: string | null;
   guard_type: GuardType | null;
   guard_value: string | null;
   action_type: ActionType;
@@ -77,6 +84,8 @@ export interface RuleInput {
   trigger_device_id: number | null;
   trigger_state: string | null;
   trigger_for_ms: number | null;
+  /** "Only from device" (migration 013): a knx trigger fires only for telegrams from this individual address, e.g. `1.1.26`. `null` = any. */
+  trigger_source_address: string | null;
   guard_type: GuardType | null;
   guard_value: string | null;
   action_type: ActionType;
@@ -148,6 +157,9 @@ export interface DerivedStatus {
   compare_state: string | null;
   /** What a lighting status compares (migration 011): stored levels, or what the room sees. */
   basis: StatusBasis;
+  /** `video_destination_input` (migration 013): the HDMI destination and the input it must show. */
+  video_destination_id: number | null;
+  compare_input_id: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -174,6 +186,8 @@ export interface DerivedStatusInput {
   device_id: number | null;
   compare_state: string | null;
   basis: StatusBasis;
+  video_destination_id: number | null;
+  compare_input_id: number | null;
 }
 
 /** One row of `GET /derived-status/state` and the `GET /derived-status/monitor` SSE stream (§8.10). */

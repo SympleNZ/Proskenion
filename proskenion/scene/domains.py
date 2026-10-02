@@ -1,8 +1,9 @@
 """Scene action domains, result markers and the domain handler registry (§8.12, §8.15, §5.5).
 
-The eight domains
------------------
-§8.12 names eight, and ``scene_actions.domain`` is not validated in the data
+The nine domains
+----------------
+§8.12 names eight; ``mixer_step`` (a relative fader move, migration 013,
+owner request 2 October 2026) is the ninth. ``scene_actions.domain`` is not validated in the data
 layer: this module owns the vocabulary. Domains name *what* is controlled,
 never *how* — a projector domain, not a PJLink one.
 
@@ -72,6 +73,7 @@ DOMAINS: Final[tuple[str, ...]] = (
     "projector_power",
     "projector_input",
     "hdmi_source",
+    "mixer_step",
 )
 
 #: The driver category whose device executes each domain. ``knx`` is a
@@ -86,6 +88,7 @@ DOMAIN_CATEGORY: Final[Mapping[str, Category | None]] = {
     "projector_power": Category.PROJECTOR,
     "projector_input": Category.PROJECTOR,
     "hdmi_source": Category.VIDEO_MATRIX,
+    "mixer_step": Category.MIXER,
 }
 
 #: The per-domain columns of ``scene_actions`` (§8.12, §15.8).
@@ -98,6 +101,7 @@ DOMAIN_FIELDS: Final[Mapping[str, frozenset[str]]] = {
     "projector_power": frozenset({"projector_power"}),
     "projector_input": frozenset({"projector_input"}),
     "hdmi_source": frozenset({"hdmi_destination", "hdmi_input_id"}),
+    "mixer_step": frozenset({"mixer_channel_id", "mixer_step_db"}),
 }
 
 ALL_DOMAIN_FIELDS: Final[frozenset[str]] = frozenset().union(*DOMAIN_FIELDS.values())

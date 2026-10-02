@@ -12,6 +12,7 @@ advertises and what the client must therefore do.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import socket
 import ssl
@@ -210,7 +211,15 @@ async def test_rejected_recipient_is_reported() -> None:
     assert handler.envelopes == []
 
 
-async def test_dns_failure_is_reported() -> None:
+async def test_dns_failure_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Name resolution fails deterministically here, the way a real resolver
+    # reports an unknown host. The real lookup of a made-up name sometimes
+    # timed out on a busy machine instead, which read as a connect failure
+    # (twice on 2 Oct 2026, during release checks).
+    async def no_such_host(*_args: object, **_kwargs: object) -> object:
+        raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", no_such_host)
     with pytest.raises(SmtpError) as excinfo:
         await send_email(
             _settings(25, host="this-host-does-not-exist.invalid.example"),

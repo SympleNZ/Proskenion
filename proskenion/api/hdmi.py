@@ -634,6 +634,7 @@ async def create_video_destination(
 @router.put("/destinations/{destination_id}", response_model=VideoDestinationModel)
 async def update_video_destination(
     _: Admin,
+    snapshot: PreChangeSnapshot,
     db: Db,
     bus: Bus,
     destination_id: int,
@@ -653,6 +654,14 @@ async def update_video_destination(
         errors.update(await _validate_output_ids(db, device_id, output_ids))
     if errors:
         raise ApiError(ErrorCode.VALIDATION_FAILED, "The destination is not valid", errors)
+    if output_ids is not None:
+        # The destination's output list is replaced wholesale: a snapshot first,
+        # unless the same outputs are sent back in the same order.
+        await snapshot.before_replacing(
+            f"video destination {destination_id}'s outputs",
+            [o.output_id for o in await video_crud.get_destination_outputs(db, destination_id)],
+            output_ids,
+        )
 
     try:
         row = await video_crud.update_destination(db, destination_id, version, **fields)

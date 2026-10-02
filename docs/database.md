@@ -265,6 +265,8 @@ as a freshly migrated database reports them.
 | created_at | TEXT | yes |  |
 | updated_at | TEXT | yes |  |
 | basis | TEXT | yes | DEFAULT 'level' |
+| video_destination_id | INTEGER |  |  |
+| compare_input_id | INTEGER |  |  |
 
 ### `devices`
 
@@ -584,6 +586,7 @@ as a freshly migrated database reports them.
 | message | TEXT |  |  |
 | created_at | TEXT | yes |  |
 | updated_at | TEXT | yes |  |
+| trigger_source_address | TEXT |  |  |
 
 ### `scene_actions`
 
@@ -611,6 +614,7 @@ as a freshly migrated database reports them.
 | device_id | INTEGER |  |  |
 | created_at | TEXT | yes |  |
 | updated_at | TEXT | yes |  |
+| mixer_step_db | REAL |  |  |
 
 ### `scene_execution_log`
 

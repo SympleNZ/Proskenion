@@ -46,6 +46,7 @@ export const RULE_BINDING: Rule = {
   trigger_device_id: null,
   trigger_state: null,
   trigger_for_ms: null,
+  trigger_source_address: null,
   guard_type: null,
   guard_value: null,
   action_type: "lighting_group",
@@ -94,6 +95,8 @@ export const DERIVED_STATUS: DerivedStatus = {
   device_id: null,
   compare_state: null,
   basis: "level",
+  video_destination_id: null,
+  compare_input_id: null,
   created_at: "2026-09-01T09:00:00+12:00",
   updated_at: "2026-09-01T09:00:00+12:00",
 };

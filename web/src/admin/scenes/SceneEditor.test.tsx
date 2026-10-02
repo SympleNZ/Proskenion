@@ -59,6 +59,7 @@ function action(overrides: Partial<Action> = {}): Action {
     projector_input: null,
     hdmi_destination: null,
     hdmi_input_id: null,
+    mixer_step_db: null,
     device_id: null,
     created_at: "2026-09-04T14:30:00+12:00",
     updated_at: "2026-09-04T14:30:00+12:00",

@@ -19,8 +19,10 @@ export function describeTrigger(rule: Rule, lookups: DescribeLookups): string {
   if (rule.trigger_type === "knx") {
     const address = rule.knx_address_id !== null ? lookups.addressById.get(rule.knx_address_id) : undefined;
     const ga = address?.group_address ?? "unassigned";
-    if (rule.match_type === "any") return `knx ${ga}`;
-    if (rule.match_type === "range") return `knx ${ga} ${rule.match_value ?? "?"}–${rule.match_value_max ?? "?"}`;
+    const from = rule.trigger_source_address ? ` from ${rule.trigger_source_address}` : "";
+    if (rule.match_type === "any") return `knx ${ga}${from}`;
+    if (rule.match_type === "range")
+      return `knx ${ga} ${rule.match_value ?? "?"}–${rule.match_value_max ?? "?"}${from}`;
     const symbol =
       rule.match_type === "equal"
         ? "="
@@ -29,7 +31,7 @@ export function describeTrigger(rule: Rule, lookups: DescribeLookups): string {
           : rule.match_type === "gte"
             ? "≥"
             : "≤";
-    return `knx ${ga} ${symbol} ${rule.match_value ?? "?"}`;
+    return `knx ${ga} ${symbol} ${rule.match_value ?? "?"}${from}`;
   }
   if (rule.trigger_type === "schedule") {
     return rule.cron ? (cronPreview(rule.cron) ?? rule.cron) : "schedule";

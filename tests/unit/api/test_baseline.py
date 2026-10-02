@@ -90,7 +90,7 @@ async def test_capture_answers_the_card_and_audits_the_change(
     card = response.json()
     assert card["name"] == CURRENT_FILENAME
     assert card["captured_by"] == "admin"
-    assert card["schema_version"] == "012_backup_checked.sql"
+    assert card["schema_version"] == "013_panel_capabilities.sql"
     assert card["size_bytes"] > 0
     # §21.24's "12 scenes · 16 fixtures · 5 groups · 14 channels" comes from here.
     assert card["contents"]["scenes"] == 2

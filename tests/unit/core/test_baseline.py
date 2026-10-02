@@ -172,7 +172,7 @@ async def test_the_round_trip_puts_every_captured_area_back(
 ) -> None:
     captured = await service.capture(captured_by="admin")
     assert captured.name == CURRENT_FILENAME
-    assert captured.schema_version == "012_backup_checked.sql"
+    assert captured.schema_version == "013_panel_capabilities.sql"
     assert (await service.compare()).count == 0
 
     await drift_every_area(room)
@@ -395,7 +395,7 @@ async def _one_migration_behind(path: Path) -> None:
     db = Database()
     await db.open(path)
     try:
-        assert await revert_to(db, 11) == ["012_backup_checked.sql"]
+        assert await revert_to(db, 12) == ["013_panel_capabilities.sql"]
     finally:
         await db.close()
 
@@ -409,11 +409,11 @@ async def test_a_baseline_one_migration_behind_compares_and_restores(
         await conn.execute("UPDATE mixer_channels SET hirer_max_db = 0.0 WHERE id = ?", (LECTERN,))
 
     diff = await service.compare()
-    assert diff.migrated == ("012_backup_checked.sql",)
+    assert diff.migrated == ("013_panel_capabilities.sql",)
     assert field_of(named(diff, "Lectern"), "hirer_max_db") == (-10.0, 0.0)
 
     result = await service.restore()
-    assert result.migrated == ("012_backup_checked.sql",)
+    assert result.migrated == ("013_panel_capabilities.sql",)
     assert await venue.one(
         room, "SELECT hirer_max_db FROM mixer_channels WHERE id = ?", (LECTERN,)
     ) == -10.0

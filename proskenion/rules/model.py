@@ -49,6 +49,26 @@ state name is stored and validated but has no producer yet. A third alias,
 ``on``) for a panel indicator that only cares whether the lamp has started,
 not whether it has finished warming up; plain ``on`` still means exactly
 ``on``.
+
+Only from device (migration 013)
+--------------------------------
+A ``knx`` trigger may name the **source individual address** a telegram must
+come from (``trigger_source_address``, ``area.line.device``, e.g. ``1.1.26``):
+both wall panels send projector on/off on ``3/0/0`` and differ only by
+sender. ``None`` is any source. :func:`normalise_individual_address` is the
+one spelling check, shared by the API and the engine, and returns the form
+:func:`proskenion.core.knx.format_individual_address` gives an incoming
+telegram's ``source_address`` (no leading zeros), so the two compare as
+strings.
+
+HDMI shows input (migration 013)
+--------------------------------
+The ``video_destination_input`` derived-status source reads
+``state.hdmi.destinations``: true while the destination's ``input_id`` is
+``compare_input_id`` and it is **not diverged**. A diverged destination's
+outputs disagree, so it is not showing any one input and every such status
+on it reads false (owner request, 2 October 2026: "exactly one green" is
+better as none than as a wrong one).
 """
 
 from __future__ import annotations
@@ -67,7 +87,12 @@ TRIGGER_TYPES: Final = ("knx", "schedule", "surface", "device_state")
 MATCH_TYPES: Final = ("any", "equal", "not_equal", "gte", "lte", "range")
 GUARD_TYPES: Final = ("time_window", "external_control", "device_state")
 ACTION_TYPES: Final = ("run_scene", "lighting_group", "notify")
-SOURCE_TYPES: Final = ("lighting_group_all_at", "device_state", "external_control")
+SOURCE_TYPES: Final = (
+    "lighting_group_all_at",
+    "device_state",
+    "external_control",
+    "video_destination_input",
+)
 #: What ``lighting_group_all_at`` compares (migration 011): stored level or output.
 BASES: Final = ("level", "output")
 
@@ -75,7 +100,9 @@ TriggerType = Literal["knx", "schedule", "surface", "device_state"]
 MatchType = Literal["any", "equal", "not_equal", "gte", "lte", "range"]
 GuardType = Literal["time_window", "external_control", "device_state"]
 ActionType = Literal["run_scene", "lighting_group", "notify"]
-SourceType = Literal["lighting_group_all_at", "device_state", "external_control"]
+SourceType = Literal[
+    "lighting_group_all_at", "device_state", "external_control", "video_destination_input"
+]
 Basis = Literal["level", "output"]
 GuardResult = Literal["passed", "blocked"]
 
@@ -236,6 +263,44 @@ def truthy(value: object) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in _TRUE
     return False
+
+
+# -- only from device (migration 013) -------------------------------------------
+
+_INDIVIDUAL_ADDRESS_RE = re.compile(r"^\s*(\d{1,2})\.(\d{1,2})\.(\d{1,3})\s*$")
+
+
+def normalise_individual_address(raw: str) -> str:
+    """``"1.1.26"`` → ``"1.1.26"``; ``" 01.1.026 "`` → ``"1.1.26"``. Raises ``ValueError``.
+
+    A KNX individual address is ``area.line.device``: 4, 4 and 8 bits (§7.1),
+    so area and line are 0–15 and device 0–255.
+    """
+    match = _INDIVIDUAL_ADDRESS_RE.match(raw)
+    if match is None:
+        raise ValueError(
+            "a device's individual address is spelt area.line.device, e.g. 1.1.26"
+        )
+    area, line, device = (int(part) for part in match.groups())
+    if area > 15 or line > 15 or device > 255:
+        raise ValueError("area and line are 0–15 and the device 0–255, e.g. 1.1.26")
+    return f"{area}.{line}.{device}"
+
+
+def source_matches(wanted: str | None, source: str | None) -> bool:
+    """Whether a telegram from ``source`` satisfies a trigger's source filter.
+
+    ``wanted`` ``None`` is any source. A stored filter that no longer parses
+    matches nothing rather than everything.
+    """
+    if wanted is None:
+        return True
+    if source is None:
+        return False
+    try:
+        return normalise_individual_address(wanted) == normalise_individual_address(source)
+    except ValueError:
+        return False
 
 
 # -- device states (§8.3) ------------------------------------------------------
@@ -409,10 +474,12 @@ __all__ = [
     "cron_value",
     "dpt_class",
     "matches",
+    "normalise_individual_address",
     "parse_device_state_guard",
     "parse_external_control_guard",
     "parse_match_value",
     "parse_time_window",
+    "source_matches",
     "state_has_producer",
     "state_matches",
     "telegram_value",

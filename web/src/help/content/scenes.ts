@@ -94,6 +94,10 @@ export const scenes = {
     term: "Mute",
     body: "Always an absolute set, never a toggle — this action always leaves the channel in the same state.",
   },
+  "scenes.action.mixer.step": {
+    term: "Step (dB)",
+    body: "How far each run moves the fader from where it is now: positive is louder, negative quieter, e.g. 2 or -2. It stops at the top of the fader and, while hirer access is on, at the channel's hirer limit. Up from Off starts at -40 dB; down past the bottom turns the channel off.",
+  },
   "scenes.action.save": {
     term: "Save action",
     body: "Saves this action.",

@@ -44,7 +44,9 @@ DERIVED_STATUS_TABLE = "derived_status"
 
 TRIGGER_TYPES = frozenset({"knx", "schedule", "surface", "device_state"})
 ACTION_TYPES = frozenset({"run_scene", "lighting_group", "notify"})
-SOURCE_TYPES = frozenset({"lighting_group_all_at", "device_state", "external_control"})
+SOURCE_TYPES = frozenset(
+    {"lighting_group_all_at", "device_state", "external_control", "video_destination_input"}
+)
 #: What ``lighting_group_all_at`` compares (migration 011): the stored level,
 #: or the composited output (level × the master; groups do not scale).
 BASES = frozenset({"level", "output"})
@@ -78,6 +80,9 @@ class Rule:
     message: str | None
     created_at: str
     updated_at: str
+    #: "Only from device" (migration 013): a knx trigger fires only for
+    #: telegrams from this individual address (``a.l.d``). ``None`` = any.
+    trigger_source_address: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +100,10 @@ class DerivedStatus:
     updated_at: str
     #: ``level`` (stored) or ``output`` (composited) — ``lighting_group_all_at`` only.
     basis: str = "level"
+    #: ``video_destination_input`` (migration 013): the destination watched
+    #: and the input it must be showing.
+    video_destination_id: int | None = None
+    compare_input_id: int | None = None
 
 
 def _opt_int(row: base.Row, key: str) -> int | None:
@@ -137,6 +146,12 @@ def _rule_from_row(row: base.Row) -> Rule:
         message=_opt_str(row, "message"),
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
+        # .get(): a row read against a schema before migration 013 lacks it.
+        trigger_source_address=(
+            None
+            if row.get("trigger_source_address") is None
+            else str(row["trigger_source_address"])
+        ),
     )
 
 
@@ -154,6 +169,8 @@ def _derived_status_from_row(row: base.Row) -> DerivedStatus:
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
         basis=str(row["basis"]),
+        video_destination_id=_opt_int(row, "video_destination_id"),
+        compare_input_id=_opt_int(row, "compare_input_id"),
     )
 
 
@@ -192,6 +209,7 @@ async def create_rule(
     trigger_device_id: int | None = None,
     trigger_state: str | None = None,
     trigger_for_ms: int | None = None,
+    trigger_source_address: str | None = None,
     guard_type: str | None = None,
     guard_value: str | None = None,
     scene_id: int | None = None,
@@ -233,6 +251,10 @@ async def create_rule(
         "created_at": now,
         "updated_at": now,
     }
+    if trigger_source_address is not None:
+        # Only when set, so rows can still be built against a schema before
+        # migration 013 (the migration tests do); the column defaults to NULL.
+        values["trigger_source_address"] = trigger_source_address
     async with db.write() as conn:
         try:
             row_id = await base.insert(conn, RULES_TABLE, values)
@@ -316,6 +338,8 @@ async def create_derived_status(
     device_id: int | None = None,
     compare_state: str | None = None,
     basis: str = "level",
+    video_destination_id: int | None = None,
+    compare_input_id: int | None = None,
 ) -> DerivedStatus:
     if source_type not in SOURCE_TYPES:
         raise ValueError(f"unknown derived_status source_type: {source_type!r}")
@@ -332,6 +356,8 @@ async def create_derived_status(
         "device_id": device_id,
         "compare_state": compare_state,
         "basis": basis,
+        "video_destination_id": video_destination_id,
+        "compare_input_id": compare_input_id,
         "created_at": now,
         "updated_at": now,
     }

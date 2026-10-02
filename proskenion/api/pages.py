@@ -672,6 +672,31 @@ def _button_input(body: PageButtonBody) -> PageButtonInput:
     )
 
 
+def _stored_item_input(item: PageItem) -> PageItemInput:
+    """A stored item in the form a request carries it, so the two compare."""
+    return PageItemInput(
+        kind=item.kind,
+        channel_id=item.channel_id,
+        lighting_channel_id=item.lighting_channel_id,
+        group_id=item.group_id,
+        expanded=item.expanded,
+        panel_title=item.panel_title,
+        panel_width=item.panel_width,
+        buttons=tuple(
+            PageButtonInput(
+                col=b.col,
+                row=b.row,
+                label=b.label,
+                rule_id=b.rule_id,
+                state_id=b.state_id,
+                colour=b.colour,
+                confirm=b.confirm,
+            )
+            for b in item.buttons
+        ),
+    )
+
+
 def _item_input(body: PageItemBody) -> PageItemInput:
     return PageItemInput(
         kind=body.kind,
@@ -723,6 +748,7 @@ async def _validate_buttons(db: Database, items: list[PageItemBody]) -> None:
 @router.put("/pages/{page_id}")
 async def replace_page(
     _: Admin,
+    snapshot: PreChangeSnapshot,
     db: Db,
     devices: Devices,
     request: Request,
@@ -731,9 +757,18 @@ async def replace_page(
     if_unmodified_since_version: Annotated[str | None, Header()] = None,
 ) -> dict[str, Any]:
     version = _version_or_422(if_unmodified_since_version)
-    await _page_or_404(db, page_id)
+    existing = await _page_or_404(db, page_id)
     await _validate_group_masters(db, body.items)
     await _validate_buttons(db, body.items)
+    # Replacing a page's items wholesale is destructive: a snapshot first, unless
+    # the items sent are the items held (a rename or a re-ordering of pages).
+    # The default page refuses below, so it takes none.
+    if not existing.page.is_default:
+        await snapshot.before_replacing(
+            f"page {page_id}'s items",
+            [_stored_item_input(i) for i in existing.items],
+            [_item_input(i) for i in body.items],
+        )
     try:
         await pages_crud.replace_page(
             db,

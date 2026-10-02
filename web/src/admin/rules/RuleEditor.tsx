@@ -88,6 +88,7 @@ interface FormState {
   match_value: string;
   match_value_max: string;
   debounce_ms: string;
+  trigger_source_address: string;
   cron: string;
   trigger_device_id: number | null;
   trigger_state: string;
@@ -120,6 +121,7 @@ function initialState(rule: Rule | undefined): FormState {
     match_value: rule?.match_value ?? "",
     match_value_max: rule?.match_value_max ?? "",
     debounce_ms: String(rule?.debounce_ms ?? DEFAULT_DEBOUNCE_MS),
+    trigger_source_address: rule?.trigger_source_address ?? "",
     cron: rule?.cron ?? "",
     trigger_device_id: rule?.trigger_device_id ?? null,
     trigger_state: rule?.trigger_state ?? "",
@@ -169,6 +171,8 @@ function buildInput(form: FormState): RuleInput {
     match_value: form.trigger_type === "knx" && form.match_type !== "any" ? form.match_value : null,
     match_value_max: form.trigger_type === "knx" && form.match_type === "range" ? form.match_value_max : null,
     debounce_ms: form.trigger_type === "knx" ? (toNumberOrNull(form.debounce_ms) ?? DEFAULT_DEBOUNCE_MS) : null,
+    trigger_source_address:
+      form.trigger_type === "knx" && form.trigger_source_address.trim() !== "" ? form.trigger_source_address.trim() : null,
     cron: form.trigger_type === "schedule" ? form.cron : null,
     trigger_device_id: form.trigger_type === "device_state" ? form.trigger_device_id : null,
     trigger_state: form.trigger_type === "device_state" ? form.trigger_state : null,
@@ -440,6 +444,28 @@ export function RuleEditor({
                 <p className="field-help">
                   A repeat within this window is suppressed — a panel that sends on press and release does not
                   restart a fade (§8.4). KNX triggers only.
+                </p>
+              </Field>
+
+              <Field
+                label="Only from device"
+                htmlFor={`${idPrefix}-source`}
+                helpId="rules.trigger.knx.source"
+                error={fieldErrors["trigger_source_address"]}
+                errorId={`${idPrefix}-source-error`}
+              >
+                <Input
+                  id={`${idPrefix}-source`}
+                  mono
+                  inputMode="decimal"
+                  value={form.trigger_source_address}
+                  aria-invalid={fieldErrors["trigger_source_address"] ? true : undefined}
+                  onChange={(event) => set("trigger_source_address", event.currentTarget.value)}
+                  placeholder="Any device"
+                />
+                <p className="field-help">
+                  Optional. The individual address of the one device whose telegrams fire this rule, e.g. 1.1.26
+                  (back-of-house panel). Leave empty for any device.
                 </p>
               </Field>
             </>

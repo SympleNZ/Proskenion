@@ -51,3 +51,6 @@ tools/*.log
 
 # Site files (ETS project, exports, captures): private to this installation, never committed
 site/
+
+# Screenshots from the coordinator's browser tooling
+.playwright-mcp/
